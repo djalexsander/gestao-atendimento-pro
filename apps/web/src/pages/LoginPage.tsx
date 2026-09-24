@@ -1,10 +1,14 @@
 import { useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 import { useAuth } from "../app/useAuth";
 
 export function LoginPage() {
   const { signIn } = useAuth();
-  const [email, setEmail] = useState("");
+  const [searchParams] = useSearchParams();
+  const invitedEmail = searchParams.get("email") ?? "";
+  const hasInvite = searchParams.get("invite") === "1";
+
+  const [email, setEmail] = useState(invitedEmail);
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -17,6 +21,7 @@ export function LoginPage() {
     setSubmitting(false);
     if (error) setError(error);
     // sucesso: onAuthStateChange atualiza a sessão e as rotas redirecionam sozinhas.
+    // Se havia um convite pendente para este e-mail, o banner em /app aparece sozinho.
   }
 
   return (
@@ -25,6 +30,12 @@ export function LoginPage() {
         <div className="brand">OrçaFácil</div>
         <h1 style={{ fontSize: 22 }}>Entrar</h1>
 
+        {hasInvite && (
+          <div className="form-notice">
+            Você tem um convite de equipe pendente. Entre com o e-mail convidado para
+            aceitá-lo.
+          </div>
+        )}
         {error && <div className="form-error">{error}</div>}
 
         <form onSubmit={handleSubmit}>
@@ -56,7 +67,8 @@ export function LoginPage() {
         </form>
 
         <div className="auth-footer">
-          Ainda não tem conta? <Link to="/cadastro">Criar conta</Link>
+          Ainda não tem conta?{" "}
+          <Link to={`/cadastro?${searchParams.toString()}`}>Criar conta</Link>
         </div>
       </div>
     </div>

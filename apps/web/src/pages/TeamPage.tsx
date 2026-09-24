@@ -5,6 +5,7 @@ import {
   fetchTeamMembers,
   removeMember,
   revokeInvite,
+  sendInviteEmail,
   updateMemberRole,
 } from "../features/company/api";
 import type { CompanyInviteRow, CompanyRole, TeamMember } from "../lib/types";
@@ -30,7 +31,9 @@ export function TeamPage() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState<CompanyRole>("agent");
   const [inviteError, setInviteError] = useState<string | null>(null);
+  const [inviteWarning, setInviteWarning] = useState<string | null>(null);
   const [inviteSubmitting, setInviteSubmitting] = useState(false);
+  const [resendingId, setResendingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     if (!activeCompanyId) return;
@@ -82,13 +85,25 @@ export function TeamPage() {
     event.preventDefault();
     if (!activeCompanyId) return;
     setInviteError(null);
+    setInviteWarning(null);
     setInviteSubmitting(true);
-    const { error } = await createInvite(activeCompanyId, inviteEmail.trim(), inviteRole);
-    setInviteSubmitting(false);
+    const { data: invite, error } = await createInvite(activeCompanyId, inviteEmail.trim(), inviteRole);
     if (error) {
+      setInviteSubmitting(false);
       setInviteError(error);
       return;
     }
+    // Criação e envio são operações separadas: o convite já existe mesmo se
+    // o e-mail falhar agora — dá para reenviar depois pela lista abaixo.
+    if (invite) {
+      const { error: emailError } = await sendInviteEmail(invite.id);
+      if (emailError) {
+        setInviteWarning(
+          `Convite criado, mas o e-mail não pôde ser enviado agora (${emailError}). Você pode tentar reenviar na lista abaixo.`,
+        );
+      }
+    }
+    setInviteSubmitting(false);
     setInviteEmail("");
     setInviteRole("agent");
     await load();
@@ -99,6 +114,18 @@ export function TeamPage() {
     const { error } = await revokeInvite(inviteId);
     if (error) {
       setError(error);
+      return;
+    }
+    await load();
+  }
+
+  async function handleResend(inviteId: string) {
+    setInviteWarning(null);
+    setResendingId(inviteId);
+    const { error } = await sendInviteEmail(inviteId);
+    setResendingId(null);
+    if (error) {
+      setInviteWarning(`Falha ao reenviar o e-mail: ${error}`);
       return;
     }
     await load();
@@ -167,6 +194,7 @@ export function TeamPage() {
         <>
           <h3 style={{ fontSize: 18 }}>Convidar membro</h3>
           {inviteError && <div className="form-error">{inviteError}</div>}
+          {inviteWarning && <div className="form-notice">{inviteWarning}</div>}
           <form onSubmit={handleInvite} style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
             <div className="field" style={{ marginBottom: 0, flex: "1 1 220px" }}>
               <label htmlFor="invite-email">E-mail</label>
@@ -216,10 +244,26 @@ export function TeamPage() {
                   >
                     <span>
                       {invite.email} — {ROLE_LABEL[invite.role]}
+                      <br />
+                      <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                        {invite.email_last_sent_at
+                          ? `e-mail enviado em ${new Date(invite.email_last_sent_at).toLocaleString("pt-BR")}`
+                          : "e-mail ainda não enviado"}
+                      </span>
                     </span>
-                    <button className="btn-secondary" type="button" onClick={() => void handleRevoke(invite.id)}>
-                      Cancelar
-                    </button>
+                    <span style={{ display: "flex", gap: 8 }}>
+                      <button
+                        className="btn-secondary"
+                        type="button"
+                        disabled={resendingId === invite.id}
+                        onClick={() => void handleResend(invite.id)}
+                      >
+                        {resendingId === invite.id ? "Enviando…" : "Reenviar e-mail"}
+                      </button>
+                      <button className="btn-secondary" type="button" onClick={() => void handleRevoke(invite.id)}>
+                        Cancelar
+                      </button>
+                    </span>
                   </li>
                 ))}
               </ul>

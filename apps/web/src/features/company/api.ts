@@ -91,11 +91,21 @@ export async function createInvite(
   companyId: string,
   email: string,
   role: CompanyRole,
-): Promise<{ error: string | null }> {
-  const { error } = await supabase.rpc("create_company_invite", {
+): Promise<{ data: CompanyInviteRow | null; error: string | null }> {
+  const { data, error } = await supabase.rpc("create_company_invite", {
     p_company_id: companyId,
     p_email: email,
     p_role: role,
+  });
+  return { data: (data as CompanyInviteRow | null) ?? null, error: error?.message ?? null };
+}
+
+// Disparo/reenvio do e-mail de notificação — operação separada da criação do
+// convite (ver Edge Function send-invite-email). Pode ser chamada de novo
+// (reenvio) sem criar outro convite.
+export async function sendInviteEmail(inviteId: string): Promise<{ error: string | null }> {
+  const { error } = await supabase.functions.invoke("send-invite-email", {
+    body: { inviteId },
   });
   return { error: error?.message ?? null };
 }

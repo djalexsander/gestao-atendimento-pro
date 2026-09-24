@@ -38,6 +38,7 @@ export interface CompanyInviteRow {
   created_at: string;
   expires_at: string;
   accepted_at: string | null;
+  email_last_sent_at: string | null;
 }
 
 export interface TeamMember {

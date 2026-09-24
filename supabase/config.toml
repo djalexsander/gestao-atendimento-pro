@@ -27,3 +27,9 @@ enabled = true
 
 [edge_runtime]
 enabled = true
+
+[functions.send-invite-email]
+# Exige JWT válido de um usuário autenticado — a function ainda faz sua
+# própria checagem via RLS (ver supabase/functions/send-invite-email), isso
+# aqui é uma primeira barreira na borda antes do código rodar.
+verify_jwt = true

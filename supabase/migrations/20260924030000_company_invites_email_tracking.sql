@@ -1,0 +1,14 @@
+-- Notificação por e-mail dos convites (Etapa 2, parte 2 — complemento).
+--
+-- Criação do convite (create_company_invite) e envio do e-mail são operações
+-- separadas de propósito: a Edge Function `send-invite-email` só dispara o
+-- e-mail depois que o convite já existe, e pode ser chamada de novo (reenvio)
+-- sem criar um novo convite. Esta coluna deixa a UI mostrar se/quando o
+-- e-mail foi enviado pela última vez.
+--
+-- Só a Edge Function escreve aqui (com service_role, depois de validar via
+-- RLS que quem chamou pode gerenciar aquele convite — ver função
+-- send-invite-email). Não é necessário GRANT de UPDATE para authenticated
+-- nesta coluna: o client nunca deve poder "forjar" que um e-mail foi
+-- enviado. O SELECT já concedido em company_invites cobre a leitura.
+alter table public.company_invites add column email_last_sent_at timestamptz;
