@@ -11,6 +11,8 @@ import {
 import { AppHomePage } from "./pages/AppHomePage";
 import { CompanySettingsPage } from "./pages/CompanySettingsPage";
 import { LoginPage } from "./pages/LoginPage";
+import { MasterCompaniesPage } from "./pages/MasterCompaniesPage";
+import { MasterCompanyDetailPage } from "./pages/MasterCompanyDetailPage";
 import { MasterModulesPage } from "./pages/MasterModulesPage";
 import { MasterOverviewPage } from "./pages/MasterOverviewPage";
 import { MasterPlansPage } from "./pages/MasterPlansPage";
@@ -67,6 +69,8 @@ function App() {
         }
       >
         <Route index element={<MasterOverviewPage />} />
+        <Route path="empresas" element={<MasterCompaniesPage />} />
+        <Route path="empresas/:id" element={<MasterCompanyDetailPage />} />
         <Route path="planos" element={<MasterPlansPage />} />
         <Route path="modulos" element={<MasterModulesPage />} />
       </Route>

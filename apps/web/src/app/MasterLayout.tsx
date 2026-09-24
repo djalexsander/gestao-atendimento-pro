@@ -3,7 +3,7 @@ import { Link, NavLink, Outlet } from "react-router-dom";
 // Layout deliberadamente separado do AppLayout: o Painel Master não é uma
 // empresa nem usa activeCompanyId/CompanySwitcher — é um contexto global à
 // parte, só acessível a quem tem privilégio master_admin (ver MasterRoute).
-// Empresas, Assinaturas e Faturas entram aqui nas próximas fases.
+// Faturas e pagamentos entram aqui nas próximas fases.
 export function MasterLayout() {
   return (
     <div className="app-shell">
@@ -15,6 +15,7 @@ export function MasterLayout() {
             <NavLink to="/master" end>
               Visão geral
             </NavLink>
+            <NavLink to="/master/empresas">Empresas</NavLink>
             <NavLink to="/master/planos">Planos</NavLink>
             <NavLink to="/master/modulos">Módulos</NavLink>
           </nav>

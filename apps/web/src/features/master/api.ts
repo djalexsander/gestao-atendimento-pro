@@ -1,5 +1,5 @@
 import { supabase } from "../../lib/supabaseClient";
-import type { MasterCompanyRow, MasterOverview } from "../../lib/types";
+import type { MasterCompanyRow, MasterOverview, SubscriptionStatus } from "../../lib/types";
 
 // Ambas as funções chamam RPCs SECURITY DEFINER que reautenticam
 // master_admin internamente (assert_master_admin()) — mesmo que alguém
@@ -41,6 +41,8 @@ export async function fetchMasterCompanies(): Promise<{
     document: string | null;
     created_at: string;
     member_count: number;
+    subscription_status: SubscriptionStatus | null;
+    plan_name: string | null;
   }>;
 
   return {
@@ -50,6 +52,8 @@ export async function fetchMasterCompanies(): Promise<{
       document: r.document,
       createdAt: r.created_at,
       memberCount: Number(r.member_count),
+      subscriptionStatus: r.subscription_status,
+      planName: r.plan_name,
     })),
     error: null,
   };
