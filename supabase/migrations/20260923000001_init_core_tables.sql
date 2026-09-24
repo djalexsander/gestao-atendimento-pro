@@ -157,8 +157,8 @@ create policy companies_select on public.companies
 
 create policy companies_update on public.companies
   for update to authenticated
-  using (id in (select public.user_company_ids()))
-  with check (id in (select public.user_company_ids()));
+  using (public.user_role_in_company(id) in ('owner', 'admin'))
+  with check (public.user_role_in_company(id) in ('owner', 'admin'));
 
 create policy companies_delete on public.companies
   for delete to authenticated
@@ -170,18 +170,36 @@ create policy company_users_select on public.company_users
   for select to authenticated
   using (company_id in (select public.user_company_ids()));
 
+-- admin só pode adicionar novos membros como 'agent' (não pode criar outro
+-- admin/owner); owner pode adicionar com qualquer papel.
 create policy company_users_insert on public.company_users
   for insert to authenticated
-  with check (public.user_role_in_company(company_id) in ('owner', 'admin'));
+  with check (
+    public.user_role_in_company(company_id) = 'owner'
+    or (public.user_role_in_company(company_id) = 'admin' and role = 'agent')
+  );
 
+-- admin só gerencia linhas de 'agent' (using = role atual da linha antes do update);
+-- não pode tocar em linhas de 'owner'/'admin' (inclusive a própria) nem promover
+-- ninguém acima de 'agent' (with check = role da linha depois do update). owner
+-- tem controle total, sem essa restrição.
 create policy company_users_update on public.company_users
   for update to authenticated
-  using (public.user_role_in_company(company_id) in ('owner', 'admin'))
-  with check (public.user_role_in_company(company_id) in ('owner', 'admin'));
+  using (
+    public.user_role_in_company(company_id) = 'owner'
+    or (public.user_role_in_company(company_id) = 'admin' and role = 'agent')
+  )
+  with check (
+    public.user_role_in_company(company_id) = 'owner'
+    or (public.user_role_in_company(company_id) = 'admin' and role = 'agent')
+  );
 
 create policy company_users_delete on public.company_users
   for delete to authenticated
-  using (public.user_role_in_company(company_id) in ('owner', 'admin'));
+  using (
+    public.user_role_in_company(company_id) = 'owner'
+    or (public.user_role_in_company(company_id) = 'admin' and role = 'agent')
+  );
 
 -- profiles: cada usuário só enxerga/edita o próprio perfil.
 create policy profiles_select on public.profiles
@@ -194,8 +212,24 @@ create policy profiles_update on public.profiles
   with check (user_id = auth.uid());
 
 -- ---------------------------------------------------------------------------
--- GRANTs explícitos (nunca implícitos). anon não recebe nenhum grant aqui.
+-- GRANTs explícitos (nunca implícitos).
+--
+-- O Supabase concede privilégios por padrão (via ALTER DEFAULT PRIVILEGES) a
+-- anon/authenticated em toda tabela nova do schema public, e o Postgres concede
+-- EXECUTE em toda function nova a PUBLIC por padrão. Os REVOKEs abaixo removem
+-- esses privilégios implícitos antes de conceder exatamente o necessário —
+-- anon não recebe nenhum grant nas tabelas internas.
 -- ---------------------------------------------------------------------------
+revoke all on public.companies from anon, authenticated;
+revoke all on public.company_users from anon, authenticated;
+revoke all on public.profiles from anon, authenticated;
+
+revoke execute on function public.set_updated_at() from public;
+revoke execute on function public.handle_new_user() from public;
+revoke execute on function public.user_company_ids() from public;
+revoke execute on function public.user_role_in_company(uuid) from public;
+revoke execute on function public.create_company(text, text, text) from public;
+
 grant select, update, delete on public.companies to authenticated;
 grant select, insert, update, delete on public.company_users to authenticated;
 grant select, update on public.profiles to authenticated;
