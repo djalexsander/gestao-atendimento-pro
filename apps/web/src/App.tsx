@@ -1,9 +1,17 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AppLayout } from "./app/AppLayout";
-import { AppRoute, GuestOnlyRoute, OnboardingRoute, RootRedirect } from "./app/routeGuards";
+import { MasterLayout } from "./app/MasterLayout";
+import {
+  AppRoute,
+  GuestOnlyRoute,
+  MasterRoute,
+  OnboardingRoute,
+  RootRedirect,
+} from "./app/routeGuards";
 import { AppHomePage } from "./pages/AppHomePage";
 import { CompanySettingsPage } from "./pages/CompanySettingsPage";
 import { LoginPage } from "./pages/LoginPage";
+import { MasterOverviewPage } from "./pages/MasterOverviewPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
 import { SignupPage } from "./pages/SignupPage";
 import { TeamPage } from "./pages/TeamPage";
@@ -47,6 +55,16 @@ function App() {
         <Route index element={<AppHomePage />} />
         <Route path="configuracoes" element={<CompanySettingsPage />} />
         <Route path="equipe" element={<TeamPage />} />
+      </Route>
+      <Route
+        path="/master"
+        element={
+          <MasterRoute>
+            <MasterLayout />
+          </MasterRoute>
+        }
+      >
+        <Route index element={<MasterOverviewPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

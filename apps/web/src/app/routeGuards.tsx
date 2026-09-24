@@ -41,6 +41,22 @@ export function AppRoute({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
+/**
+ * /master — exige sessão E privilégio master_admin validado pelo backend
+ * (via is_master_admin(), nunca por e-mail hardcoded ou estado local).
+ * Não tem relação com companies/activeCompanyId: um master_admin sem
+ * nenhuma empresa ainda acessa /master normalmente.
+ */
+export function MasterRoute({ children }: { children: ReactNode }) {
+  const { loading, session, masterAdminLoading, isMasterAdmin } = useAuth();
+
+  if (loading) return <FullPageLoader />;
+  if (!session) return <Navigate to="/login" replace />;
+  if (masterAdminLoading) return <FullPageLoader />;
+  if (!isMasterAdmin) return <Navigate to="/" replace />;
+  return <>{children}</>;
+}
+
 /** "/" — decide para onde mandar com base no estado de autenticação/empresa. */
 export function RootRedirect() {
   const { loading, session, companiesLoading, companies } = useAuth();

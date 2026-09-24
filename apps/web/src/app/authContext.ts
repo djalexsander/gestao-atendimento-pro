@@ -9,6 +9,10 @@ export interface AuthContextValue {
   profile: ProfileRow | null;
   companies: CompanyMembership[];
   companiesLoading: boolean;
+  // Privilégio GLOBAL da plataforma, independente de qualquer empresa — não
+  // confundir com o papel (owner/admin/agent) dentro de activeMembership.
+  isMasterAdmin: boolean;
+  masterAdminLoading: boolean;
   activeCompanyId: string | null;
   activeMembership: CompanyMembership | null;
   setActiveCompanyId: (companyId: string) => void;

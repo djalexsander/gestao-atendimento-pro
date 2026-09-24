@@ -32,7 +32,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [profile, setProfile] = useState<ProfileRow | null>(null);
   const [companies, setCompanies] = useState<CompanyMembership[]>([]);
-  const [companiesLoading, setCompaniesLoading] = useState(false);
+  // Começam "true" de propósito: enquanto a sessão inicial ainda está sendo
+  // resolvida, existe uma janela entre `session` já vir preenchida e o efeito
+  // que dispara a busca real ainda não ter rodado. Se esses loadings
+  // começassem em `false`, um guard de rota veria momentaneamente "sessão ok,
+  // nada carregando, lista vazia" e navegaria para o destino errado (ex.:
+  // expulsar um master_admin de /master) antes da checagem real terminar —
+  // e como <Navigate> troca a URL, esse redirecionamento não se desfaz
+  // sozinho depois. Bug real observado e corrigido durante os testes do
+  // Painel Master.
+  const [companiesLoading, setCompaniesLoading] = useState(true);
+  const [isMasterAdmin, setIsMasterAdmin] = useState(false);
+  const [masterAdminLoading, setMasterAdminLoading] = useState(true);
   // Preferência do usuário (persistida); a empresa efetivamente ativa é derivada
   // abaixo, caindo para a primeira empresa quando a preferência não é (mais) válida.
   const [preferredCompanyId, setPreferredCompanyId] = useState<string | null>(
@@ -84,6 +95,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setCompaniesLoading(false);
   }, []);
 
+  // Privilégio global, independente das empresas do usuário — por isso é uma
+  // busca separada de refreshCompanies, não misturada com o resultado dela.
+  // Esta chamada só decide o que a UI mostra; a autoridade real é a própria
+  // RPC verificando de novo a cada chamada administrativa.
+  const refreshMasterStatus = useCallback(async () => {
+    setMasterAdminLoading(true);
+    const { data, error } = await supabase.rpc("is_master_admin");
+    if (error) {
+      console.error("Falha ao verificar privilégio master_admin:", error);
+      setIsMasterAdmin(false);
+    } else {
+      setIsMasterAdmin(Boolean(data));
+    }
+    setMasterAdminLoading(false);
+  }, []);
+
   // Depende de user?.id (não do objeto `user`) de propósito: o supabase-js
   // emite um novo objeto de sessão/usuário em eventos como refresh de token
   // ou a aba voltar a ficar visível, mesmo sendo a mesma pessoa. Reagir à
@@ -92,13 +119,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const userId = user?.id ?? null;
   useEffect(() => {
     if (!userId) {
+      // Enquanto a sessão inicial ainda está sendo resolvida (loading), não
+      // marcamos "terminou de carregar": senão os guards de rota veriam
+      // "sem loading + sem dados" antes da sessão real chegar.
+      if (loading) return;
       setProfile(null);
       setCompanies([]);
       setCompaniesLoading(false);
+      setIsMasterAdmin(false);
+      setMasterAdminLoading(false);
       return;
     }
     void refreshCompanies(userId);
-  }, [userId, refreshCompanies]);
+    void refreshMasterStatus();
+  }, [userId, loading, refreshCompanies, refreshMasterStatus]);
 
   // Empresa efetivamente ativa: a preferência salva, se ainda válida, senão a
   // primeira empresa do usuário. Derivado no render — sem efeito e sem estado
@@ -176,6 +210,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     profile,
     companies,
     companiesLoading,
+    isMasterAdmin,
+    masterAdminLoading,
     activeCompanyId,
     activeMembership,
     setActiveCompanyId,

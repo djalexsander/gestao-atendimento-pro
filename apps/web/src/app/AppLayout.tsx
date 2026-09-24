@@ -1,4 +1,4 @@
-import { NavLink, Outlet } from "react-router-dom";
+import { Link, NavLink, Outlet } from "react-router-dom";
 import { CompanySwitcher } from "./CompanySwitcher";
 import { PendingInvitesBanner } from "./PendingInvitesBanner";
 import { useAuth } from "./useAuth";
@@ -10,7 +10,7 @@ const ROLE_LABEL: Record<string, string> = {
 };
 
 export function AppLayout() {
-  const { user, activeMembership, signOut } = useAuth();
+  const { user, activeMembership, isMasterAdmin, signOut } = useAuth();
 
   return (
     <div className="app-shell">
@@ -32,6 +32,11 @@ export function AppLayout() {
             <span className="role-badge">
               {ROLE_LABEL[activeMembership.role] ?? activeMembership.role}
             </span>
+          )}
+          {isMasterAdmin && (
+            <Link className="btn-secondary" to="/master">
+              Painel Master
+            </Link>
           )}
           <button className="btn-secondary" type="button" onClick={() => void signOut()}>
             Sair

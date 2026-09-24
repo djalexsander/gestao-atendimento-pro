@@ -48,3 +48,17 @@ export interface TeamMember {
   fullName: string | null;
   email: string | null;
 }
+
+export interface MasterOverview {
+  totalCompanies: number;
+  totalUsers: number;
+  activeCompanies: number;
+}
+
+export interface MasterCompanyRow {
+  id: string;
+  name: string;
+  document: string | null;
+  createdAt: string;
+  memberCount: number;
+}
