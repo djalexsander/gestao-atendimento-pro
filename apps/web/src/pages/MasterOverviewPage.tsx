@@ -36,7 +36,6 @@ export function MasterOverviewPage() {
       <div style={{ display: "flex", gap: 16, marginBottom: 32, flexWrap: "wrap" }}>
         <StatCard label="Total de empresas" value={overview?.totalCompanies ?? 0} />
         <StatCard label="Total de usuários" value={overview?.totalUsers ?? 0} />
-        <StatCard label="Empresas ativas" value={overview?.activeCompanies ?? 0} />
       </div>
 
       <h3 style={{ fontSize: 18 }}>Empresas</h3>

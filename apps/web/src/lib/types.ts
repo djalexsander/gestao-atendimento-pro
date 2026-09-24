@@ -52,7 +52,6 @@ export interface TeamMember {
 export interface MasterOverview {
   totalCompanies: number;
   totalUsers: number;
-  activeCompanies: number;
 }
 
 export interface MasterCompanyRow {

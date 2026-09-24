@@ -15,7 +15,6 @@ export async function fetchMasterOverview(): Promise<{
   const row = (Array.isArray(data) ? data[0] : data) as {
     total_companies: number;
     total_users: number;
-    active_companies: number;
   } | null;
 
   if (!row) return { data: null, error: null };
@@ -24,7 +23,6 @@ export async function fetchMasterOverview(): Promise<{
     data: {
       totalCompanies: Number(row.total_companies),
       totalUsers: Number(row.total_users),
-      activeCompanies: Number(row.active_companies),
     },
     error: null,
   };
