@@ -11,7 +11,9 @@ import {
 import { AppHomePage } from "./pages/AppHomePage";
 import { CompanySettingsPage } from "./pages/CompanySettingsPage";
 import { LoginPage } from "./pages/LoginPage";
+import { MasterModulesPage } from "./pages/MasterModulesPage";
 import { MasterOverviewPage } from "./pages/MasterOverviewPage";
+import { MasterPlansPage } from "./pages/MasterPlansPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
 import { SignupPage } from "./pages/SignupPage";
 import { TeamPage } from "./pages/TeamPage";
@@ -65,6 +67,8 @@ function App() {
         }
       >
         <Route index element={<MasterOverviewPage />} />
+        <Route path="planos" element={<MasterPlansPage />} />
+        <Route path="modulos" element={<MasterModulesPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

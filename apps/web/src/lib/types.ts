@@ -61,3 +61,24 @@ export interface MasterCompanyRow {
   createdAt: string;
   memberCount: number;
 }
+
+export interface CatalogModule {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  monthlyPriceCents: number;
+  isActive: boolean;
+}
+
+export interface CatalogPlan {
+  id: string;
+  code: string;
+  name: string;
+  description: string | null;
+  monthlyPriceCents: number;
+  isActive: boolean;
+  // null = ilimitado
+  limits: Record<string, number | null>;
+  moduleIds: string[];
+}
