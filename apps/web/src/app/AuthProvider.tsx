@@ -84,15 +84,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setCompaniesLoading(false);
   }, []);
 
+  // Depende de user?.id (não do objeto `user`) de propósito: o supabase-js
+  // emite um novo objeto de sessão/usuário em eventos como refresh de token
+  // ou a aba voltar a ficar visível, mesmo sendo a mesma pessoa. Reagir à
+  // referência do objeto faria a UI inteira cair para o loading de novo a
+  // cada um desses eventos, mesmo sem o usuário ter realmente mudado.
+  const userId = user?.id ?? null;
   useEffect(() => {
-    if (!user) {
+    if (!userId) {
       setProfile(null);
       setCompanies([]);
       setCompaniesLoading(false);
       return;
     }
-    void refreshCompanies(user.id);
-  }, [user, refreshCompanies]);
+    void refreshCompanies(userId);
+  }, [userId, refreshCompanies]);
 
   // Empresa efetivamente ativa: a preferência salva, se ainda válida, senão a
   // primeira empresa do usuário. Derivado no render — sem efeito e sem estado
@@ -120,7 +126,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function signOut() {
     await supabase.auth.signOut();
+    setPreferredCompanyId(null);
     persistActiveCompanyId(null);
+  }
+
+  async function refreshMemberships() {
+    if (!user) return;
+    await refreshCompanies(user.id);
   }
 
   async function createCompany(name: string, document: string | null) {
@@ -171,6 +183,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signIn,
     signOut,
     createCompany,
+    refreshMemberships,
   };
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

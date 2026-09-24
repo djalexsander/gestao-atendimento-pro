@@ -202,12 +202,43 @@ button {
   margin-bottom: 0;
 }
 
+.app-topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+.app-nav {
+  display: flex;
+  gap: 16px;
+}
+
+.app-nav a {
+  color: var(--text-muted);
+  text-decoration: none;
+  font-size: 14px;
+}
+
+.app-nav a.active {
+  color: var(--text-h);
+  font-weight: 600;
+}
+
 .app-user {
   display: flex;
   align-items: center;
   gap: 16px;
   font-size: 14px;
   color: var(--text-muted);
+}
+
+.company-switcher {
+  font: inherit;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--text);
 }
 
 .app-body {
@@ -225,4 +256,25 @@ button {
   border: 1px solid var(--border);
   font-size: 13px;
   color: var(--text);
+}
+
+.invite-banner {
+  background: var(--accent-bg, rgba(124, 58, 237, 0.08));
+  border-bottom: 1px solid var(--border);
+  padding: 12px 24px;
+}
+
+.invite-banner-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  font-size: 14px;
+  max-width: 720px;
+  margin: 0 auto;
+}
+
+.invite-banner-item .btn-primary {
+  width: auto;
+  padding: 6px 14px;
 }

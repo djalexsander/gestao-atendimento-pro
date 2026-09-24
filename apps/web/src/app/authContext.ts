@@ -19,6 +19,7 @@ export interface AuthContextValue {
     name: string,
     document: string | null,
   ) => Promise<{ error: string | null }>;
+  refreshMemberships: () => Promise<void>;
 }
 
 export const AuthContext = createContext<AuthContextValue | null>(null);
