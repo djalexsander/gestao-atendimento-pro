@@ -1,5 +1,5 @@
 import { supabase } from "../../lib/supabaseClient";
-import type { CompanyDetail, SubscriptionStatus } from "../../lib/types";
+import type { CompanyDetail, SubscriptionHistory, SubscriptionStatus } from "../../lib/types";
 
 // Todas as chamadas são RPCs SECURITY DEFINER que reautenticam master_admin
 // no backend. As tabelas comerciais não são acessíveis ao cliente.
@@ -71,4 +71,14 @@ export async function setBillingDay(
     p_billing_day: billingDay,
   });
   return { error: error?.message ?? null };
+}
+
+export async function getSubscriptionHistory(
+  subscriptionId: string,
+): Promise<{ data: SubscriptionHistory | null; error: string | null }> {
+  const { data, error } = await supabase.rpc("master_get_subscription_history", {
+    p_subscription_id: subscriptionId,
+  });
+  if (error) return { data: null, error: error.message };
+  return { data: data as SubscriptionHistory, error: null };
 }

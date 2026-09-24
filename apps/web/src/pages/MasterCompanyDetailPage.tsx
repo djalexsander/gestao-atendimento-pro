@@ -9,6 +9,8 @@ import {
   setSubscriptionStatus,
   subscribeCompany,
 } from "../features/master/subscriptionApi";
+import { CompanyInvoices } from "../features/master/CompanyInvoices";
+import { SubscriptionTimeline } from "../features/master/SubscriptionTimeline";
 import { formatCents } from "../lib/money";
 import { EVENT_LABEL, STATUS_LABEL } from "../lib/subscriptionLabels";
 import type { CatalogModule, CatalogPlan, CompanyDetail, SubscriptionStatus } from "../lib/types";
@@ -84,7 +86,7 @@ export function MasterCompanyDetailPage() {
       {error && <div className="form-error">{error}</div>}
       {detail.subscription ? (
         <SubscriptionPanel
-          key={loadedVersion}
+          key={`panel-${loadedVersion}`}
           sub={detail.subscription}
           plans={plans}
           modules={modules}
@@ -92,12 +94,22 @@ export function MasterCompanyDetailPage() {
         />
       ) : (
         <SubscribeForm
-          key={loadedVersion}
+          key={`form-${loadedVersion}`}
           companyId={detail.company.id}
           plans={plans}
           onChanged={() => setReloadKey((k) => k + 1)}
         />
       )}
+
+      {detail.subscription && (
+        <SubscriptionTimeline key={`timeline-${loadedVersion}`} subscriptionId={detail.subscription.id} />
+      )}
+
+      <CompanyInvoices
+        key={`invoices-${loadedVersion}`}
+        companyId={detail.company.id}
+        subscriptionId={detail.subscription?.id ?? null}
+      />
 
       {detail.past_subscriptions.length > 0 && (
         <>

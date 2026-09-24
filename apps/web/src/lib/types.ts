@@ -149,3 +149,73 @@ export interface CompanyDetail {
     canceled_at: string | null;
   }>;
 }
+
+export type InvoiceStatus = "open" | "paid" | "overdue" | "void";
+
+export interface InvoiceRow {
+  id: string;
+  subscription_id: string;
+  company_id: string;
+  company_name: string;
+  plan_description: string | null;
+  competence: string; // "YYYY-MM-01"
+  due_date: string; // "YYYY-MM-DD"
+  amount_cents: number;
+  status: InvoiceStatus;
+  paid_at: string | null;
+  created_at: string;
+}
+
+export interface InvoiceDetail {
+  invoice: {
+    id: string;
+    subscription_id: string;
+    company_id: string;
+    competence: string;
+    due_date: string;
+    amount_cents: number;
+    status: InvoiceStatus;
+    paid_at: string | null;
+    created_at: string;
+    updated_at: string;
+  };
+  company: { id: string; name: string };
+  subscription: { id: string; status: SubscriptionStatus; billing_day: number; plan_id: string } | null;
+  items: Array<{
+    id: string;
+    kind: "plan" | "module" | "adjustment";
+    ref_id: string | null;
+    description: string;
+    amount_cents: number;
+  }>;
+  events: Array<{
+    id: string;
+    event_type: string;
+    payload: Record<string, unknown>;
+    created_at: string;
+    actor_email: string | null;
+  }>;
+}
+
+export interface SubscriptionHistory {
+  terms: Array<{
+    id: string;
+    effective_from_competence: string;
+    plan_id: string;
+    plan_name: string;
+    plan_price_cents: number;
+    billing_day: number;
+    created_at: string;
+    actor_email: string | null;
+  }>;
+  extras: Array<{
+    id: string;
+    module_id: string;
+    name: string;
+    price_cents: number;
+    effective_from_competence: string;
+    effective_to_competence: string | null; // exclusivo
+    added_at: string;
+    removed_at: string | null;
+  }>;
+}
