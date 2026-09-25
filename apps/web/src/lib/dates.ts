@@ -7,6 +7,20 @@ export function fmtDateOnly(value: string | null): string {
   return `${d}/${m}/${y}`;
 }
 
+// Instantes (timestamptz) sempre no fuso comercial, não no do navegador:
+// "2027-10-08T15:00:00+00:00" -> "08/10/2027 12:00".
+export function fmtDateTimeSP(value: string | null): string {
+  if (!value) return "—";
+  return new Date(value).toLocaleString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 // "2026-09-01" -> "09/2026"
 export function fmtCompetence(value: string): string {
   const [y, m] = value.slice(0, 7).split("-");

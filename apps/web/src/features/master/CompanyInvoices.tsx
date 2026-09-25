@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { currentMonthValue, fmtCompetence, fmtDateOnly, monthToCompetence } from "../../lib/dates";
 import { formatCents } from "../../lib/money";
-import { INVOICE_STATUS_LABEL } from "../../lib/subscriptionLabels";
+import { INVOICE_KIND_LABEL, INVOICE_STATUS_LABEL } from "../../lib/subscriptionLabels";
 import type { InvoiceRow } from "../../lib/types";
 import { generateInvoice, listInvoices } from "./invoiceApi";
 
@@ -91,26 +91,30 @@ export function CompanyInvoices({
         <table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ textAlign: "left", borderBottom: "1px solid var(--border)" }}>
+              <th style={cell}>Tipo</th>
               <th style={cell}>Competência</th>
               <th style={cell}>Vencimento</th>
               <th style={cell}>Valor</th>
               <th style={cell}>Status</th>
+              <th style={cell}>Atraso</th>
             </tr>
           </thead>
           <tbody>
             {invoices.map((i) => (
               <tr key={i.id} style={{ borderBottom: "1px solid var(--border)" }}>
+                <td style={cell}>{INVOICE_KIND_LABEL[i.kind]}</td>
                 <td style={cell}>
                   <Link to={`/master/faturas/${i.id}`}>{fmtCompetence(i.competence)}</Link>
                 </td>
                 <td style={cell}>{fmtDateOnly(i.due_date)}</td>
                 <td style={cell}>{formatCents(i.amount_cents)}</td>
                 <td style={cell}>{INVOICE_STATUS_LABEL[i.status]}</td>
+                <td style={cell}>{i.days_overdue ? `${i.days_overdue} dia(s)` : "—"}</td>
               </tr>
             ))}
             {invoices.length === 0 && (
               <tr>
-                <td style={cell} colSpan={4}>
+                <td style={cell} colSpan={6}>
                   Nenhuma fatura gerada para esta empresa.
                 </td>
               </tr>

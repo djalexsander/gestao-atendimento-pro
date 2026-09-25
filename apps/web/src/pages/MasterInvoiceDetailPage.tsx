@@ -3,7 +3,7 @@ import { Link, useParams } from "react-router-dom";
 import { getInvoice, markInvoicePaid, voidInvoice } from "../features/master/invoiceApi";
 import { fmtCompetence, fmtDateOnly } from "../lib/dates";
 import { formatCents } from "../lib/money";
-import { INVOICE_EVENT_LABEL, INVOICE_STATUS_LABEL, STATUS_LABEL } from "../lib/subscriptionLabels";
+import { INVOICE_EVENT_LABEL, INVOICE_KIND_LABEL, INVOICE_STATUS_LABEL, STATUS_LABEL } from "../lib/subscriptionLabels";
 import type { InvoiceDetail } from "../lib/types";
 
 const cell = { padding: "8px 4px" } as const;
@@ -51,7 +51,7 @@ export function MasterInvoiceDetailPage() {
   if (loading) return <p>Carregando fatura…</p>;
   if (error || !detail) return <div className="form-error">{error ?? "Fatura não encontrada."}</div>;
 
-  const { invoice, company, subscription, items, events } = detail;
+  const { invoice, company, subscription, items, events, billing } = detail;
   const canAct = invoice.status === "open" || invoice.status === "overdue";
   const planItem = items.find((i) => i.kind === "plan");
 
@@ -61,7 +61,7 @@ export function MasterInvoiceDetailPage() {
         <Link to="/master/faturas">← Faturas</Link>
       </p>
       <h2>
-        Fatura {fmtCompetence(invoice.competence)} — {company.name}
+        {INVOICE_KIND_LABEL[invoice.kind]} {fmtCompetence(invoice.competence)} — {company.name}
       </h2>
 
       <p>
@@ -75,6 +75,25 @@ export function MasterInvoiceDetailPage() {
         {subscription &&
           ` · Assinatura hoje: ${STATUS_LABEL[subscription.status]}, vence dia ${subscription.billing_day}`}
       </p>
+      {canAct && billing.applies_to_debt_cycle && billing.restriction_from && (
+        <p>
+          {billing.days_overdue
+            ? `Vencida há ${billing.days_overdue} dia(s). `
+            : "Ainda no prazo. "}
+          Carência até <strong>{fmtDateOnly(billing.grace_until)}</strong>; a assinatura fica restrita (somente
+          leitura) a partir de <strong>{fmtDateOnly(billing.restriction_from)}</strong> se não for paga.
+        </p>
+      )}
+      {canAct && !billing.applies_to_debt_cycle && (
+        <p>
+          {billing.days_overdue
+            ? `Vencida há ${billing.days_overdue} dia(s). `
+            : "Ainda no prazo. "}
+          Esta é a cobrança inicial: a assinatura só é ativada quando ela for paga e não entra em carência nem em
+          restrição por causa dela. Para desistir da contratação, cancele a assinatura — a cobrança inicial é anulada
+          automaticamente.
+        </p>
+      )}
       <p style={{ color: "var(--text-muted)", fontSize: 13 }}>
         Valores e vencimento são um retrato do momento da geração; mudanças posteriores na assinatura ou no
         catálogo não alteram esta fatura.

@@ -10,13 +10,14 @@ import {
   subscribeCompany,
 } from "../features/master/subscriptionApi";
 import { CompanyInvoices } from "../features/master/CompanyInvoices";
+import { BillingStatus } from "../features/master/BillingStatus";
 import { SubscriptionTimeline } from "../features/master/SubscriptionTimeline";
+import { TrialPanel } from "../features/master/TrialPanel";
 import { formatCents } from "../lib/money";
-import { EVENT_LABEL, STATUS_LABEL } from "../lib/subscriptionLabels";
-import type { CatalogModule, CatalogPlan, CompanyDetail, SubscriptionStatus } from "../lib/types";
+import { EVENT_LABEL, MANUAL_STATUSES, STATUS_LABEL } from "../lib/subscriptionLabels";
+import type { CatalogModule, CatalogPlan, CompanyDetail, CompanyTrial, SubscriptionStatus } from "../lib/types";
 
 const ROLE_LABEL: Record<string, string> = { owner: "Dono(a)", admin: "Administrador(a)", agent: "Agente" };
-const STATUSES = Object.keys(STATUS_LABEL) as SubscriptionStatus[];
 const cell = { padding: "8px 4px" } as const;
 
 function fmtDate(iso: string | null): string {
@@ -82,12 +83,20 @@ export function MasterCompanyDetailPage() {
         </tbody>
       </table>
 
+      <TrialPanel
+        key={`trial-${loadedVersion}`}
+        companyId={detail.company.id}
+        trial={detail.trial}
+        onChanged={() => setReloadKey((k) => k + 1)}
+      />
+
       <h3 style={{ fontSize: 18 }}>Assinatura</h3>
       {error && <div className="form-error">{error}</div>}
       {detail.subscription ? (
         <SubscriptionPanel
           key={`panel-${loadedVersion}`}
           sub={detail.subscription}
+          reservedPlanCode={detail.trial.reserved_plan_code}
           plans={plans}
           modules={modules}
           onChanged={() => setReloadKey((k) => k + 1)}
@@ -96,9 +105,15 @@ export function MasterCompanyDetailPage() {
         <SubscribeForm
           key={`form-${loadedVersion}`}
           companyId={detail.company.id}
+          trial={detail.trial}
           plans={plans}
+          modules={modules}
           onChanged={() => setReloadKey((k) => k + 1)}
         />
+      )}
+
+      {detail.subscription && (
+        <BillingStatus key={`billing-${loadedVersion}`} subscriptionId={detail.subscription.id} />
       )}
 
       {detail.subscription && (
@@ -130,30 +145,36 @@ export function MasterCompanyDetailPage() {
 
 function SubscribeForm({
   companyId,
+  trial,
   plans,
+  modules,
   onChanged,
 }: {
   companyId: string;
+  trial: CompanyTrial;
   plans: CatalogPlan[];
+  modules: CatalogModule[];
   onChanged: () => void;
 }) {
-  const activePlans = plans.filter((p) => p.isActive);
+  // O registro de catálogo reservado (code do backend) é só apresentação do período grátis: o backend
+  // recusa contratá-lo, então nem aparece aqui. O período grátis em si nem depende dele.
+  const activePlans = plans.filter((p) => p.isActive && p.code !== trial.reserved_plan_code);
   const [planId, setPlanId] = useState(activePlans[0]?.id ?? "");
-  const [billingDay, setBillingDayValue] = useState("10");
-  const [status, setStatus] = useState<"trialing" | "active">("active");
+  const [extraIds, setExtraIds] = useState<string[]>([]);
+  const selectedPlan = activePlans.find((p) => p.id === planId);
+  const extraCandidates = modules.filter((m) => m.isActive && !selectedPlan?.moduleIds.includes(m.id));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    const day = Number(billingDay);
-    if (!Number.isInteger(day) || day < 1 || day > 31) {
-      setError("Dia de vencimento deve ser um inteiro de 1 a 31.");
-      return;
-    }
     setError(null);
     setSaving(true);
-    const result = await subscribeCompany(companyId, planId, day, status);
+    const result = await subscribeCompany(
+      companyId,
+      planId,
+      extraIds.filter((id) => extraCandidates.some((m) => m.id === id)),
+    );
     setSaving(false);
     if (result.error) return setError(result.error);
     onChanged();
@@ -162,8 +183,15 @@ function SubscribeForm({
   return (
     <form onSubmit={submit} style={{ maxWidth: 420 }}>
       <p style={{ color: "var(--text-muted)" }}>
-        Esta empresa não tem assinatura e continua operando normalmente.
+        Esta empresa não tem assinatura paga e continua operando normalmente.
       </p>
+      {trial.state === "trialing" && (
+        <p>
+          Há um <strong>período grátis em andamento</strong>: contratar um plano pago o encerra agora (convertido; os
+          dias restantes não continuam valendo) e gera a cobrança inicial hoje. A assinatura fica aguardando o
+          pagamento inicial.
+        </p>
+      )}
       {error && <div className="form-error">{error}</div>}
       {activePlans.length === 0 ? (
         <p>Nenhum plano ativo no catálogo. Cadastre um em Planos.</p>
@@ -179,28 +207,32 @@ function SubscribeForm({
               ))}
             </select>
           </div>
-          <div className="field">
-            <label htmlFor="sub-day">Dia de vencimento (1 a 31)</label>
-            <input
-              id="sub-day"
-              inputMode="numeric"
-              value={billingDay}
-              onChange={(e) => setBillingDayValue(e.target.value)}
-            />
-          </div>
-          <div className="field">
-            <label htmlFor="sub-status">Status inicial</label>
-            <select
-              id="sub-status"
-              value={status}
-              onChange={(e) => setStatus(e.target.value as "trialing" | "active")}
-            >
-              <option value="active">Ativa</option>
-              <option value="trialing">Em teste</option>
-            </select>
-          </div>
+          {extraCandidates.length > 0 && (
+            <div className="field">
+              <label>Módulos adicionais (entram na cobrança inicial)</label>
+              {extraCandidates.map((m) => (
+                <label key={m.id} style={{ display: "flex", gap: 8, marginBottom: 4 }}>
+                  <input
+                    type="checkbox"
+                    checked={extraIds.includes(m.id)}
+                    onChange={(e) =>
+                      setExtraIds(e.target.checked ? [...extraIds, m.id] : extraIds.filter((x) => x !== m.id))
+                    }
+                  />
+                  {m.name} — {formatCents(m.monthlyPriceCents)}
+                </label>
+              ))}
+            </div>
+          )}
+          <p style={{ color: "var(--text-muted)", fontSize: 13 }}>
+            Ao contratar, a assinatura nasce <strong>aguardando pagamento inicial</strong> e é criada na hora a
+            cobrança inicial integral (plano + adicionais, sem prorrata), com vencimento hoje. O dia de vencimento das
+            mensalidades é o dia desta contratação paga (não se escolhe aqui): a próxima vence no mesmo dia do mês
+            seguinte (dia inexistente usa o último dia do mês). A assinatura só fica ativa quando a fatura inicial for
+            paga.
+          </p>
           <button className="btn-primary" type="submit" disabled={saving} style={{ width: "auto" }}>
-            {saving ? "Contratando…" : "Contratar plano"}
+            {saving ? "Contratando…" : "Contratar plano pago"}
           </button>
         </>
       )}
@@ -210,11 +242,13 @@ function SubscribeForm({
 
 function SubscriptionPanel({
   sub,
+  reservedPlanCode,
   plans,
   modules,
   onChanged,
 }: {
   sub: NonNullable<CompanyDetail["subscription"]>;
+  reservedPlanCode: string;
   plans: CatalogPlan[];
   modules: CatalogModule[];
   onChanged: () => void;
@@ -232,7 +266,12 @@ function SubscriptionPanel({
   const candidates = modules.filter(
     (m) => !includedIds.includes(m.id) && (m.isActive || currentExtraIds.includes(m.id)),
   );
-  const switchablePlans = plans.filter((p) => p.isActive && p.id !== sub.plan.id);
+  // O registro reservado do período grátis não vira assinatura (o backend recusa a troca para ele).
+  const switchablePlans = plans.filter((p) => p.isActive && p.id !== sub.plan.id && p.code !== reservedPlanCode);
+  // Contrato cobrado CONGELADO (decisão do banco): enquanto a fatura inicial não for paga, plano, módulos e dia
+  // de vencimento não mudam e a assinatura não é ativada manualmente; restam suspender e cancelar.
+  const locked = sub.status !== "canceled" && !sub.initial_charge_settled;
+  const statusOptions = locked ? MANUAL_STATUSES.filter((s) => s === "suspended" || s === "canceled") : MANUAL_STATUSES;
 
   async function run(action: () => Promise<{ error: string | null }>) {
     setError(null);
@@ -251,10 +290,22 @@ function SubscriptionPanel({
 
       <p>
         <strong>{STATUS_LABEL[sub.status]}</strong> · Plano <strong>{sub.plan.name}</strong> · Vence
-        todo dia {sub.billing_day} · Contratada na competência {fmtDate(sub.current_period_start)} a{" "}
-        {fmtDate(sub.current_period_end)} (informativo)
+        todo dia {sub.billing_day} (dia da contratação paga) · Contratada na competência{" "}
+        {fmtDate(sub.current_period_start)} a {fmtDate(sub.current_period_end)} (informativo)
         {sub.grace_until && ` · Carência até ${fmtDate(sub.grace_until)}`}
       </p>
+      {sub.status === "pending_payment" && (
+        <p style={{ color: "var(--text-muted)", fontSize: 13 }}>
+          Aguardando o pagamento da fatura inicial: a assinatura só é ativada por esse pagamento (não há ativação
+          manual).
+        </p>
+      )}
+      {locked && (
+        <p style={{ color: "var(--text-muted)", fontSize: 13 }}>
+          Contrato cobrado congelado: enquanto a fatura inicial não for paga, plano, módulos adicionais e dia de
+          vencimento não podem ser alterados. Pague a fatura inicial ou cancele a assinatura e contrate de novo.
+        </p>
+      )}
       <p>
         Preço contratado do plano: <strong>{formatCents(sub.plan.price_cents_snapshot)}</strong>
         {sub.plan.price_cents_snapshot !== sub.plan.catalog_price_cents &&
@@ -273,6 +324,7 @@ function SubscriptionPanel({
           <label key={m.id} style={{ display: "flex", gap: 8, marginBottom: 4 }}>
             <input
               type="checkbox"
+              disabled={locked}
               checked={extraIds.includes(m.id)}
               onChange={(e) =>
                 setExtraIds(e.target.checked ? [...extraIds, m.id] : extraIds.filter((x) => x !== m.id))
@@ -289,7 +341,7 @@ function SubscriptionPanel({
       <button
         className="btn-secondary"
         type="button"
-        disabled={busy}
+        disabled={busy || locked}
         style={{ margin: "8px 0 16px" }}
         onClick={() => run(() => setSubscriptionModules(sub.id, extraIds))}
       >
@@ -301,7 +353,7 @@ function SubscriptionPanel({
           <div>
             <label htmlFor="chg-plan">Trocar plano</label>
             <div style={{ display: "flex", gap: 8 }}>
-              <select id="chg-plan" value={newPlanId} onChange={(e) => setNewPlanId(e.target.value)}>
+              <select id="chg-plan" value={newPlanId} disabled={locked} onChange={(e) => setNewPlanId(e.target.value)}>
                 <option value="">Selecione…</option>
                 {switchablePlans.map((p) => (
                   <option key={p.id} value={p.id}>
@@ -312,7 +364,7 @@ function SubscriptionPanel({
               <button
                 className="btn-secondary"
                 type="button"
-                disabled={busy || !newPlanId}
+                disabled={busy || locked || !newPlanId}
                 onClick={() => run(() => changePlan(sub.id, newPlanId))}
               >
                 Trocar
@@ -321,18 +373,23 @@ function SubscriptionPanel({
           </div>
 
           <div>
-            <label htmlFor="chg-day">Dia de vencimento (1 a 31)</label>
+            <label htmlFor="chg-day">Ajuste excepcional do dia de vencimento (1 a 31)</label>
             <div style={{ display: "flex", gap: 8 }}>
-              <input id="chg-day" inputMode="numeric" value={day} onChange={(e) => setDay(e.target.value)} />
+              <input id="chg-day" inputMode="numeric" value={day} disabled={locked} onChange={(e) => setDay(e.target.value)} />
               <button
                 className="btn-secondary"
                 type="button"
-                disabled={busy}
+                disabled={busy || locked}
                 onClick={() => run(() => setBillingDay(sub.id, Number(day)))}
               >
                 Alterar
               </button>
             </div>
+            <p style={{ color: "var(--text-muted)", fontSize: 13 }}>
+              O dia nasce da contratação paga e não muda sozinho. Este ajuste é uma exceção do Master: vale a partir da
+              primeira competência ainda não faturada, não altera faturas já geradas nem a cobrança inicial, e fica
+              registrado no histórico com o autor.
+            </p>
           </div>
 
           <div>
@@ -343,7 +400,12 @@ function SubscriptionPanel({
                 value={status}
                 onChange={(e) => setStatus(e.target.value as SubscriptionStatus)}
               >
-                {STATUSES.map((s) => (
+                {!statusOptions.includes(sub.status) && (
+                  <option value={sub.status} disabled>
+                    {STATUS_LABEL[sub.status]} (atual)
+                  </option>
+                )}
+                {statusOptions.map((s) => (
                   <option key={s} value={s}>
                     {STATUS_LABEL[s]}
                   </option>
@@ -373,6 +435,8 @@ function SubscriptionPanel({
             {status === "canceled" && (
               <p style={{ color: "var(--text-muted)", fontSize: 13 }}>
                 Cancelar é definitivo para esta assinatura (o histórico é mantido).
+                {locked &&
+                  " Como ela nunca foi ativada, a cobrança inicial em aberto ou vencida é anulada automaticamente (fica no histórico como anulada por cancelamento antes da ativação); nenhuma outra fatura é alterada."}
               </p>
             )}
           </div>

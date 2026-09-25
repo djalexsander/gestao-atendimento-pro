@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { listInvoices } from "../features/master/invoiceApi";
 import { fmtCompetence, fmtDateOnly, monthToCompetence } from "../lib/dates";
 import { formatCents } from "../lib/money";
-import { INVOICE_STATUS_LABEL } from "../lib/subscriptionLabels";
+import { INVOICE_KIND_LABEL, INVOICE_STATUS_LABEL } from "../lib/subscriptionLabels";
 import type { InvoiceRow, InvoiceStatus } from "../lib/types";
 
 const cell = { padding: "8px 4px" } as const;
@@ -59,10 +59,12 @@ export function MasterInvoicesPage() {
           <thead>
             <tr style={{ textAlign: "left", borderBottom: "1px solid var(--border)" }}>
               <th style={cell}>Empresa</th>
+              <th style={cell}>Tipo</th>
               <th style={cell}>Competência</th>
               <th style={cell}>Vencimento</th>
               <th style={cell}>Valor</th>
               <th style={cell}>Status</th>
+              <th style={cell}>Atraso</th>
             </tr>
           </thead>
           <tbody>
@@ -71,15 +73,17 @@ export function MasterInvoicesPage() {
                 <td style={cell}>
                   <Link to={`/master/faturas/${i.id}`}>{i.company_name}</Link>
                 </td>
+                <td style={cell}>{INVOICE_KIND_LABEL[i.kind]}</td>
                 <td style={cell}>{fmtCompetence(i.competence)}</td>
                 <td style={cell}>{fmtDateOnly(i.due_date)}</td>
                 <td style={cell}>{formatCents(i.amount_cents)}</td>
                 <td style={cell}>{INVOICE_STATUS_LABEL[i.status]}</td>
+                <td style={cell}>{i.days_overdue ? `${i.days_overdue} dia(s)` : "—"}</td>
               </tr>
             ))}
             {invoices.length === 0 && (
               <tr>
-                <td style={cell} colSpan={5}>
+                <td style={cell} colSpan={7}>
                   Nenhuma fatura encontrada. As faturas são geradas manualmente na página da empresa.
                 </td>
               </tr>

@@ -62,6 +62,9 @@ export interface MasterCompanyRow {
   memberCount: number;
   subscriptionStatus: SubscriptionStatus | null;
   planName: string | null;
+  // Período grátis (estado efetivo, calculado no banco em tempo real).
+  trialState: TrialState | null;
+  trialEndsAt: string | null;
 }
 
 export interface CatalogModule {
@@ -85,7 +88,10 @@ export interface CatalogPlan {
   moduleIds: string[];
 }
 
+// "trialing" em assinatura é um valor LEGADO (status manual anterior ao período
+// grátis oficial): o backend não o cria mais. O teste grátis é CompanyTrial.
 export type SubscriptionStatus =
+  | "pending_payment"
   | "trialing"
   | 'active'
   | 'past_due'
@@ -94,9 +100,46 @@ export type SubscriptionStatus =
   | 'suspended'
   | 'canceled';
 
+// Estado do período grátis. "expired" é derivado em tempo real pelo banco a
+// partir de trial_ends_at (não depende de agendador). converted/canceled são
+// definitivos; "none" = a empresa nunca usou.
+export type TrialState = "none" | "trialing" | "expired" | "converted" | "canceled";
+
+export interface CompanyTrial {
+  state: TrialState;
+  has_used_trial: boolean;
+  is_active: boolean;
+  has_ended: boolean;
+  // Pode iniciar agora (nunca usou e sem assinatura vigente). NÃO depende do catálogo de planos.
+  can_start: boolean;
+  offer_days: number;
+  // code do registro de catálogo reservado ao período grátis (apresentação comercial): nunca é contratável;
+  // o registro pode até não existir. Serve só para escondê-lo das listas de contratação/troca.
+  reserved_plan_code: string;
+  trial_id: string | null;
+  trial_started_at: string | null;
+  trial_ends_at: string | null;
+  // Datas de calendário em America/Sao_Paulo (sem deslocamento de fuso no cliente).
+  trial_started_on: string | null;
+  trial_ends_on: string | null;
+  trial_days: number | null;
+  converted_at: string | null;
+  converted_subscription_id: string | null;
+  canceled_at: string | null;
+  cancel_reason: string | null;
+  events: Array<{
+    id: string;
+    event_type: string;
+    payload: Record<string, unknown>;
+    created_at: string;
+    actor_email: string | null;
+  }>;
+}
+
 export interface CompanyDetail {
   company: { id: string; name: string; slug: string; document: string | null; created_at: string };
   members: Array<{ user_id: string; email: string | null; full_name: string | null; role: CompanyRole }>;
+  trial: CompanyTrial;
   subscription: {
     id: string;
     status: SubscriptionStatus;
@@ -105,6 +148,8 @@ export interface CompanyDetail {
     current_period_start: string;
     current_period_end: string;
     grace_until: string | null;
+    // false = contrato cobrado congelado (a inicial não foi paga): plano, módulos e dia não mudam.
+    initial_charge_settled: boolean;
     plan: {
       id: string;
       code: string;
@@ -164,6 +209,8 @@ export interface InvoiceRow {
   status: InvoiceStatus;
   paid_at: string | null;
   created_at: string;
+  days_overdue: number | null;
+  kind: "initial" | "recurring";
 }
 
 export interface InvoiceDetail {
@@ -178,9 +225,25 @@ export interface InvoiceDetail {
     paid_at: string | null;
     created_at: string;
     updated_at: string;
+    kind: "initial" | "recurring";
   };
   company: { id: string; name: string };
-  subscription: { id: string; status: SubscriptionStatus; billing_day: number; plan_id: string } | null;
+  subscription: {
+    id: string;
+    status: SubscriptionStatus;
+    billing_day: number;
+    plan_id: string;
+    status_source: "manual" | "billing";
+    grace_until: string | null;
+  } | null;
+  billing: {
+    business_date: string;
+    // só a mensalidade participa do ciclo carência/restrição; a cobrança inicial não
+    applies_to_debt_cycle: boolean;
+    days_overdue: number | null;
+    grace_until: string | null;
+    restriction_from: string | null;
+  };
   items: Array<{
     id: string;
     kind: "plan" | "module" | "adjustment";
@@ -218,4 +281,29 @@ export interface SubscriptionHistory {
     added_at: string;
     removed_at: string | null;
   }>;
+}
+
+// Situação da dívida RECORRENTE (tipada pelo banco). 'awaiting_initial_payment' vale para toda assinatura que
+// nunca foi ativada (aguardando pagamento, ou suspensa antes de pagar) — nunca grace/restricted, mesmo com a
+// cobrança inicial vencida: ok/grace/restricted só existem para assinatura ativada.
+export type DebtState = "awaiting_initial_payment" | "ok" | "grace" | "restricted";
+
+export interface BillingState {
+  business_date: string;
+  status: SubscriptionStatus;
+  status_source: "manual" | "billing";
+  grace_until: string | null;
+  debt_state: DebtState;
+  oldest_overdue_invoice_id: string | null;
+  oldest_due_date: string | null;
+  days_overdue: number | null;
+  debt_grace_until: string | null;
+  restriction_from: string | null;
+  overdue_count: number;
+  initial_invoice_id: string | null;
+  initial_invoice_status: InvoiceStatus | null;
+  initial_invoice_due_date: string | null;
+  // vencimento da inicial informado à parte, em tempo real (não depende do ciclo diário)
+  initial_invoice_overdue: boolean;
+  initial_days_overdue: number | null;
 }

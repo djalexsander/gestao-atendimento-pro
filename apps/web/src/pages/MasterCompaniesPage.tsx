@@ -1,8 +1,19 @@
 import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { fetchMasterCompanies } from "../features/master/api";
-import { STATUS_LABEL } from "../lib/subscriptionLabels";
+import { fmtDateTimeSP } from "../lib/dates";
+import { STATUS_LABEL, TRIAL_STATE_LABEL } from "../lib/subscriptionLabels";
 import type { MasterCompanyRow } from "../lib/types";
+
+// Assinatura vigente manda; sem ela, mostra o período grátis quando ele é a
+// situação atual (em andamento, expirado ou cancelado). "converted" sem
+// assinatura vigente é histórico: a empresa está sem assinatura.
+function companyStatusLabel(c: MasterCompanyRow): string {
+  if (c.subscriptionStatus) return STATUS_LABEL[c.subscriptionStatus];
+  if (c.trialState === "trialing") return `${TRIAL_STATE_LABEL.trialing} (até ${fmtDateTimeSP(c.trialEndsAt)})`;
+  if (c.trialState === "expired" || c.trialState === "canceled") return TRIAL_STATE_LABEL[c.trialState];
+  return "Sem assinatura";
+}
 
 export function MasterCompaniesPage() {
   const [companies, setCompanies] = useState<MasterCompanyRow[]>([]);
@@ -48,9 +59,7 @@ export function MasterCompaniesPage() {
               <td style={{ padding: "8px 4px" }}>{c.document ?? "—"}</td>
               <td style={{ padding: "8px 4px" }}>{c.memberCount}</td>
               <td style={{ padding: "8px 4px" }}>{c.planName ?? "—"}</td>
-              <td style={{ padding: "8px 4px" }}>
-                {c.subscriptionStatus ? STATUS_LABEL[c.subscriptionStatus] : "Sem assinatura"}
-              </td>
+              <td style={{ padding: "8px 4px" }}>{companyStatusLabel(c)}</td>
             </tr>
           ))}
           {companies.length === 0 && (
