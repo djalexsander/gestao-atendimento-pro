@@ -3,13 +3,17 @@ import { AppLayout } from "./app/AppLayout";
 import { MasterLayout } from "./app/MasterLayout";
 import {
   AppRoute,
+  DisabledAccessRoute,
   GuestOnlyRoute,
   MasterRoute,
   OnboardingRoute,
+  OperationalRoute,
   RootRedirect,
 } from "./app/routeGuards";
+import { AccessDisabledPage } from "./pages/AccessDisabledPage";
 import { AppHomePage } from "./pages/AppHomePage";
 import { CompanySettingsPage } from "./pages/CompanySettingsPage";
+import { EmployeeLoginPage } from "./pages/EmployeeLoginPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MasterCompaniesPage } from "./pages/MasterCompaniesPage";
 import { MasterCompanyDetailPage } from "./pages/MasterCompanyDetailPage";
@@ -19,6 +23,7 @@ import { MasterModulesPage } from "./pages/MasterModulesPage";
 import { MasterOverviewPage } from "./pages/MasterOverviewPage";
 import { MasterPlansPage } from "./pages/MasterPlansPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
+import { OperationalCashierPage, OperationalServicePage } from "./pages/OperationalPages";
 import { SignupPage } from "./pages/SignupPage";
 import { TeamPage } from "./pages/TeamPage";
 
@@ -43,11 +48,43 @@ function App() {
         }
       />
       <Route
+        path="/funcionario"
+        element={
+          <GuestOnlyRoute>
+            <EmployeeLoginPage />
+          </GuestOnlyRoute>
+        }
+      />
+      <Route
         path="/onboarding"
         element={
           <OnboardingRoute>
             <OnboardingPage />
           </OnboardingRoute>
+        }
+      />
+      <Route
+        path="/acesso-desativado"
+        element={
+          <DisabledAccessRoute>
+            <AccessDisabledPage />
+          </DisabledAccessRoute>
+        }
+      />
+      <Route
+        path="/operacional/atendimento"
+        element={
+          <OperationalRoute area="atendimento">
+            <OperationalServicePage />
+          </OperationalRoute>
+        }
+      />
+      <Route
+        path="/operacional/caixa"
+        element={
+          <OperationalRoute area="caixa">
+            <OperationalCashierPage />
+          </OperationalRoute>
         }
       />
       <Route

@@ -25,6 +25,7 @@ export function LoginPage() {
       <div className="auth-card">
         <div className="brand">OrçaFácil</div>
         <h1 style={{ fontSize: 22 }}>Entrar</h1>
+        <p style={{ color: "var(--text-muted)", fontSize: 14 }}>Proprietário ou administrador da empresa.</p>
 
         {error && <div className="form-error">{error}</div>}
 
@@ -59,6 +60,8 @@ export function LoginPage() {
         <div className="auth-footer">
           Ainda não tem conta?{" "}
           <Link to="/cadastro">Criar conta</Link>
+          <br />
+          Sou funcionário: <Link to="/funcionario">entrar com o código da empresa</Link>
         </div>
       </div>
     </div>

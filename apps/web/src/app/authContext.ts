@@ -9,6 +9,9 @@ export interface AuthContextValue {
   profile: ProfileRow | null;
   companies: CompanyMembership[];
   companiesLoading: boolean;
+  // Tem vínculo(s) com empresa, mas nenhum ativo (funcionário desativado). Não é "sem
+  // empresa": a tela mostra "Acesso desativado" e nunca leva ao onboarding.
+  accessDisabled: boolean;
   // Privilégio GLOBAL da plataforma, independente de qualquer empresa — não
   // confundir com o papel (owner/admin/attendant/cashier) dentro de activeMembership.
   isMasterAdmin: boolean;
@@ -18,6 +21,12 @@ export interface AuthContextValue {
   setActiveCompanyId: (companyId: string) => void;
   signUp: (email: string, password: string) => Promise<{ error: string | null }>;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
+  // Login operacional (código da empresa + login + PIN/senha), separado do login por e-mail.
+  signInEmployee: (
+    accessCode: string,
+    login: string,
+    credential: string,
+  ) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
   createCompany: (
     name: string,

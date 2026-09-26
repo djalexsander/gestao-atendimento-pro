@@ -392,3 +392,13 @@ button {
   gap: 8px;
   margin-top: 8px;
 }
+
+.checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+  font-size: 14px;
+  color: var(--text-muted);
+  cursor: pointer;
+}

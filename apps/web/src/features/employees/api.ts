@@ -48,6 +48,18 @@ export async function fetchCompanyMembers(
   return { data: members, error: null };
 }
 
+// Tela 1 do login do funcionário: o código da empresa existe? A RPC é pública (a pessoa
+// ainda não está logada) e responde só sim/não; não devolve nenhum dado da empresa.
+export async function companyAccessCodeExists(
+  accessCode: string,
+): Promise<{ exists: boolean; error: string | null }> {
+  const { data, error } = await supabase.rpc("company_access_code_exists", {
+    p_access_code: accessCode,
+  });
+  if (error) return { exists: false, error: error.message };
+  return { exists: data === true, error: null };
+}
+
 // A mensagem amigável vem no corpo JSON ({ error }) das respostas de erro da Edge Function.
 async function messageFromError(error: unknown): Promise<string> {
   if (error instanceof FunctionsHttpError) {

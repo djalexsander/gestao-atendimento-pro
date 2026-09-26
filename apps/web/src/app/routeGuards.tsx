@@ -1,44 +1,57 @@
 import type { ReactNode } from "react";
 import { Navigate } from "react-router-dom";
-import { useAuth } from "./useAuth";
+import { isManagedAccount } from "../lib/managedAccount";
+import { decide, type AuthSnapshot, type GuardedRoute, type OperationalArea } from "./accessRules";
 import { FullPageLoader } from "./FullPageLoader";
+import { useAuth } from "./useAuth";
 
-function postAuthPath(hasCompany: boolean): string {
-  return hasCompany ? "/app" : "/onboarding";
+// Os guards só APLICAM as decisões de accessRules.ts (que ficam testáveis à parte):
+// esperar, redirecionar ou mostrar a página. A proteção dos dados continua sendo do backend.
+function useAuthSnapshot(): AuthSnapshot {
+  const { loading, session, user, companiesLoading, activeMembership, accessDisabled } = useAuth();
+  return {
+    loading,
+    hasSession: session !== null,
+    companiesLoading,
+    role: activeMembership?.role ?? null,
+    accessDisabled,
+    isManaged: isManagedAccount(user),
+  };
 }
 
-/** /login e /cadastro — só acessíveis por quem NÃO tem sessão. */
+function Guard({ route, children }: { route: GuardedRoute; children?: ReactNode }) {
+  const decision = decide(route, useAuthSnapshot());
+  if (decision.action === "wait") return <FullPageLoader />;
+  if (decision.action === "redirect") return <Navigate to={decision.to} replace />;
+  return <>{children}</>;
+}
+
+/** /login, /cadastro e /funcionario: só acessíveis por quem NÃO tem sessão. */
 export function GuestOnlyRoute({ children }: { children: ReactNode }) {
-  const { loading, session, companiesLoading, companies } = useAuth();
-
-  if (loading) return <FullPageLoader />;
-  if (session) {
-    if (companiesLoading) return <FullPageLoader />;
-    return <Navigate to={postAuthPath(companies.length > 0)} replace />;
-  }
-  return <>{children}</>;
+  return <Guard route="guest">{children}</Guard>;
 }
 
-/** /onboarding — exige sessão e exige que o usuário ainda não tenha empresa. */
+/**
+ * /onboarding: exige sessão e só serve a conta normal que ainda não tem empresa. Conta de
+ * funcionário (ou com acesso desativado) nunca cai aqui e nunca cria empresa.
+ */
 export function OnboardingRoute({ children }: { children: ReactNode }) {
-  const { loading, session, companiesLoading, companies } = useAuth();
-
-  if (loading) return <FullPageLoader />;
-  if (!session) return <Navigate to="/login" replace />;
-  if (companiesLoading) return <FullPageLoader />;
-  if (companies.length > 0) return <Navigate to="/app" replace />;
-  return <>{children}</>;
+  return <Guard route="onboarding">{children}</Guard>;
 }
 
-/** /app — exige sessão e exige que o usuário já tenha ao menos uma empresa. */
+/** /app: Administrativo. Só owner e admin; funcionário vai para a área do papel dele. */
 export function AppRoute({ children }: { children: ReactNode }) {
-  const { loading, session, companiesLoading, companies } = useAuth();
+  return <Guard route="app">{children}</Guard>;
+}
 
-  if (loading) return <FullPageLoader />;
-  if (!session) return <Navigate to="/login" replace />;
-  if (companiesLoading) return <FullPageLoader />;
-  if (companies.length === 0) return <Navigate to="/onboarding" replace />;
-  return <>{children}</>;
+/** /operacional/*: cada rota é só do papel dela (attendant: Atendimento; cashier: Caixa). */
+export function OperationalRoute({ area, children }: { area: OperationalArea; children: ReactNode }) {
+  return <Guard route={area}>{children}</Guard>;
+}
+
+/** /acesso-desativado: só quando o vínculo existe mas está desativado (ou conta de funcionário sem vínculo). */
+export function DisabledAccessRoute({ children }: { children: ReactNode }) {
+  return <Guard route="disabled">{children}</Guard>;
 }
 
 /**
@@ -57,12 +70,7 @@ export function MasterRoute({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-/** "/" — decide para onde mandar com base no estado de autenticação/empresa. */
+/** "/" — decide para onde mandar com base no estado de autenticação/empresa/papel. */
 export function RootRedirect() {
-  const { loading, session, companiesLoading, companies } = useAuth();
-
-  if (loading) return <FullPageLoader />;
-  if (!session) return <Navigate to="/login" replace />;
-  if (companiesLoading) return <FullPageLoader />;
-  return <Navigate to={postAuthPath(companies.length > 0)} replace />;
+  return <Guard route="root" />;
 }
