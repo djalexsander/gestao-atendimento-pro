@@ -24,6 +24,7 @@ import { MasterOverviewPage } from "./pages/MasterOverviewPage";
 import { MasterPlansPage } from "./pages/MasterPlansPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
 import { OperationalCashierPage, OperationalServicePage } from "./pages/OperationalPages";
+import { ServicePointsAdminPage } from "./pages/ServicePointsAdminPage";
 import { SignupPage } from "./pages/SignupPage";
 import { TeamPage } from "./pages/TeamPage";
 
@@ -98,6 +99,7 @@ function App() {
         <Route index element={<AppHomePage />} />
         <Route path="configuracoes" element={<CompanySettingsPage />} />
         <Route path="equipe" element={<TeamPage />} />
+        <Route path="comandas" element={<ServicePointsAdminPage />} />
       </Route>
       <Route
         path="/master"

@@ -1,15 +1,17 @@
 import type { ReactNode } from "react";
 import { useAuth } from "../app/useAuth";
 import { ROLE_LABEL } from "../features/employees/roles";
+import type { ServicePanelSource } from "../features/operations/api";
+import { ServicePointsPanel } from "../features/operations/ServicePointsPanel";
 
-// Páginas PROVISÓRIAS das áreas operacionais (mesas, comandas, pedidos e caixa chegam nas
-// próximas etapas). Já valem para provar o acesso por papel: cada rota só abre para o papel
-// dela (ver accessRules.ts) e nenhuma delas dá caminho ao Administrativo.
+// Áreas operacionais. Cada rota só abre para o papel dela (ver accessRules.ts) e nenhuma dá
+// caminho ao Administrativo. As duas usam o MESMO painel de Comandas / Mesas; o que muda é o
+// cabeçalho e a ênfase da busca (no Caixa, pronta para o leitor de código de barras).
 function OperationalShell({ title, children }: { title: string; children: ReactNode }) {
   const { activeMembership, profile, signOut } = useAuth();
 
   return (
-    <div className="app-shell">
+    <div className="app-shell op-shell">
       <header className="app-topbar">
         <div className="app-topbar-left">
           <div className="brand">OrçaFácil</div>
@@ -24,7 +26,7 @@ function OperationalShell({ title, children }: { title: string; children: ReactN
           </button>
         </div>
       </header>
-      <main className="app-body">
+      <main className="app-body app-body-wide">
         <h2>{title}</h2>
         {children}
       </main>
@@ -32,22 +34,19 @@ function OperationalShell({ title, children }: { title: string; children: ReactN
   );
 }
 
-export function OperationalServicePage() {
+// `source` só existe para exercitar a tela com dados simulados; nas rotas fica o padrão (Supabase).
+export function OperationalServicePage({ source }: { source?: ServicePanelSource }) {
   return (
     <OperationalShell title="Área de Atendimento">
-      <p style={{ color: "var(--text-muted)" }}>
-        Em construção: mesas, comandas e pedidos chegam nas próximas etapas.
-      </p>
+      <ServicePointsPanel variant="attendant" source={source} />
     </OperationalShell>
   );
 }
 
-export function OperationalCashierPage() {
+export function OperationalCashierPage({ source }: { source?: ServicePanelSource }) {
   return (
     <OperationalShell title="Caixa / Balcão">
-      <p style={{ color: "var(--text-muted)" }}>
-        Em construção: recebimento e fechamento de contas chegam nas próximas etapas.
-      </p>
+      <ServicePointsPanel variant="cashier" source={source} />
     </OperationalShell>
   );
 }

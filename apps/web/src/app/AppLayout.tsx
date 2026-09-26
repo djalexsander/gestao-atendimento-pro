@@ -25,6 +25,7 @@ export function AppLayout() {
               Início
             </NavLink>
             <NavLink to="/app/equipe">Funcionários</NavLink>
+            <NavLink to="/app/comandas">Comandas / Mesas</NavLink>
             <NavLink to="/app/configuracoes">Configurações</NavLink>
           </nav>
         </div>

@@ -11,6 +11,8 @@
   --danger-bg: #fdecea;
   --success: #1e7b3b;
   --success-bg: #e6f4ea;
+  --warning: #9a6700;
+  --warning-bg: #fff4d6;
 
   --sans: system-ui, 'Segoe UI', Roboto, sans-serif;
 
@@ -38,6 +40,8 @@
     --danger-bg: #3a1f1e;
     --success: #8fd9a8;
     --success-bg: #1c2e22;
+    --warning: #f0c36d;
+    --warning-bg: #3a2f14;
   }
 }
 
@@ -401,4 +405,390 @@ button {
   font-size: 14px;
   color: var(--text-muted);
   cursor: pointer;
+}
+
+/* ---------------------------------------------------------------------------
+   Operacional: painel de Comandas / Mesas (Atendimento e Caixa / Balcão)
+   --------------------------------------------------------------------------- */
+.app-body-wide {
+  max-width: 1200px;
+}
+
+.op-shell .app-topbar {
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.op-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.op-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  padding: 8px 0;
+  background: var(--bg);
+}
+
+.op-search {
+  flex: 1;
+  min-width: 0;
+}
+
+/* 18px ou mais evita o zoom automático do celular ao focar; no Caixa a busca é o destaque. */
+.op-search-input {
+  width: 100%;
+  padding: 14px 16px;
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 18px;
+}
+
+.op-search-input:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(124, 58, 237, 0.25);
+}
+
+.op-panel-cashier .op-search-input {
+  padding: 18px 20px;
+  border-color: var(--accent);
+  font-size: 22px;
+}
+
+.op-refresh {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 0 16px;
+}
+
+.op-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.op-filters-sep {
+  align-self: stretch;
+  width: 1px;
+  margin: 4px 2px;
+  background: var(--border);
+}
+
+.op-chip {
+  min-height: 40px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--surface);
+  color: var(--text);
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.op-chip[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+}
+
+.op-chip-count {
+  margin-left: 6px;
+  opacity: 0.8;
+  font-variant-numeric: tabular-nums;
+}
+
+.op-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.op-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  width: 100%;
+  height: 100%;
+  min-height: 108px;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-left-width: 6px;
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.op-card:hover {
+  border-color: var(--accent);
+}
+
+.op-card:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.op-card-free {
+  border-left-color: var(--success);
+}
+
+.op-card-busy {
+  border-left-color: var(--warning);
+  background: var(--warning-bg);
+}
+
+.op-card-inactive {
+  border-style: dashed;
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.op-card-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.op-card-title {
+  color: var(--text-h);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.op-card-code {
+  color: var(--text-muted);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.op-card-line {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.op-card-muted {
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.op-card-busy .status-badge {
+  background: var(--warning);
+  color: var(--surface);
+}
+
+.status-free {
+  color: var(--success);
+  background: var(--success-bg);
+}
+
+.status-busy {
+  color: var(--warning);
+  background: var(--warning-bg);
+}
+
+.op-state {
+  padding: 24px 8px;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.op-detail {
+  display: grid;
+  gap: 10px;
+  margin: 0 0 12px;
+}
+
+.op-detail > div {
+  display: grid;
+  grid-template-columns: 110px 1fr;
+  gap: 8px;
+}
+
+.op-detail dt {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.op-detail dd {
+  margin: 0;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+@media (max-width: 640px) {
+  .app-body-wide {
+    padding: 12px;
+  }
+
+  /* os chips de tipo (Comandas / Mesas) descem para a linha de baixo */
+  .op-filters-sep {
+    flex-basis: 100%;
+    width: 100%;
+    height: 0;
+    margin: 0;
+    background: none;
+  }
+
+  .op-shell .app-topbar {
+    padding: 12px;
+  }
+
+  .op-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* Celular estreito: cabe mais do texto de busca (16px ainda evita o zoom do iOS). */
+@media (max-width: 480px) {
+  /* o botão vira só o ícone e a busca ganha a largura */
+  .op-refresh {
+    min-width: 48px;
+    justify-content: center;
+    padding: 0 12px;
+  }
+
+  .op-refresh-label {
+    display: none;
+  }
+
+  .op-search-input,
+  .op-panel-cashier .op-search-input {
+    padding: 12px 14px;
+    font-size: 16px;
+  }
+}
+
+/* Toque (celular e tablet): alvos grandes. */
+@media (pointer: coarse) {
+  .op-card {
+    min-height: 128px;
+  }
+
+  .op-chip {
+    min-height: 44px;
+  }
+
+  .modal .field input {
+    font-size: 18px;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Administrativo: configuração de Comandas / Mesas
+   --------------------------------------------------------------------------- */
+.sp-admin {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.mode-picker {
+  margin: 0;
+  padding: 12px 16px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.mode-picker legend {
+  padding: 0 6px;
+  color: var(--text-h);
+  font-weight: 600;
+}
+
+.mode-picker:disabled {
+  opacity: 0.7;
+}
+
+.mode-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.mode-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  cursor: pointer;
+}
+
+.mode-option input {
+  accent-color: var(--accent);
+}
+
+.mode-option-selected {
+  border-color: var(--accent);
+  background: rgba(124, 58, 237, 0.1);
+}
+
+.admin-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.admin-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.admin-search {
+  width: 100%;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.row-inactive td {
+  opacity: 0.6;
+}
+
+/* Código e código de barras nunca quebram no meio: em tela estreita a tabela rola na horizontal. */
+.mono {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.sp-admin .row-actions {
+  flex-wrap: nowrap;
+}
+
+/* minmax(0, 1fr): sem isso os campos numéricos (largura intrínseca grande) estouram o diálogo. */
+.batch-range {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
