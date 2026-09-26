@@ -1,276 +1,159 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
-import {
-  createInvite,
-  fetchCompanyInvites,
-  fetchTeamMembers,
-  removeMember,
-  revokeInvite,
-  sendInviteEmail,
-  updateMemberRole,
-} from "../features/company/api";
-import type { CompanyInviteRow, CompanyRole, TeamMember } from "../lib/types";
+import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../app/useAuth";
+import { fetchCompanyMembers } from "../features/employees/api";
+import {
+  CreateEmployeeDialog,
+  CredentialDialog,
+  DeleteEmployeeDialog,
+  EditEmployeeDialog,
+  StatusDialog,
+} from "../features/employees/EmployeeDialogs";
+import { assignableRoles, ROLE_LABEL } from "../features/employees/roles";
+import type { CompanyMember, CompanyRole } from "../lib/types";
 
-const ROLE_LABEL: Record<CompanyRole, string> = {
-  owner: "Dono(a)",
-  admin: "Administrador(a)",
-  agent: "Agente",
-};
+const STATUS_LABEL = { active: "Ativo", inactive: "Inativo" } as const;
+
+type OpenDialog =
+  | { kind: "create" }
+  | { kind: "edit" | "credential" | "status" | "delete"; member: CompanyMember };
 
 export function TeamPage() {
   const { activeCompanyId, activeMembership, user } = useAuth();
-  const viewerRole = activeMembership?.role ?? null;
-  const isOwner = viewerRole === "owner";
-  const isAdmin = viewerRole === "admin";
+  // Só decide o que a tela MOSTRA. Quem autoriza de verdade é o backend (Edge Function
+  // employee-admin + can_manage_company_user), a cada pedido.
+  const roles = assignableRoles(activeMembership?.role ?? null);
 
-  const [members, setMembers] = useState<TeamMember[]>([]);
-  const [invites, setInvites] = useState<CompanyInviteRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const [inviteEmail, setInviteEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState<CompanyRole>("agent");
-  const [inviteError, setInviteError] = useState<string | null>(null);
-  const [inviteWarning, setInviteWarning] = useState<string | null>(null);
-  const [inviteSubmitting, setInviteSubmitting] = useState(false);
-  const [resendingId, setResendingId] = useState<string | null>(null);
+  const [loaded, setLoaded] = useState<{
+    companyId: string;
+    members: CompanyMember[];
+    error: string | null;
+  } | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [dialog, setDialog] = useState<OpenDialog | null>(null);
 
   const load = useCallback(async () => {
     if (!activeCompanyId) return;
-    setLoading(true);
-    const [membersResult, invitesResult] = await Promise.all([
-      fetchTeamMembers(activeCompanyId),
-      isOwner || isAdmin
-        ? fetchCompanyInvites(activeCompanyId)
-        : Promise.resolve({ data: [], error: null }),
-    ]);
-    setMembers(membersResult.data);
-    setInvites(invitesResult.data);
-    setError(membersResult.error ?? invitesResult.error ?? null);
-    setLoading(false);
-  }, [activeCompanyId, isOwner, isAdmin]);
+    const result = await fetchCompanyMembers(activeCompanyId);
+    setLoaded({ companyId: activeCompanyId, members: result.data, error: result.error });
+  }, [activeCompanyId]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  function canManage(target: TeamMember): boolean {
-    if (target.userId === user?.id) return false; // não gerencia a própria linha por aqui
-    if (isOwner) return true;
-    if (isAdmin) return target.role === "agent";
-    return false;
+  if (!activeCompanyId) return null;
+
+  const loading = loaded?.companyId !== activeCompanyId;
+  const members = loaded?.members ?? [];
+
+  // Ações só para funcionários com login (o dono, com e-mail próprio, fica de fora), nunca
+  // na própria linha e só nas funções que quem está vendo pode gerenciar.
+  function canManage(member: CompanyMember): boolean {
+    return (
+      member.login !== null &&
+      member.user_id !== user?.id &&
+      (roles as readonly CompanyRole[]).includes(member.role)
+    );
   }
 
-  async function handleRoleChange(member: TeamMember, role: CompanyRole) {
-    setError(null);
-    const { error } = await updateMemberRole(member.companyUserId, role);
-    if (error) {
-      setError(error);
-      return;
-    }
-    await load();
+  function openDialog(next: OpenDialog) {
+    setNotice(null);
+    setDialog(next);
   }
 
-  async function handleRemove(member: TeamMember) {
-    setError(null);
-    const { error } = await removeMember(member.companyUserId);
-    if (error) {
-      setError(error);
-      return;
-    }
-    await load();
+  function handleDone(message: string) {
+    setDialog(null);
+    setNotice(message);
+    void load();
   }
 
-  async function handleInvite(event: FormEvent) {
-    event.preventDefault();
-    if (!activeCompanyId) return;
-    setInviteError(null);
-    setInviteWarning(null);
-    setInviteSubmitting(true);
-    const { data: invite, error } = await createInvite(activeCompanyId, inviteEmail.trim(), inviteRole);
-    if (error) {
-      setInviteSubmitting(false);
-      setInviteError(error);
-      return;
-    }
-    // Criação e envio são operações separadas: o convite já existe mesmo se
-    // o e-mail falhar agora — dá para reenviar depois pela lista abaixo.
-    if (invite) {
-      const { error: emailError } = await sendInviteEmail(invite.id);
-      if (emailError) {
-        setInviteWarning(
-          `Convite criado, mas o e-mail não pôde ser enviado agora (${emailError}). Você pode tentar reenviar na lista abaixo.`,
-        );
-      }
-    }
-    setInviteSubmitting(false);
-    setInviteEmail("");
-    setInviteRole("agent");
-    await load();
-  }
-
-  async function handleRevoke(inviteId: string) {
-    setError(null);
-    const { error } = await revokeInvite(inviteId);
-    if (error) {
-      setError(error);
-      return;
-    }
-    await load();
-  }
-
-  async function handleResend(inviteId: string) {
-    setInviteWarning(null);
-    setResendingId(inviteId);
-    const { error } = await sendInviteEmail(inviteId);
-    setResendingId(null);
-    if (error) {
-      setInviteWarning(`Falha ao reenviar o e-mail: ${error}`);
-      return;
-    }
-    await load();
-  }
-
-  if (loading) return <p>Carregando equipe…</p>;
-
-  const canInvite = isOwner || isAdmin;
-  const pendingInvites = invites.filter((i) => i.status === "pending");
+  const dialogProps = { companyId: activeCompanyId, onClose: () => setDialog(null), onDone: handleDone };
 
   return (
     <div>
-      <h2>Equipe</h2>
-      {error && <div className="form-error">{error}</div>}
+      <div className="page-header">
+        <h2>Funcionários</h2>
+        {roles.length > 0 && (
+          <button className="btn-primary btn-auto" type="button" onClick={() => openDialog({ kind: "create" })}>
+            Novo funcionário
+          </button>
+        )}
+      </div>
 
-      <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 32 }}>
-        <thead>
-          <tr style={{ textAlign: "left", borderBottom: "1px solid var(--border)" }}>
-            <th style={{ padding: "8px 4px" }}>Nome</th>
-            <th style={{ padding: "8px 4px" }}>E-mail</th>
-            <th style={{ padding: "8px 4px" }}>Papel</th>
-            {(isOwner || isAdmin) && <th style={{ padding: "8px 4px" }}>Ações</th>}
-          </tr>
-        </thead>
-        <tbody>
-          {members.map((member) => {
-            const manageable = canManage(member);
-            return (
-              <tr key={member.companyUserId} style={{ borderBottom: "1px solid var(--border)" }}>
-                <td style={{ padding: "8px 4px" }}>{member.fullName ?? "—"}</td>
-                <td style={{ padding: "8px 4px" }}>{member.email ?? "—"}</td>
-                <td style={{ padding: "8px 4px" }}>
-                  {isOwner && manageable ? (
-                    <select
-                      value={member.role}
-                      onChange={(e) => void handleRoleChange(member, e.target.value as CompanyRole)}
-                    >
-                      <option value="owner">Dono(a)</option>
-                      <option value="admin">Administrador(a)</option>
-                      <option value="agent">Agente</option>
-                    </select>
-                  ) : (
+      {!loading && loaded?.error && <div className="form-error">{loaded.error}</div>}
+      {notice && <div className="form-notice">{notice}</div>}
+
+      {loading ? (
+        <p>Carregando funcionários…</p>
+      ) : (
+        <div className="table-scroll">
+          <table className="data-table">
+            <thead>
+              <tr>
+                <th>Nome</th>
+                <th>Login</th>
+                <th>Função</th>
+                <th>Status</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {members.map((member) => (
+                <tr key={member.id}>
+                  <td>{member.name ?? "—"}</td>
+                  <td>{member.login ?? "—"}</td>
+                  <td>
                     <span className="role-badge">{ROLE_LABEL[member.role]}</span>
-                  )}
-                </td>
-                {(isOwner || isAdmin) && (
-                  <td style={{ padding: "8px 4px" }}>
-                    {manageable && (
-                      <button
-                        className="btn-secondary"
-                        type="button"
-                        onClick={() => void handleRemove(member)}
-                      >
-                        Remover
-                      </button>
+                  </td>
+                  <td>
+                    <span className={`status-badge status-${member.status}`}>{STATUS_LABEL[member.status]}</span>
+                  </td>
+                  <td>
+                    {canManage(member) && (
+                      <div className="row-actions">
+                        <button
+                          className="btn-secondary btn-small"
+                          type="button"
+                          onClick={() => openDialog({ kind: "edit", member })}
+                        >
+                          Editar
+                        </button>
+                        <button
+                          className="btn-secondary btn-small"
+                          type="button"
+                          onClick={() => openDialog({ kind: "credential", member })}
+                        >
+                          Redefinir PIN/Senha
+                        </button>
+                        <button
+                          className="btn-secondary btn-small"
+                          type="button"
+                          onClick={() => openDialog({ kind: "status", member })}
+                        >
+                          {member.status === "active" ? "Desativar" : "Ativar"}
+                        </button>
+                        <button
+                          className="btn-secondary btn-small btn-danger-text"
+                          type="button"
+                          onClick={() => openDialog({ kind: "delete", member })}
+                        >
+                          Excluir
+                        </button>
+                      </div>
                     )}
                   </td>
-                )}
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
-
-      {canInvite && (
-        <>
-          <h3 style={{ fontSize: 18 }}>Convidar membro</h3>
-          {inviteError && <div className="form-error">{inviteError}</div>}
-          {inviteWarning && <div className="form-notice">{inviteWarning}</div>}
-          <form onSubmit={handleInvite} style={{ display: "flex", gap: 8, alignItems: "flex-end", flexWrap: "wrap" }}>
-            <div className="field" style={{ marginBottom: 0, flex: "1 1 220px" }}>
-              <label htmlFor="invite-email">E-mail</label>
-              <input
-                id="invite-email"
-                type="email"
-                required
-                value={inviteEmail}
-                onChange={(e) => setInviteEmail(e.target.value)}
-              />
-            </div>
-            <div className="field" style={{ marginBottom: 0 }}>
-              <label htmlFor="invite-role">Papel</label>
-              {isOwner ? (
-                <select
-                  id="invite-role"
-                  value={inviteRole}
-                  onChange={(e) => setInviteRole(e.target.value as CompanyRole)}
-                >
-                  <option value="agent">Agente</option>
-                  <option value="admin">Administrador(a)</option>
-                  <option value="owner">Dono(a)</option>
-                </select>
-              ) : (
-                <input value="Agente" disabled readOnly />
-              )}
-            </div>
-            <button className="btn-primary" type="submit" disabled={inviteSubmitting} style={{ width: "auto" }}>
-              {inviteSubmitting ? "Convidando…" : "Convidar"}
-            </button>
-          </form>
-
-          {pendingInvites.length > 0 && (
-            <>
-              <h3 style={{ fontSize: 18, marginTop: 24 }}>Convites pendentes</h3>
-              <ul style={{ listStyle: "none", padding: 0 }}>
-                {pendingInvites.map((invite) => (
-                  <li
-                    key={invite.id}
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      alignItems: "center",
-                      padding: "8px 0",
-                      borderBottom: "1px solid var(--border)",
-                    }}
-                  >
-                    <span>
-                      {invite.email} — {ROLE_LABEL[invite.role]}
-                      <br />
-                      <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                        {invite.email_last_sent_at
-                          ? `e-mail enviado em ${new Date(invite.email_last_sent_at).toLocaleString("pt-BR")}`
-                          : "e-mail ainda não enviado"}
-                      </span>
-                    </span>
-                    <span style={{ display: "flex", gap: 8 }}>
-                      <button
-                        className="btn-secondary"
-                        type="button"
-                        disabled={resendingId === invite.id}
-                        onClick={() => void handleResend(invite.id)}
-                      >
-                        {resendingId === invite.id ? "Enviando…" : "Reenviar e-mail"}
-                      </button>
-                      <button className="btn-secondary" type="button" onClick={() => void handleRevoke(invite.id)}>
-                        Cancelar
-                      </button>
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
-        </>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
+
+      {dialog?.kind === "create" && <CreateEmployeeDialog {...dialogProps} roles={roles} />}
+      {dialog?.kind === "edit" && <EditEmployeeDialog {...dialogProps} member={dialog.member} roles={roles} />}
+      {dialog?.kind === "credential" && <CredentialDialog {...dialogProps} member={dialog.member} />}
+      {dialog?.kind === "status" && <StatusDialog {...dialogProps} member={dialog.member} />}
+      {dialog?.kind === "delete" && <DeleteEmployeeDialog {...dialogProps} member={dialog.member} />}
     </div>
   );
 }

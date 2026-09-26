@@ -1,4 +1,4 @@
-export type CompanyRole = "owner" | "admin" | "agent";
+export type CompanyRole = "owner" | "admin" | "attendant" | "cashier";
 
 export interface Company {
   id: string;

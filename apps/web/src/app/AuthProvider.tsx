@@ -7,6 +7,11 @@ import { AuthContext, type AuthContextValue } from "./authContext";
 
 const ACTIVE_COMPANY_KEY = "orca-facil:active-company-id";
 
+// Falha de create_company que NÃO é uma mensagem amigável escrita na própria RPC:
+// o erro técnico do banco não vai para a tela.
+const CREATE_COMPANY_FALLBACK_ERROR =
+  "Não foi possível criar a empresa agora. Tente novamente em instantes.";
+
 function readStoredCompanyId(): string | null {
   try {
     return localStorage.getItem(ACTIVE_COMPANY_KEY);
@@ -169,17 +174,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await refreshCompanies(user.id);
   }
 
-  async function createCompany(name: string, document: string | null) {
+  async function createCompany(name: string, accessCode: string, document: string | null) {
     if (!user) return { error: "Sessão inválida." };
 
     const baseSlug = slugify(name);
-    let lastErrorMessage: string | null = null;
 
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const slug = attempt === 0 ? baseSlug : `${baseSlug}-${randomSlugSuffix()}`;
       const { data, error } = await supabase.rpc("create_company", {
         p_name: name,
         p_slug: slug,
+        p_access_code: accessCode,
         p_document: document,
       });
 
@@ -190,12 +195,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         return { error: null };
       }
 
-      lastErrorMessage = error.message;
-      // 23505 = unique_violation (slug já em uso) — tenta outro slug automaticamente.
-      if (error.code !== "23505") break;
+      // 23505 = unique_violation em companies_slug_key (slug já em uso) — tenta outro
+      // slug automaticamente. Código da empresa em uso/inválido NÃO chega aqui como
+      // 23505: a RPC responde P0001 com uma mensagem amigável, mostrada como veio.
+      if (error.code === "23505") continue;
+      if (error.code === "P0001") return { error: error.message };
+
+      console.error("Falha ao criar empresa:", error);
+      return { error: CREATE_COMPANY_FALLBACK_ERROR };
     }
 
-    return { error: lastErrorMessage };
+    return { error: CREATE_COMPANY_FALLBACK_ERROR };
   }
 
   const activeMembership = useMemo(

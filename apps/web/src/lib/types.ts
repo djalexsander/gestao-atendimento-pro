@@ -6,6 +6,9 @@ export interface CompanyRow {
   id: string;
   name: string;
   slug: string;
+  // Código de acesso da empresa (login dos funcionários). NULL só em empresas
+  // criadas antes de create_company exigir o código.
+  access_code: string | null;
   document: string | null;
   logo_url: string | null;
   created_at: string;
@@ -25,28 +28,20 @@ export interface CompanyMembership {
   company: CompanyRow;
 }
 
-export type InviteStatus = "pending" | "accepted" | "revoked";
+export type CompanyMemberStatus = "active" | "inactive";
 
-export interface CompanyInviteRow {
+// Membro da empresa como a tela Funcionários o mostra. `login` é NULL para quem entra
+// com e-mail próprio (o dono). O e-mail técnico do Auth nunca chega à UI.
+export interface CompanyMember {
   id: string;
   company_id: string;
-  company_name: string;
-  email: string;
+  user_id: string;
+  name: string | null;
+  login: string | null;
   role: CompanyRole;
-  status: InviteStatus;
-  invited_by: string;
+  status: CompanyMemberStatus;
   created_at: string;
-  expires_at: string;
-  accepted_at: string | null;
-  email_last_sent_at: string | null;
-}
-
-export interface TeamMember {
-  companyUserId: string;
-  userId: string;
-  role: CompanyRole;
-  fullName: string | null;
-  email: string | null;
+  updated_at: string;
 }
 
 export interface MasterOverview {

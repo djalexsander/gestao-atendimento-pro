@@ -1,58 +1,32 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { acceptInvite, fetchMyPendingInvites } from "../features/company/api";
-import type { CompanyInviteRow } from "../lib/types";
+import { useState, type FormEvent } from "react";
+import { ACCESS_CODE_MAX_LENGTH, validateAccessCode } from "../lib/accessCode";
 import { useAuth } from "../app/useAuth";
 
-const ROLE_LABEL: Record<string, string> = {
-  owner: "Dono(a)",
-  admin: "Administrador(a)",
-  agent: "Agente",
-};
-
 export function OnboardingPage() {
-  const { user, createCompany, refreshMemberships } = useAuth();
-
-  const [invites, setInvites] = useState<CompanyInviteRow[]>([]);
-  const [invitesLoading, setInvitesLoading] = useState(true);
-  const [acceptingId, setAcceptingId] = useState<string | null>(null);
-  const [acceptError, setAcceptError] = useState<string | null>(null);
+  const { createCompany } = useAuth();
 
   const [name, setName] = useState("");
+  const [accessCode, setAccessCode] = useState("");
+  // Código vazio só é apontado como erro depois de tentar enviar; código preenchido
+  // e inválido é apontado na hora.
+  const [accessCodeAttempted, setAccessCodeAttempted] = useState(false);
   const [document, setDocument] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  const loadInvites = useCallback(async () => {
-    if (!user?.email) return;
-    setInvitesLoading(true);
-    const { data } = await fetchMyPendingInvites(user.email);
-    setInvites(data);
-    setInvitesLoading(false);
-  }, [user]);
-
-  useEffect(() => {
-    void loadInvites();
-  }, [loadInvites]);
-
-  async function handleAccept(inviteId: string) {
-    setAcceptError(null);
-    setAcceptingId(inviteId);
-    const { error } = await acceptInvite(inviteId);
-    setAcceptingId(null);
-    if (error) {
-      setAcceptError(error);
-      return;
-    }
-    // sucesso: refreshMemberships atualiza companies e a rota /onboarding
-    // redireciona sozinha para /app assim que companies.length > 0.
-    await refreshMemberships();
-  }
+  // Espaços nas pontas são ignorados (a RPC também os remove); o resto é validado.
+  const trimmedAccessCode = accessCode.trim();
+  const accessCodeError = validateAccessCode(trimmedAccessCode);
+  const showAccessCodeError =
+    accessCodeError !== null && (trimmedAccessCode.length > 0 || accessCodeAttempted);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setError(null);
+    setAccessCodeAttempted(true);
+    if (accessCodeError) return;
     setSubmitting(true);
-    const { error } = await createCompany(name.trim(), document.trim() || null);
+    const { error } = await createCompany(name.trim(), trimmedAccessCode, document.trim() || null);
     setSubmitting(false);
     if (error) setError(error);
   }
@@ -61,44 +35,6 @@ export function OnboardingPage() {
     <div className="auth-page">
       <div className="auth-card" style={{ maxWidth: 460 }}>
         <div className="brand">OrçaFácil</div>
-
-        {!invitesLoading && invites.length > 0 && (
-          <>
-            <h1 style={{ fontSize: 22 }}>Você tem convites pendentes</h1>
-            {acceptError && <div className="form-error">{acceptError}</div>}
-            <ul style={{ listStyle: "none", padding: 0, marginBottom: 24 }}>
-              {invites.map((invite) => (
-                <li
-                  key={invite.id}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    padding: "10px 0",
-                    borderBottom: "1px solid var(--border)",
-                  }}
-                >
-                  <span>
-                    <strong>{invite.company_name}</strong> — como{" "}
-                    {ROLE_LABEL[invite.role] ?? invite.role}
-                  </span>
-                  <button
-                    className="btn-primary"
-                    type="button"
-                    style={{ width: "auto" }}
-                    disabled={acceptingId === invite.id}
-                    onClick={() => void handleAccept(invite.id)}
-                  >
-                    {acceptingId === invite.id ? "Aceitando…" : "Aceitar"}
-                  </button>
-                </li>
-              ))}
-            </ul>
-            <p style={{ color: "var(--text-muted)", fontSize: 14 }}>
-              Ou, se preferir, crie sua própria empresa abaixo.
-            </p>
-          </>
-        )}
 
         <h1 style={{ fontSize: 22 }}>Crie sua empresa</h1>
         <p style={{ color: "var(--text-muted)", fontSize: 14 }}>
@@ -117,6 +53,40 @@ export function OnboardingPage() {
               value={name}
               onChange={(e) => setName(e.target.value)}
             />
+          </div>
+          <div className="field">
+            <label htmlFor="company-access-code">Código da empresa</label>
+            <input
+              id="company-access-code"
+              type="text"
+              required
+              maxLength={ACCESS_CODE_MAX_LENGTH}
+              autoComplete="off"
+              autoCapitalize="none"
+              spellCheck={false}
+              value={accessCode}
+              onChange={(e) => setAccessCode(e.target.value.toLowerCase())}
+              aria-invalid={showAccessCodeError}
+              aria-describedby={
+                showAccessCodeError
+                  ? "company-access-code-help company-access-code-error"
+                  : "company-access-code-help"
+              }
+            />
+            <span
+              id="company-access-code-help"
+              style={{ color: "var(--text-muted)", fontSize: 13 }}
+            >
+              Será usado pelos funcionários para entrar no sistema.
+            </span>
+            {showAccessCodeError && (
+              <span
+                id="company-access-code-error"
+                style={{ color: "var(--danger)", fontSize: 13 }}
+              >
+                {accessCodeError}
+              </span>
+            )}
           </div>
           <div className="field">
             <label htmlFor="company-document">Documento (CNPJ/CPF) — opcional</label>

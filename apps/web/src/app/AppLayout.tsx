@@ -1,16 +1,19 @@
 import { Link, NavLink, Outlet } from "react-router-dom";
 import { CompanySwitcher } from "./CompanySwitcher";
-import { PendingInvitesBanner } from "./PendingInvitesBanner";
+import { isManagedAccount } from "../lib/managedAccount";
 import { useAuth } from "./useAuth";
 
 const ROLE_LABEL: Record<string, string> = {
   owner: "Dono(a)",
-  admin: "Administrador(a)",
-  agent: "Agente",
+  admin: "Administrador",
+  cashier: "Caixa / Balcão",
+  attendant: "Atendente",
 };
 
 export function AppLayout() {
-  const { user, activeMembership, isMasterAdmin, signOut } = useAuth();
+  const { user, profile, activeMembership, isMasterAdmin, signOut } = useAuth();
+  // Conta de funcionário: mostra o nome, nunca o e-mail técnico do Auth.
+  const identity = isManagedAccount(user) ? (profile?.full_name ?? null) : (user?.email ?? null);
 
   return (
     <div className="app-shell">
@@ -21,13 +24,13 @@ export function AppLayout() {
             <NavLink to="/app" end>
               Início
             </NavLink>
-            <NavLink to="/app/equipe">Equipe</NavLink>
+            <NavLink to="/app/equipe">Funcionários</NavLink>
             <NavLink to="/app/configuracoes">Configurações</NavLink>
           </nav>
         </div>
         <div className="app-user">
           <CompanySwitcher />
-          <span>{user?.email}</span>
+          <span>{identity}</span>
           {activeMembership && (
             <span className="role-badge">
               {ROLE_LABEL[activeMembership.role] ?? activeMembership.role}
@@ -43,7 +46,6 @@ export function AppLayout() {
           </button>
         </div>
       </header>
-      <PendingInvitesBanner />
       <main className="app-body">
         <Outlet />
       </main>

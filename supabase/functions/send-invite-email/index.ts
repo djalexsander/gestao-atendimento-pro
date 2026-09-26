@@ -3,7 +3,7 @@
 // exclusivamente pela RPC public.create_company_invite(), que já é a barreira
 // de segurança para "quem pode convidar quem, com qual papel".
 //
-// Autorização: esta function não reimplementa a hierarquia owner/admin/agent.
+// Autorização: esta function não reimplementa a hierarquia owner/admin/attendant/cashier.
 // Em vez disso, consulta company_invites usando um client Supabase escopado
 // ao JWT de quem chamou — a mesma policy de RLS que já governa o app inteiro
 // decide se o chamador pode "ver" aquele convite (só owner/admin da empresa
@@ -28,8 +28,9 @@ const CORS_HEADERS = {
 
 const ROLE_LABEL: Record<string, string> = {
   owner: "Dono(a)",
-  admin: "Administrador(a)",
-  agent: "Agente",
+  admin: "Administrador",
+  cashier: "Caixa / Balcão",
+  attendant: "Atendente",
 };
 
 function json(body: unknown, status = 200): Response {

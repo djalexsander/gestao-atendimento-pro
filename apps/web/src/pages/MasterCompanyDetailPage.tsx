@@ -17,7 +17,12 @@ import { formatCents } from "../lib/money";
 import { EVENT_LABEL, MANUAL_STATUSES, STATUS_LABEL } from "../lib/subscriptionLabels";
 import type { CatalogModule, CatalogPlan, CompanyDetail, CompanyTrial, SubscriptionStatus } from "../lib/types";
 
-const ROLE_LABEL: Record<string, string> = { owner: "Dono(a)", admin: "Administrador(a)", agent: "Agente" };
+const ROLE_LABEL: Record<string, string> = {
+  owner: "Dono(a)",
+  admin: "Administrador",
+  cashier: "Caixa / Balcão",
+  attendant: "Atendente",
+};
 const cell = { padding: "8px 4px" } as const;
 
 function fmtDate(iso: string | null): string {

@@ -10,7 +10,7 @@ export interface AuthContextValue {
   companies: CompanyMembership[];
   companiesLoading: boolean;
   // Privilégio GLOBAL da plataforma, independente de qualquer empresa — não
-  // confundir com o papel (owner/admin/agent) dentro de activeMembership.
+  // confundir com o papel (owner/admin/attendant/cashier) dentro de activeMembership.
   isMasterAdmin: boolean;
   masterAdminLoading: boolean;
   activeCompanyId: string | null;
@@ -21,6 +21,7 @@ export interface AuthContextValue {
   signOut: () => Promise<void>;
   createCompany: (
     name: string,
+    accessCode: string,
     document: string | null,
   ) => Promise<{ error: string | null }>;
   refreshMemberships: () => Promise<void>;

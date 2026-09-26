@@ -33,3 +33,8 @@ enabled = true
 # própria checagem via RLS (ver supabase/functions/send-invite-email), isso
 # aqui é uma primeira barreira na borda antes do código rodar.
 verify_jwt = true
+
+[functions.employee-admin]
+# Gestão de funcionários. JWT obrigatório na borda; o handler valida o token de
+# novo e todas as escritas passam por RPCs chamadas com o JWT do próprio ator.
+verify_jwt = true
