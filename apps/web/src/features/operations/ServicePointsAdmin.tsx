@@ -7,13 +7,7 @@ import {
 } from "./adminApi";
 import { TYPE_SINGULAR, filterAdminPoints, type AdminServicePoint, type ListFilter } from "./adminLogic";
 import { BatchDialog, EditPointDialog, PointFormDialog, TogglePointDialog } from "./ServicePointAdminDialogs";
-import { sortPoints, type ServiceMode, type ServicePointType } from "./panel";
-
-const MODE_OPTIONS: Array<{ value: ServiceMode; label: string }> = [
-  { value: "command", label: "Comandas" },
-  { value: "table", label: "Mesas" },
-  { value: "both", label: "Comandas e Mesas" },
-];
+import { sortPoints, type ServicePointType } from "./panel";
 
 const FILTER_CHIPS: Array<{ value: ListFilter; label: string }> = [
   { value: "all", label: "Todos" },
@@ -32,9 +26,11 @@ type OpenDialog =
   | { kind: "batch" }
   | { kind: "edit" | "toggle"; point: AdminServicePoint };
 
-// Configuração de Comandas / Mesas (Administrativo): modo de atendimento, cadastro individual e
-// em lote, edição e ativar/desativar. Só owner e admin (o Administrativo já barra os demais; aqui
-// vai uma segunda checagem) e, de verdade, o RLS do banco. Nada é excluído.
+// Configuração de Comandas / Mesas (Administrativo): cadastro individual e em lote, busca,
+// filtros, edição e ativar/desativar. O modo de atendimento tem tela própria em Configurações
+// (ServiceModeSection/ServiceModeSettingsPage) e não é mais mostrado aqui. Só owner e admin (o
+// Administrativo já barra os demais; aqui vai uma segunda checagem) e, de verdade, o RLS do
+// banco. Nada é excluído.
 export function ServicePointsAdmin({ source = supabaseServicePointsAdminSource }: { source?: ServicePointsAdminSource }) {
   const { activeMembership } = useAuth();
   const companyId = activeMembership?.companyId ?? null;
@@ -44,8 +40,6 @@ export function ServicePointsAdmin({ source = supabaseServicePointsAdminSource }
   const [data, setData] = useState<ServicePointsAdminData | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [savingMode, setSavingMode] = useState(false);
-  const [modeError, setModeError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [dialog, setDialog] = useState<OpenDialog | null>(null);
   const [query, setQuery] = useState("");
@@ -75,21 +69,6 @@ export function ServicePointsAdmin({ source = supabaseServicePointsAdminSource }
     return (
       <p className="form-notice">Somente donos(as) e administradores(as) podem configurar comandas e mesas.</p>
     );
-  }
-
-  async function changeMode(next: ServiceMode) {
-    if (!companyId || !data || savingMode || next === data.mode) return;
-    setSavingMode(true);
-    setModeError(null);
-    setNotice(null);
-    const result = await source.saveMode(companyId, next);
-    setSavingMode(false);
-    if (result.error) {
-      setModeError(result.error);
-      return;
-    }
-    setData((prev) => prev && { ...prev, mode: next });
-    setNotice("Modo de atendimento atualizado.");
   }
 
   // Roda a operação; se der certo fecha o diálogo, avisa e recarrega a lista. Erro volta para o
@@ -187,32 +166,6 @@ export function ServicePointsAdmin({ source = supabaseServicePointsAdminSource }
 
   return (
     <div className="sp-admin">
-      <fieldset className="mode-picker" disabled={!data || savingMode}>
-        <legend>Modo de atendimento</legend>
-        <div className="mode-options">
-          {MODE_OPTIONS.map((option) => (
-            <label
-              key={option.value}
-              className={`mode-option${data?.mode === option.value ? " mode-option-selected" : ""}`}
-            >
-              <input
-                type="radio"
-                name="service-mode"
-                value={option.value}
-                checked={data?.mode === option.value}
-                onChange={() => void changeMode(option.value)}
-              />
-              {option.label}
-            </label>
-          ))}
-        </div>
-        <p className="field-hint">
-          Define o que o Atendimento e o Caixa mostram e permitem abrir. Cadastrar comandas e mesas não depende do
-          modo.
-        </p>
-        {modeError && <div className="form-error">{modeError}</div>}
-      </fieldset>
-
       <div className="admin-actions">
         <button className="btn-primary btn-auto" type="button" onClick={() => open({ kind: "create", type: "command" })}>
           Nova comanda

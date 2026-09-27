@@ -10,6 +10,7 @@ import {
   OperationalRoute,
   RootRedirect,
 } from "./app/routeGuards";
+import { AccessCodeSettingsPage } from "./pages/AccessCodeSettingsPage";
 import { AccessDisabledPage } from "./pages/AccessDisabledPage";
 import { AppHomePage } from "./pages/AppHomePage";
 import { CompanySettingsPage } from "./pages/CompanySettingsPage";
@@ -22,8 +23,10 @@ import { MasterInvoicesPage } from "./pages/MasterInvoicesPage";
 import { MasterModulesPage } from "./pages/MasterModulesPage";
 import { MasterOverviewPage } from "./pages/MasterOverviewPage";
 import { MasterPlansPage } from "./pages/MasterPlansPage";
+import { ModulePlaceholderPage } from "./pages/ModulePlaceholderPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
 import { OperationalCashierPage, OperationalServicePage } from "./pages/OperationalPages";
+import { ServiceModeSettingsPage } from "./pages/ServiceModeSettingsPage";
 import { ServicePointsAdminPage } from "./pages/ServicePointsAdminPage";
 import { SignupPage } from "./pages/SignupPage";
 import { TeamPage } from "./pages/TeamPage";
@@ -97,9 +100,34 @@ function App() {
         }
       >
         <Route index element={<AppHomePage />} />
-        <Route path="configuracoes" element={<CompanySettingsPage />} />
+        {/* Link antigo: /app/configuracoes agora é só Empresa/Código de acesso/Modo de atendimento. */}
+        <Route path="configuracoes" element={<Navigate to="/app/configuracoes/empresa" replace />} />
+        <Route path="configuracoes/empresa" element={<CompanySettingsPage />} />
+        <Route path="configuracoes/codigo-acesso" element={<AccessCodeSettingsPage />} />
+        <Route path="configuracoes/modo-atendimento" element={<ServiceModeSettingsPage />} />
         <Route path="equipe" element={<TeamPage />} />
         <Route path="comandas" element={<ServicePointsAdminPage />} />
+
+        {/* Placeholders da nova sidebar (ver app/adminNav.ts): módulos ainda não implementados,
+            todos com a MESMA página reutilizável — nada de lógica de negócio aqui. */}
+        <Route path="financeiro/visao" element={<ModulePlaceholderPage title="Visão financeira" />} />
+        <Route path="financeiro/caixa" element={<ModulePlaceholderPage title="Caixa" />} />
+        <Route path="financeiro/contas-a-receber" element={<ModulePlaceholderPage title="Contas a receber" />} />
+        <Route path="financeiro/contas-a-pagar" element={<ModulePlaceholderPage title="Contas a pagar" />} />
+        <Route path="financeiro/relatorios" element={<ModulePlaceholderPage title="Relatórios financeiros" />} />
+
+        <Route path="cadastros/produtos" element={<ModulePlaceholderPage title="Produtos" />} />
+        <Route path="cadastros/categorias" element={<ModulePlaceholderPage title="Categorias" />} />
+        <Route path="cadastros/setores" element={<ModulePlaceholderPage title="Setores de produção" />} />
+        <Route path="cadastros/clientes" element={<ModulePlaceholderPage title="Clientes" />} />
+
+        <Route path="operacional/comandas-abertas" element={<ModulePlaceholderPage title="Comandas / Mesas abertas" />} />
+        <Route path="operacional/pedidos" element={<ModulePlaceholderPage title="Pedidos" />} />
+        <Route path="operacional/producao" element={<ModulePlaceholderPage title="Produção" />} />
+        <Route path="operacional/caixa" element={<ModulePlaceholderPage title="Caixa / Balcão" />} />
+
+        <Route path="configuracoes/impressoras" element={<ModulePlaceholderPage title="Impressoras" />} />
+        <Route path="configuracoes/sistema" element={<ModulePlaceholderPage title="Sistema / Preferências" />} />
       </Route>
       <Route
         path="/master"

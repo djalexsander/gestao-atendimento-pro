@@ -1,8 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { useAuth } from "../app/useAuth";
 import { updateCompanyDetails } from "../features/company/api";
-import type { AccessCodeSource } from "../features/company/accessCodeApi";
-import { AccessCodeSection } from "../features/company/AccessCodeSection";
 import type { CompanyRole, CompanyRow } from "../lib/types";
 
 const ROLE_LABEL: Record<CompanyRole, string> = {
@@ -17,13 +15,12 @@ interface CompanyFormProps {
   role: CompanyRole;
   canEdit: boolean;
   onSaved: () => Promise<void>;
-  accessCodeSource?: AccessCodeSource;
 }
 
 // Chaveado por company.id no componente pai: ao trocar de empresa ativa, o
 // React remonta este componente com o estado inicial já correto, sem precisar
 // de um efeito para "ressincronizar" os campos do formulário.
-function CompanyForm({ company, role, canEdit, onSaved, accessCodeSource }: CompanyFormProps) {
+function CompanyForm({ company, role, canEdit, onSaved }: CompanyFormProps) {
   const [name, setName] = useState(company.name);
   const [document, setDocument] = useState(company.document ?? "");
   const [error, setError] = useState<string | null>(null);
@@ -50,7 +47,7 @@ function CompanyForm({ company, role, canEdit, onSaved, accessCodeSource }: Comp
 
   return (
     <div>
-      <h2>Configurações da empresa</h2>
+      <h2>Dados da empresa</h2>
 
       {error && <div className="form-error">{error}</div>}
       {success && <div className="form-notice">Dados atualizados com sucesso.</div>}
@@ -71,7 +68,8 @@ function CompanyForm({ company, role, canEdit, onSaved, accessCodeSource }: Comp
           <label htmlFor="settings-slug">Slug</label>
           <input id="settings-slug" type="text" value={company.slug} disabled readOnly />
           <span className="field-hint">
-            Identificador interno da empresa. Não é o código de acesso dos funcionários (veja abaixo).
+            Identificador interno da empresa. Não é o código de acesso dos funcionários (Configurações → Código de
+            acesso).
           </span>
         </div>
         <div className="field">
@@ -101,14 +99,11 @@ function CompanyForm({ company, role, canEdit, onSaved, accessCodeSource }: Comp
           </p>
         )}
       </form>
-
-      <AccessCodeSection company={company} canEdit={canEdit} source={accessCodeSource} />
     </div>
   );
 }
 
-// `accessCodeSource` só existe para exercitar a seção do código com dados simulados; na rota fica o padrão.
-export function CompanySettingsPage({ accessCodeSource }: { accessCodeSource?: AccessCodeSource }) {
+export function CompanySettingsPage() {
   const { activeMembership, refreshMemberships } = useAuth();
   if (!activeMembership) return null;
 
@@ -121,7 +116,6 @@ export function CompanySettingsPage({ accessCodeSource }: { accessCodeSource?: A
       role={activeMembership.role}
       canEdit={canEdit}
       onSaved={refreshMemberships}
-      accessCodeSource={accessCodeSource}
     />
   );
 }

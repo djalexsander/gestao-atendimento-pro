@@ -1,13 +1,12 @@
 import { supabase } from "../../lib/supabaseClient";
 import { describeServiceError, type AdminServicePoint, type BatchRow } from "./adminLogic";
-import type { ServiceMode, ServicePointType } from "./panel";
+import type { ServicePointType } from "./panel";
 
 const LOAD_ERROR = "Não foi possível carregar as comandas e mesas agora. Tente novamente.";
 const SAVE_ERROR = "Não foi possível salvar agora. Tente novamente.";
 const NO_PERMISSION = "Você não tem permissão para alterar comandas e mesas.";
 
 export interface ServicePointsAdminData {
-  mode: ServiceMode;
   points: AdminServicePoint[];
 }
 
@@ -27,7 +26,6 @@ export interface NewServicePoint {
 // só a mensagem de erro (ou null): quem manda de verdade é o RLS + as regras do banco.
 export interface ServicePointsAdminSource {
   load(companyId: string): Promise<{ data: ServicePointsAdminData | null; error: string | null }>;
-  saveMode(companyId: string, mode: ServiceMode): Promise<{ error: string | null }>;
   create(companyId: string, input: NewServicePoint): Promise<{ error: string | null }>;
   createBatch(companyId: string, rows: BatchRow[], generateEan: boolean): Promise<{ error: string | null }>;
   update(pointId: string, input: { display_name: string; barcode: string | null }): Promise<{ error: string | null }>;
@@ -54,33 +52,12 @@ async function setPointActive(pointId: string, active: boolean): Promise<{ error
 // Não se apaga nada: só desativa.
 export const supabaseServicePointsAdminSource: ServicePointsAdminSource = {
   async load(companyId) {
-    const [settings, points] = await Promise.all([
-      supabase.from("company_operational_settings").select("service_mode").eq("company_id", companyId).maybeSingle(),
-      supabase.from("service_points").select(POINT_COLUMNS).eq("company_id", companyId),
-    ]);
-    if (settings.error || points.error || !settings.data) {
-      const failure = settings.error ?? points.error;
-      console.error("Falha ao carregar comandas e mesas (admin):", failure?.code ?? "sem configuração");
+    const { data, error } = await supabase.from("service_points").select(POINT_COLUMNS).eq("company_id", companyId);
+    if (error) {
+      console.error("Falha ao carregar comandas e mesas (admin):", error.code);
       return { data: null, error: LOAD_ERROR };
     }
-    return {
-      data: {
-        mode: (settings.data as { service_mode: ServiceMode }).service_mode,
-        points: (points.data ?? []) as AdminServicePoint[],
-      },
-      error: null,
-    };
-  },
-
-  async saveMode(companyId, mode) {
-    const { data, error } = await supabase
-      .from("company_operational_settings")
-      .update({ service_mode: mode })
-      .eq("company_id", companyId)
-      .select("service_mode");
-    if (error) return { error: describeServiceError(error, SAVE_ERROR) };
-    // O RLS não recusa com erro: um UPDATE sem permissão simplesmente não acha linha.
-    return { error: data && data.length > 0 ? null : NO_PERMISSION };
+    return { data: { points: (data ?? []) as AdminServicePoint[] }, error: null };
   },
 
   async create(companyId, input) {
