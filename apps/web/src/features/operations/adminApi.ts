@@ -17,6 +17,9 @@ export interface NewServicePoint {
   display_name: string;
   barcode: string | null;
   is_active: boolean;
+  // Ponto ainda não existe: não há como gerar o EAN antes de salvar. Marcado, o create() cria o
+  // ponto (sem barcode) e, em seguida, pede o EAN ao banco — nunca inventado no frontend.
+  generate_ean: boolean;
 }
 
 // Fonte de dados da tela administrativa. Recebida por parâmetro (a real, abaixo, é o padrão)
@@ -26,9 +29,12 @@ export interface ServicePointsAdminSource {
   load(companyId: string): Promise<{ data: ServicePointsAdminData | null; error: string | null }>;
   saveMode(companyId: string, mode: ServiceMode): Promise<{ error: string | null }>;
   create(companyId: string, input: NewServicePoint): Promise<{ error: string | null }>;
-  createBatch(companyId: string, rows: BatchRow[]): Promise<{ error: string | null }>;
+  createBatch(companyId: string, rows: BatchRow[], generateEan: boolean): Promise<{ error: string | null }>;
   update(pointId: string, input: { display_name: string; barcode: string | null }): Promise<{ error: string | null }>;
   setActive(pointId: string, active: boolean): Promise<{ error: string | null }>;
+  // Gera (p_regenerate=false) ou regenera (true) o EAN-13 de um ponto EXISTENTE. A geração real é
+  // sempre do banco (generate_service_point_ean13); devolve o barcode novo para atualizar a tela.
+  generateEan(pointId: string, regenerate?: boolean): Promise<{ barcode: string | null; error: string | null }>;
 }
 
 const POINT_COLUMNS = "id, type, code, display_name, barcode, is_active";
@@ -85,37 +91,45 @@ export const supabaseServicePointsAdminSource: ServicePointsAdminSource = {
         type: input.type,
         code: input.code,
         display_name: input.display_name,
-        barcode: input.barcode,
+        barcode: input.generate_ean ? null : input.barcode,
       })
       .select("id")
       .single();
     if (error || !data) return { error: describeServiceError(error ?? {}, SAVE_ERROR) };
+    const pointId = (data as { id: string }).id;
     // is_active não faz parte do INSERT liberado ao cliente (nasce ativo): criar já inativo é
     // insert + update.
     if (!input.is_active) {
-      const off = await setPointActive((data as { id: string }).id, false);
+      const off = await setPointActive(pointId, false);
       if (off.error) return { error: `Criada, mas não foi possível deixá-la inativa: ${off.error}` };
+    }
+    if (input.generate_ean) {
+      const gen = await this.generateEan(pointId);
+      if (gen.error) return { error: `Criada, mas não foi possível gerar o código de barras: ${gen.error}` };
     }
     return { error: null };
   },
 
-  // Uma instrução só: ou cria o lote inteiro, ou nada.
-  async createBatch(companyId, rows) {
-    const { error } = await supabase.from("service_points").insert(
-      rows.map((row) => ({
-        company_id: companyId,
-        type: row.type,
-        code: row.code,
-        display_name: row.display_name,
-      })),
-    );
-    if (error) {
-      const friendly = describeServiceError(error, SAVE_ERROR);
-      return {
-        error: error.code === "23505" ? "Algum código do intervalo já existe. Atualize a lista e tente de novo." : friendly,
-      };
-    }
+  // Uma RPC só: ou cria (e gera o EAN de) o lote inteiro, ou nada — mesma atomicidade de antes,
+  // agora incluindo a geração do código de barras quando marcada.
+  async createBatch(companyId, rows, generateEan) {
+    const { error } = await supabase.rpc("create_service_points_batch", {
+      p_company_id: companyId,
+      p_type: rows[0].type,
+      p_rows: rows.map((row) => ({ code: row.code, display_name: row.display_name })),
+      p_generate_ean: generateEan,
+    });
+    if (error) return { error: describeServiceError(error, SAVE_ERROR) };
     return { error: null };
+  },
+
+  async generateEan(pointId, regenerate = false) {
+    const { data, error } = await supabase.rpc("generate_service_point_ean13", {
+      p_service_point_id: pointId,
+      p_regenerate: regenerate,
+    });
+    if (error) return { barcode: null, error: describeServiceError(error, SAVE_ERROR) };
+    return { barcode: data as string, error: null };
   },
 
   async update(pointId, input) {

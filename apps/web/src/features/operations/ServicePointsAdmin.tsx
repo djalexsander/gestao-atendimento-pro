@@ -274,7 +274,9 @@ export function ServicePointsAdmin({ source = supabaseServicePointsAdminSource }
       {dialog?.kind === "batch" && (
         <BatchDialog
           existingCodes={existingCodes}
-          onSubmit={(rows) => submit(() => source.createBatch(companyId!, rows), batchNotice(rows.length, rows[0].type))}
+          onSubmit={({ rows, generateEan }) =>
+            submit(() => source.createBatch(companyId!, rows, generateEan), batchNotice(rows.length, rows[0].type))
+          }
           onClose={() => setDialog(null)}
         />
       )}
@@ -283,6 +285,11 @@ export function ServicePointsAdmin({ source = supabaseServicePointsAdminSource }
           key={dialog.point.id}
           point={dialog.point}
           onSubmit={(input) => submit(() => source.update(dialog.point.id, input), `${dialog.point.code} atualizada.`)}
+          onGenerateEan={async (regenerate) => {
+            const result = await source.generateEan(dialog.point.id, regenerate);
+            if (!result.error) void reload();
+            return result;
+          }}
           onClose={() => setDialog(null)}
         />
       )}

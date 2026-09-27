@@ -42,11 +42,28 @@ export function validateDisplayName(name: string): string | null {
   return null;
 }
 
-// Opcional: vazio é válido.
+// Formato do código interno gerado (200 + 9 dígitos de sequência + dígito verificador).
+export const EAN13_INTERNAL_RE = /^200\d{10}$/;
+
+// Espelha ean13_check_digit() do banco (migration 060000): peso 1 nas posições ímpares (1ª..11ª),
+// peso 3 nas pares (2ª..12ª), contando da esquerda.
+export function ean13CheckDigit(digits12: string): number {
+  let sum = 0;
+  for (let i = 0; i < 12; i += 1) {
+    sum += Number(digits12[i]) * (i % 2 === 0 ? 1 : 3);
+  }
+  return (10 - (sum % 10)) % 10;
+}
+
+// Opcional: vazio é válido. Barcodes legados/próprios (fora do formato 200+13 dígitos) continuam
+// liberados como já eram; só o formato interno tem o dígito verificador exigido.
 export function validateBarcode(barcode: string): string | null {
   if (!barcode) return null;
   if (barcode.length > BARCODE_MAX_LENGTH) return `Use no máximo ${BARCODE_MAX_LENGTH} caracteres.`;
   if (/\s/.test(barcode)) return "O código de barras não pode ter espaços.";
+  if (EAN13_INTERNAL_RE.test(barcode) && Number(barcode[12]) !== ean13CheckDigit(barcode.slice(0, 12))) {
+    return "Código EAN-13 inválido: o dígito verificador não confere.";
+  }
   return null;
 }
 

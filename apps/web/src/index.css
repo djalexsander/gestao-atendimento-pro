@@ -126,6 +126,17 @@ button {
   outline-offset: 1px;
 }
 
+/* Campo + botão na mesma linha (ex.: código de barras + "Gerar EAN-13"). */
+.field-with-action {
+  display: flex;
+  gap: 8px;
+}
+
+.field-with-action input {
+  flex: 1;
+  min-width: 0;
+}
+
 .btn-primary {
   width: 100%;
   padding: 10px 16px;
@@ -791,4 +802,53 @@ button {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
+}
+
+/* Configurações da empresa: seção "Código de acesso dos funcionários" (separada do slug). */
+.settings-section {
+  max-width: 420px;
+  margin-top: 28px;
+  padding: 16px 16px 4px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.settings-section-title {
+  margin: 0 0 12px;
+  font-size: 13px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.settings-section .field input:disabled {
+  color: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.field-error {
+  font-size: 13px;
+  color: var(--danger);
+}
+
+.settings-lock {
+  margin-bottom: 16px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--warning-bg);
+  color: var(--warning);
+  font-size: 14px;
+}
+
+.settings-distinction {
+  margin: 16px 0 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.settings-distinction strong {
+  color: var(--text-h);
 }

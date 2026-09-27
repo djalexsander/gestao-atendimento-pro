@@ -100,26 +100,81 @@ function ErrorBox({ message }: { message: string | null }) {
 }
 
 // O leitor de código de barras termina com Enter: no campo do código de barras isso NÃO pode
-// enviar o formulário inteiro.
-function BarcodeField({ id, value, onChange }: { id: string; value: string; onChange: (value: string) => void }) {
+// enviar o formulário inteiro. `action` é o botão de gerar/regenerar EAN-13 (cada diálogo decide
+// o que ele faz); sem `action`, o campo fica igual a antes.
+function BarcodeField({
+  id,
+  value,
+  onChange,
+  disabled,
+  placeholder,
+  hint,
+  action,
+}: {
+  id: string;
+  value: string;
+  onChange: (value: string) => void;
+  disabled?: boolean;
+  placeholder?: string;
+  hint?: string;
+  action?: { label: string; onClick: () => void; disabled?: boolean };
+}) {
   return (
     <div className="field">
       <label htmlFor={id}>Código de barras (opcional)</label>
-      <input
-        id={id}
-        type="text"
-        maxLength={BARCODE_MAX_LENGTH}
-        autoComplete="off"
-        autoCapitalize="none"
-        spellCheck={false}
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") e.preventDefault();
-        }}
-      />
-      <span className="field-hint">Clique aqui e passe o leitor, ou digite. Sem espaços.</span>
+      <div className="field-with-action">
+        <input
+          id={id}
+          type="text"
+          maxLength={BARCODE_MAX_LENGTH}
+          autoComplete="off"
+          autoCapitalize="none"
+          spellCheck={false}
+          disabled={disabled}
+          placeholder={placeholder}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") e.preventDefault();
+          }}
+        />
+        {action && (
+          <button className="btn-secondary btn-small" type="button" disabled={action.disabled} onClick={action.onClick}>
+            {action.label}
+          </button>
+        )}
+      </div>
+      <span className="field-hint">{hint ?? "Clique aqui e passe o leitor, ou digite. Sem espaços."}</span>
     </div>
+  );
+}
+
+// Confirmação da REGENERAÇÃO (só aparece quando já existe um código): mesmo texto e mesmo
+// contrato onConfirm/onClose dos outros diálogos de confirmação (ex.: TogglePointDialog).
+function RegenerateConfirmDialog({
+  onConfirm,
+  onClose,
+}: {
+  onConfirm: () => Promise<string | null>;
+  onClose: () => void;
+}) {
+  const { error, submitting, run } = useSubmit();
+
+  function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    void run(() => null, onConfirm);
+  }
+
+  return (
+    <Modal title="Gerar novo EAN-13" onClose={onClose}>
+      <form onSubmit={handleSubmit}>
+        <p className="modal-text">
+          Gerar um novo código invalidará o código de barras físico anterior desta comanda/mesa. Deseja continuar?
+        </p>
+        <ErrorBox message={error} />
+        <Actions submitting={submitting} submitLabel="Gerar novo código" submittingLabel="Gerando…" onClose={onClose} />
+      </form>
+    </Modal>
   );
 }
 
@@ -139,6 +194,9 @@ export function PointFormDialog({
   const [code, setCode] = useState("");
   const [name, setName] = useState("");
   const [barcode, setBarcode] = useState("");
+  // O ponto ainda não existe: não há como gerar o EAN antes de salvar (nada é inventado no
+  // frontend). Marcar só liga a intenção; a geração real acontece no backend, depois do INSERT.
+  const [generateEan, setGenerateEan] = useState(false);
   const [active, setActive] = useState(true);
   const { error, submitting, run } = useSubmit();
 
@@ -150,14 +208,15 @@ export function PointFormDialog({
         validateCode(normalized) ??
         (existingCodes.has(normalized) ? "Já existe uma comanda ou mesa com este código." : null) ??
         validateDisplayName(name.trim()) ??
-        validateBarcode(barcode.trim()),
+        (generateEan ? null : validateBarcode(barcode.trim())),
       () =>
         onSubmit({
           type,
           code: normalized,
           display_name: name.trim(),
-          barcode: barcode.trim() || null,
+          barcode: generateEan ? null : barcode.trim() || null,
           is_active: active,
+          generate_ean: generateEan,
         }),
     );
   }
@@ -196,7 +255,15 @@ export function PointFormDialog({
             onChange={(e) => setName(e.target.value)}
           />
         </div>
-        <BarcodeField id="sp-barcode" value={barcode} onChange={setBarcode} />
+        <BarcodeField
+          id="sp-barcode"
+          value={generateEan ? "" : barcode}
+          onChange={setBarcode}
+          disabled={generateEan}
+          placeholder={generateEan ? "Será gerado ao salvar" : undefined}
+          hint={generateEan ? "Um código EAN-13 será gerado automaticamente ao salvar." : undefined}
+          action={{ label: generateEan ? "Cancelar geração" : "Gerar EAN-13", onClick: () => setGenerateEan((g) => !g) }}
+        />
         <label className="checkbox-row">
           <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
           Ativo
@@ -214,13 +281,14 @@ export function BatchDialog({
   onClose,
 }: {
   existingCodes: Set<string>;
-  onSubmit: Submit<BatchRow[]>;
+  onSubmit: Submit<{ rows: BatchRow[]; generateEan: boolean }>;
   onClose: () => void;
 }) {
   const [type, setType] = useState<ServicePointType>("command");
   const [prefix, setPrefix] = useState<string>(DEFAULT_PREFIX.command);
   const [from, setFrom] = useState("1");
   const [to, setTo] = useState("50");
+  const [generateEan, setGenerateEan] = useState(false);
   const { error, submitting, run } = useSubmit();
 
   const plan = useMemo(
@@ -238,7 +306,7 @@ export function BatchDialog({
     event.preventDefault();
     void run(
       () => plan.error,
-      () => onSubmit(plan.rows),
+      () => onSubmit({ rows: plan.rows, generateEan }),
     );
   }
 
@@ -303,11 +371,15 @@ export function BatchDialog({
                 … <strong>{last.code}</strong>
               </>
             )}
-            . Nomes: “{first.display_name}”{plan.rows.length > 1 && <> … “{last.display_name}”</>}. Sem código de
-            barras.
+            . Nomes: “{first.display_name}”{plan.rows.length > 1 && <> … “{last.display_name}”</>}.{" "}
+            {generateEan ? "Cada ponto recebe seu próprio código EAN-13." : "Sem código de barras."}
             {plan.skipped.length > 0 && <> {describeSkipped(plan.skipped)}</>}
           </div>
         )}
+        <label className="checkbox-row">
+          <input type="checkbox" checked={generateEan} onChange={(e) => setGenerateEan(e.target.checked)} />
+          Gerar EAN-13 automaticamente
+        </label>
         <span className="field-hint">Até {BATCH_MAX} por vez.</span>
         <Actions
           submitting={submitting}
@@ -325,15 +397,50 @@ export function BatchDialog({
 export function EditPointDialog({
   point,
   onSubmit,
+  onGenerateEan,
   onClose,
 }: {
   point: AdminServicePoint;
   onSubmit: Submit<{ display_name: string; barcode: string | null }>;
+  onGenerateEan: (regenerate: boolean) => Promise<{ barcode: string | null; error: string | null }>;
   onClose: () => void;
 }) {
   const [name, setName] = useState(point.display_name);
   const [barcode, setBarcode] = useState(point.barcode ?? "");
+  const [genBusy, setGenBusy] = useState(false);
+  const [genError, setGenError] = useState<string | null>(null);
+  const [confirmingRegenerate, setConfirmingRegenerate] = useState(false);
   const { error, submitting, run } = useSubmit();
+
+  // Gera direto (sem confirmação): só chamado quando o campo está vazio. Escreve no banco
+  // imediatamente (é o que generate_service_point_ean13 faz); "Salvar" nem precisa ser clicado.
+  async function generateDirect() {
+    setGenBusy(true);
+    setGenError(null);
+    const result = await onGenerateEan(false);
+    setGenBusy(false);
+    if (result.error) {
+      setGenError(result.error);
+      return;
+    }
+    setBarcode(result.barcode ?? "");
+  }
+
+  // Regenera (com confirmação prévia, ver RegenerateConfirmDialog): mesmo formato Promise<string
+  // | null> dos outros onConfirm deste arquivo.
+  async function regenerate(): Promise<string | null> {
+    setGenBusy(true);
+    const result = await onGenerateEan(true);
+    setGenBusy(false);
+    if (result.error) return result.error;
+    setBarcode(result.barcode ?? "");
+    return null;
+  }
+
+  function handleGenerateClick() {
+    if (barcode.trim()) setConfirmingRegenerate(true);
+    else void generateDirect();
+  }
 
   function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -368,9 +475,26 @@ export function EditPointDialog({
             onChange={(e) => setName(e.target.value)}
           />
         </div>
-        <BarcodeField id="sp-edit-barcode" value={barcode} onChange={setBarcode} />
+        <BarcodeField
+          id="sp-edit-barcode"
+          value={barcode}
+          onChange={setBarcode}
+          hint={genBusy ? "Gerando…" : undefined}
+          action={{ label: barcode.trim() ? "Gerar novo EAN-13" : "Gerar EAN-13", onClick: handleGenerateClick, disabled: genBusy }}
+        />
+        <ErrorBox message={genError} />
         <Actions submitting={submitting} submitLabel="Salvar" submittingLabel="Salvando…" onClose={onClose} />
       </form>
+      {confirmingRegenerate && (
+        <RegenerateConfirmDialog
+          onConfirm={async () => {
+            const failure = await regenerate();
+            if (!failure) setConfirmingRegenerate(false);
+            return failure;
+          }}
+          onClose={() => setConfirmingRegenerate(false)}
+        />
+      )}
     </Modal>
   );
 }
