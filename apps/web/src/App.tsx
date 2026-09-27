@@ -26,6 +26,8 @@ import { MasterPlansPage } from "./pages/MasterPlansPage";
 import { ModulePlaceholderPage } from "./pages/ModulePlaceholderPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
 import { OperationalCashierPage, OperationalServicePage } from "./pages/OperationalPages";
+import { ProductCategoriesPage } from "./pages/ProductCategoriesPage";
+import { ProductionSectorsPage } from "./pages/ProductionSectorsPage";
 import { ServiceModeSettingsPage } from "./pages/ServiceModeSettingsPage";
 import { ServicePointsAdminPage } from "./pages/ServicePointsAdminPage";
 import { SignupPage } from "./pages/SignupPage";
@@ -117,8 +119,8 @@ function App() {
         <Route path="financeiro/relatorios" element={<ModulePlaceholderPage title="Relatórios financeiros" />} />
 
         <Route path="cadastros/produtos" element={<ModulePlaceholderPage title="Produtos" />} />
-        <Route path="cadastros/categorias" element={<ModulePlaceholderPage title="Categorias" />} />
-        <Route path="cadastros/setores" element={<ModulePlaceholderPage title="Setores de produção" />} />
+        <Route path="cadastros/categorias" element={<ProductCategoriesPage />} />
+        <Route path="cadastros/setores" element={<ProductionSectorsPage />} />
         <Route path="cadastros/clientes" element={<ModulePlaceholderPage title="Clientes" />} />
 
         <Route path="operacional/comandas-abertas" element={<ModulePlaceholderPage title="Comandas / Mesas abertas" />} />
