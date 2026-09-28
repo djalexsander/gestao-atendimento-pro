@@ -1,4 +1,5 @@
 import { useMemo, useState, type FormEvent } from "react";
+import { BarcodeField } from "../../components/BarcodeField";
 import { Modal } from "../employees/Modal";
 import type { NewServicePoint } from "./adminApi";
 import {
@@ -97,56 +98,6 @@ function TypeSelect({
 
 function ErrorBox({ message }: { message: string | null }) {
   return message ? <div className="form-error">{message}</div> : null;
-}
-
-// O leitor de código de barras termina com Enter: no campo do código de barras isso NÃO pode
-// enviar o formulário inteiro. `action` é o botão de gerar/regenerar EAN-13 (cada diálogo decide
-// o que ele faz); sem `action`, o campo fica igual a antes.
-function BarcodeField({
-  id,
-  value,
-  onChange,
-  disabled,
-  placeholder,
-  hint,
-  action,
-}: {
-  id: string;
-  value: string;
-  onChange: (value: string) => void;
-  disabled?: boolean;
-  placeholder?: string;
-  hint?: string;
-  action?: { label: string; onClick: () => void; disabled?: boolean };
-}) {
-  return (
-    <div className="field">
-      <label htmlFor={id}>Código de barras (opcional)</label>
-      <div className="field-with-action">
-        <input
-          id={id}
-          type="text"
-          maxLength={BARCODE_MAX_LENGTH}
-          autoComplete="off"
-          autoCapitalize="none"
-          spellCheck={false}
-          disabled={disabled}
-          placeholder={placeholder}
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") e.preventDefault();
-          }}
-        />
-        {action && (
-          <button className="btn-secondary btn-small" type="button" disabled={action.disabled} onClick={action.onClick}>
-            {action.label}
-          </button>
-        )}
-      </div>
-      <span className="field-hint">{hint ?? "Clique aqui e passe o leitor, ou digite. Sem espaços."}</span>
-    </div>
-  );
 }
 
 // Confirmação da REGENERAÇÃO (só aparece quando já existe um código): mesmo texto e mesmo
@@ -257,6 +208,7 @@ export function PointFormDialog({
         </div>
         <BarcodeField
           id="sp-barcode"
+          maxLength={BARCODE_MAX_LENGTH}
           value={generateEan ? "" : barcode}
           onChange={setBarcode}
           disabled={generateEan}
@@ -477,6 +429,7 @@ export function EditPointDialog({
         </div>
         <BarcodeField
           id="sp-edit-barcode"
+          maxLength={BARCODE_MAX_LENGTH}
           value={barcode}
           onChange={setBarcode}
           hint={genBusy ? "Gerando…" : undefined}

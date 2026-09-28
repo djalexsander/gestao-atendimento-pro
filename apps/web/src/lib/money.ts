@@ -12,3 +12,17 @@ export function parseCents(input: string): number | null {
   if (!/^\d+(\.\d{1,2})?$/.test(normalized)) return null;
   return Math.round(parseFloat(normalized) * 100);
 }
+
+// products.sale_price (e colunas numeric(12,2) equivalentes) guardam REAIS direto, não
+// centavos — ver 20260926040000_product_catalog.sql. formatReais/parseReais espelham
+// formatCents/parseCents para esse formato.
+export function formatReais(value: number): string {
+  return brl.format(value);
+}
+
+// Mesma validação/parsing de parseCents (aceita "18,00", "18.00"); devolve reais, não
+// centavos. A regex de parseCents já recusa sinal negativo, então o resultado nunca é < 0.
+export function parseReais(input: string): number | null {
+  const cents = parseCents(input);
+  return cents === null ? null : cents / 100;
+}
