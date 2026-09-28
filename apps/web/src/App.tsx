@@ -25,7 +25,12 @@ import { MasterOverviewPage } from "./pages/MasterOverviewPage";
 import { MasterPlansPage } from "./pages/MasterPlansPage";
 import { ModulePlaceholderPage } from "./pages/ModulePlaceholderPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
-import { OperationalCashierPage, OperationalServicePage } from "./pages/OperationalPages";
+import {
+  OperationalCashierOrderPage,
+  OperationalCashierPage,
+  OperationalServiceOrderPage,
+  OperationalServicePage,
+} from "./pages/OperationalPages";
 import { ProductCategoriesPage } from "./pages/ProductCategoriesPage";
 import { ProductionSectorsPage } from "./pages/ProductionSectorsPage";
 import { ProductsPage } from "./pages/ProductsPage";
@@ -87,10 +92,26 @@ function App() {
         }
       />
       <Route
+        path="/operacional/atendimento/:sessionId"
+        element={
+          <OperationalRoute area="atendimento">
+            <OperationalServiceOrderPage />
+          </OperationalRoute>
+        }
+      />
+      <Route
         path="/operacional/caixa"
         element={
           <OperationalRoute area="caixa">
             <OperationalCashierPage />
+          </OperationalRoute>
+        }
+      />
+      <Route
+        path="/operacional/caixa/:sessionId"
+        element={
+          <OperationalRoute area="caixa">
+            <OperationalCashierOrderPage />
           </OperationalRoute>
         }
       />

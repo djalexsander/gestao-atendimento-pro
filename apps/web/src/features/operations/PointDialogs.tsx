@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Modal } from "../employees/Modal";
-import { formatOpenedFull, STATUS_LABEL, statusOf, type ServicePoint } from "./panel";
+import type { ServicePoint } from "./panel";
 
 const CUSTOMER_MAX_LENGTH = 80;
 // Leitor de código de barras configurado com Enter duplo (ou Enter apertado duas vezes) faria o
@@ -65,49 +65,6 @@ export function OpenSessionDialog({
           </button>
         </div>
       </form>
-    </Modal>
-  );
-}
-
-// Ponto em ATENDIMENTO: tela provisória. Pedidos e produtos entram na próxima etapa.
-export function SessionDetailDialog({ point, onClose }: { point: ServicePoint; onClose: () => void }) {
-  const session = point.open_session;
-  const status = statusOf(point);
-
-  return (
-    <Modal title={point.display_name} onClose={onClose}>
-      <dl className="op-detail">
-        <div>
-          <dt>{point.type === "table" ? "Mesa" : "Comanda"}</dt>
-          <dd>
-            {point.display_name} <span className="muted">({point.code})</span>
-          </dd>
-        </div>
-        <div>
-          <dt>Cliente</dt>
-          <dd>{session?.customer_name ?? "Não informado"}</dd>
-        </div>
-        <div>
-          <dt>Aberta em</dt>
-          <dd>{session ? formatOpenedFull(session.opened_at) : "—"}</dd>
-        </div>
-        <div>
-          <dt>Aberta por</dt>
-          <dd>{session?.opened_by_name ?? "—"}</dd>
-        </div>
-        <div>
-          <dt>Status</dt>
-          <dd>
-            <span className={`status-badge status-${status}`}>{STATUS_LABEL[status]}</span>
-          </dd>
-        </div>
-      </dl>
-      <p className="modal-text muted">Pedidos e produtos serão adicionados na próxima etapa.</p>
-      <div className="modal-actions">
-        <button className="btn-secondary" type="button" onClick={onClose}>
-          Fechar
-        </button>
-      </div>
     </Modal>
   );
 }

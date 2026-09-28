@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useNavigate } from "react-router-dom";
+import { OPERATIONAL_PATH } from "../../app/accessRules";
 import { useAuth } from "../../app/useAuth";
 import { supabaseServicePanelSource, type ServicePanelSource } from "./api";
-import { OpenSessionDialog, SessionDetailDialog } from "./PointDialogs";
+import { OpenSessionDialog } from "./PointDialogs";
 import {
   countByStatus,
   filterPoints,
@@ -35,7 +37,7 @@ const EMPTY_TEXT = {
   both: "Nenhuma comanda ou mesa cadastrada ainda. Peça ao administrador para cadastrar.",
 } as const;
 
-type OpenDialog = { kind: "open" | "detail"; point: ServicePoint };
+type OpenDialog = { kind: "open"; point: ServicePoint };
 
 function PointCard({ point, onSelect }: { point: ServicePoint; onSelect: (point: ServicePoint) => void }) {
   const status = statusOf(point);
@@ -82,9 +84,11 @@ export function ServicePointsPanel({
   variant: "attendant" | "cashier";
   source?: ServicePanelSource;
 }) {
+  const navigate = useNavigate();
   const { activeMembership, profile } = useAuth();
   const companyId = activeMembership?.companyId ?? null;
   const myName = profile?.full_name ?? null;
+  const area = variant === "attendant" ? "atendimento" : "caixa";
 
   const [data, setData] = useState<ServicePanelData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -153,7 +157,7 @@ export function ServicePointsPanel({
     focusSearch();
   }
 
-  // Livre abre o diálogo de abertura; em atendimento abre o detalhe provisório; inativo só avisa.
+  // Livre abre o diálogo de abertura; em atendimento vai para a tela real do pedido; inativo só avisa.
   function openPoint(point: ServicePoint) {
     setNotice(null);
     setScanMessage(null);
@@ -161,7 +165,11 @@ export function ServicePointsPanel({
       setScanMessage(`${point.display_name} está inativa. Fale com o administrador.`);
       return;
     }
-    setDialog({ kind: point.open_session ? "detail" : "open", point });
+    if (point.open_session) {
+      navigate(`${OPERATIONAL_PATH[area]}/${point.open_session.id}`);
+      return;
+    }
+    setDialog({ kind: "open", point });
   }
 
   // Enter na busca (o leitor USB digita o código e manda Enter): acha o ponto na hora, sem
@@ -315,9 +323,6 @@ export function ServicePointsPanel({
           onSubmit={(customer) => submitOpen(dialog.point, customer)}
           onClose={closeDialog}
         />
-      )}
-      {dialog?.kind === "detail" && (
-        <SessionDetailDialog key={dialog.point.id} point={dialog.point} onClose={closeDialog} />
       )}
     </section>
   );
