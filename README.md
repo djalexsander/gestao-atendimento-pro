@@ -1,4 +1,4 @@
-# Orça Fácil
+# Gestão de Atendimento Pro
 
 SaaS multiempresa de orçamentos assistidos por IA, com WhatsApp como canal de entrada.
 

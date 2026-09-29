@@ -88,7 +88,7 @@ export function MasterModulesPage() {
         )}
       </div>
       <p style={{ color: "var(--text-muted)", fontSize: 14 }}>
-        Módulos opcionais do OrçaFácil que uma empresa poderá contratar. O código é a chave
+        Módulos opcionais do Gestão de Atendimento Pro que uma empresa poderá contratar. O código é a chave
         de permissão e não pode ser alterado depois de criado.
       </p>
 

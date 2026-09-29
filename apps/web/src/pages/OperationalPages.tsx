@@ -17,7 +17,7 @@ function OperationalShell({ title, children }: { title: string; children: ReactN
     <div className="app-shell op-shell">
       <header className="app-topbar">
         <div className="app-topbar-left">
-          <div className="brand">OrçaFácil</div>
+          <div className="brand">Gestão de Atendimento Pro</div>
           <span style={{ color: "var(--text-muted)", fontSize: 14 }}>{activeMembership?.company.name}</span>
         </div>
         <div className="app-user">

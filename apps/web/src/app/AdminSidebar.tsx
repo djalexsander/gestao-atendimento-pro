@@ -69,7 +69,7 @@ export function AdminSidebar({ open, onNavigate }: { open: boolean; onNavigate: 
   return (
     <nav className={`admin-sidebar${open ? " admin-sidebar-open" : ""}`} aria-label="Navegação administrativa">
       <div className="admin-sidebar-header">
-        <div className="admin-brand">OrçaFácil</div>
+        <div className="admin-brand">Gestão de Atendimento Pro</div>
         <div className="admin-company">{activeMembership?.company.name}</div>
       </div>
       <div className="admin-nav-scroll">

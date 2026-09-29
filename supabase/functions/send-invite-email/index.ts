@@ -125,16 +125,16 @@ Deno.serve(async (req: Request) => {
 
   const html = `
     <div style="font-family: system-ui, sans-serif; max-width: 480px; margin: 0 auto; color: #3f3b46;">
-      <p style="color:#7c3aed; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; font-size:13px;">OrçaFácil</p>
+      <p style="color:#7c3aed; font-weight:700; letter-spacing:0.04em; text-transform:uppercase; font-size:13px;">Gestão de Atendimento Pro</p>
       <h2 style="color:#0d0b12;">Você foi convidado(a) para ${companyName}</h2>
-      <p>Você foi convidado(a) para participar da empresa <strong>${companyName}</strong> no OrçaFácil, como <strong>${roleLabel}</strong>.</p>
+      <p>Você foi convidado(a) para participar da empresa <strong>${companyName}</strong> no Gestão de Atendimento Pro, como <strong>${roleLabel}</strong>.</p>
       <p>Este convite é válido até <strong>${expiresLabel}</strong>.</p>
       <p style="margin: 24px 0;">
-        <a href="${acceptUrl}" style="background:#7c3aed; color:#fff; padding:10px 20px; border-radius:8px; text-decoration:none; font-weight:600; display:inline-block;">Entrar no OrçaFácil</a>
+        <a href="${acceptUrl}" style="background:#7c3aed; color:#fff; padding:10px 20px; border-radius:8px; text-decoration:none; font-weight:600; display:inline-block;">Entrar no Gestão de Atendimento Pro</a>
       </p>
       <p style="color:#6b6375; font-size:13px;">
         Se você ainda não tem conta, clique no botão acima e crie uma usando exatamente
-        o e-mail <strong>${escapeHtml(invite.email)}</strong> — é assim que o OrçaFácil
+        o e-mail <strong>${escapeHtml(invite.email)}</strong> — é assim que o Gestão de Atendimento Pro
         reconhece que o convite é seu.
       </p>
     </div>
@@ -147,9 +147,9 @@ Deno.serve(async (req: Request) => {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({
-      from: "OrçaFácil <noreply@alexproapps.com.br>",
+      from: "Gestão de Atendimento Pro <noreply@alexproapps.com.br>",
       to: [invite.email],
-      subject: `Convite para ${invite.company_name} no OrçaFácil`,
+      subject: `Convite para ${invite.company_name} no Gestão de Atendimento Pro`,
       html,
     }),
   });

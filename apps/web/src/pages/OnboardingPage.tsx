@@ -34,7 +34,7 @@ export function OnboardingPage() {
   return (
     <div className="auth-page">
       <div className="auth-card" style={{ maxWidth: 460 }}>
-        <div className="brand">OrçaFácil</div>
+        <div className="brand">Gestão de Atendimento Pro</div>
 
         <h1 style={{ fontSize: 22 }}>Crie sua empresa</h1>
         <p style={{ color: "var(--text-muted)", fontSize: 14 }}>

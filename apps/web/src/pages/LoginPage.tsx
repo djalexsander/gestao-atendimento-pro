@@ -23,7 +23,7 @@ export function LoginPage() {
   return (
     <div className="auth-page">
       <div className="auth-card">
-        <div className="brand">OrçaFácil</div>
+        <div className="brand">Gestão de Atendimento Pro</div>
         <h1 style={{ fontSize: 22 }}>Entrar</h1>
         <p style={{ color: "var(--text-muted)", fontSize: 14 }}>Proprietário ou administrador da empresa.</p>
 

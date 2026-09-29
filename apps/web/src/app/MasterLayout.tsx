@@ -9,7 +9,7 @@ export function MasterLayout() {
     <div className="app-shell">
       <header className="app-topbar">
         <div className="app-topbar-left">
-          <div className="brand">OrçaFácil</div>
+          <div className="brand">Gestão de Atendimento Pro</div>
           <span style={{ color: "var(--text-muted)", fontSize: 14 }}>Painel Master</span>
           <nav className="app-nav">
             <NavLink to="/master" end>
@@ -23,7 +23,7 @@ export function MasterLayout() {
         </div>
         <div className="app-user">
           <Link className="btn-secondary" to="/app">
-            Voltar ao OrçaFácil
+            Voltar ao Gestão de Atendimento Pro
           </Link>
         </div>
       </header>
