@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { formatReais } from "../../lib/money";
 import { Modal } from "../employees/Modal";
-import type { CashSource } from "./cashApi";
+import type { CashSession, CashSource } from "./cashApi";
 import {
   canFinalize,
   draftAppliedCents,
@@ -13,8 +13,10 @@ import {
   parseOpeningAmount,
   remainingCents,
   suggestedAmountText,
+  summarizeMovements,
   toPaymentPayload,
   totalInformedCents,
+  type CashMovementRow,
   type PaymentDraft,
   type PaymentMethod,
 } from "./cashLogic";
@@ -87,28 +89,36 @@ export function OpenCashDialog({
   );
 }
 
-// Fechar o caixa (simples): observação opcional.
+const dateTime = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" });
+
+// Fechar o caixa (simples, sem conferência física): mostra o resumo do caixa e pede só uma
+// observação opcional. Quem valida a permissão é o servidor (close_cash_session).
 export function CloseCashDialog({
   source,
-  cashSessionId,
+  cash,
+  operatorName,
+  movements,
   onClosed,
   onClose,
 }: {
   source: CashSource;
-  cashSessionId: string;
+  cash: CashSession;
+  operatorName: string | null;
+  movements: CashMovementRow[];
   onClosed: () => void;
   onClose: () => void;
 }) {
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const summary = summarizeMovements(movements);
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (submitting) return;
     setError(null);
     setSubmitting(true);
-    const result = await source.closeCash(cashSessionId, notes.trim() || null);
+    const result = await source.closeCash(cash.id, notes.trim() || null);
     setSubmitting(false);
     if (result.error) {
       setError(result.error);
@@ -118,8 +128,32 @@ export function CloseCashDialog({
   }
 
   return (
-    <Modal title="Fechar caixa" onClose={onClose}>
+    <Modal title="Fechar caixa" onClose={submitting ? () => undefined : onClose}>
       <form onSubmit={handleSubmit}>
+        <dl className="cash-summary cash-summary-modal">
+          <div>
+            <dt>Operador</dt>
+            <dd>{operatorName ?? cash.openedByName ?? "—"}</dd>
+          </div>
+          <div>
+            <dt>Abertura</dt>
+            <dd>{dateTime.format(new Date(cash.openedAt))}</dd>
+          </div>
+          <div>
+            <dt>Saldo inicial</dt>
+            <dd>{formatReais(cash.openingAmount)}</dd>
+          </div>
+          {PAYMENT_METHODS.map((method) => (
+            <div key={method}>
+              <dt>Vendas — {PAYMENT_METHOD_LABEL[method]}</dt>
+              <dd>{formatReais(summary.byMethod[method])}</dd>
+            </div>
+          ))}
+          <div>
+            <dt>Total vendido</dt>
+            <dd>{formatReais(summary.total)}</dd>
+          </div>
+        </dl>
         <p className="modal-text">Depois de fechado, este caixa não recebe mais vendas.</p>
         {error && <div className="form-error">{error}</div>}
         <div className="field">
@@ -131,7 +165,7 @@ export function CloseCashDialog({
             Cancelar
           </button>
           <button className="btn-danger" type="submit" disabled={submitting}>
-            {submitting ? "Fechando…" : "Fechar caixa"}
+            {submitting ? "Fechando…" : "Confirmar fechamento"}
           </button>
         </div>
       </form>

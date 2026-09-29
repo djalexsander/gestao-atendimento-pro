@@ -35,7 +35,7 @@ export const ADMIN_NAV: NavEntry[] = [
     label: "Financeiro",
     items: [
       { type: "item", label: "Visão financeira", path: "/app/financeiro/visao", status: "placeholder" },
-      { type: "item", label: "Caixa", path: "/app/financeiro/caixa", status: "placeholder" },
+      { type: "item", label: "Caixa", path: "/app/financeiro/caixa", status: "ready" },
       { type: "item", label: "Contas a receber", path: "/app/financeiro/contas-a-receber", status: "placeholder" },
       { type: "item", label: "Contas a pagar", path: "/app/financeiro/contas-a-pagar", status: "placeholder" },
       { type: "item", label: "Relatórios financeiros", path: "/app/financeiro/relatorios", status: "placeholder" },
@@ -62,7 +62,7 @@ export const ADMIN_NAV: NavEntry[] = [
       { type: "item", label: "Comandas / Mesas abertas", path: "/app/operacional/comandas-abertas", status: "placeholder" },
       { type: "item", label: "Pedidos", path: "/app/operacional/pedidos", status: "placeholder" },
       { type: "item", label: "Produção", path: "/app/operacional/producao", status: "placeholder" },
-      { type: "item", label: "Caixa / Balcão", path: "/app/operacional/caixa", status: "placeholder" },
+      { type: "item", label: "Caixa / Balcão", path: "/operacional/caixa", status: "ready" },
     ],
   },
   {

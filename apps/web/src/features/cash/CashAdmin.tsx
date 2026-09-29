@@ -12,13 +12,16 @@ const fmt = (iso: string) => dateTime.format(new Date(iso));
 // movimentos do caixa selecionado; abre/fecha o caixa do próprio usuário. Só leitura de dinheiro:
 // tudo que grava passa pelas RPCs. RLS: owner/admin veem todos os caixas da empresa.
 export function CashAdmin({ source = supabaseCashSource }: { source?: CashSource }) {
-  const { activeMembership, user } = useAuth();
+  const { activeMembership, user, profile } = useAuth();
   const companyId = activeMembership?.companyId ?? null;
   const userId = user?.id ?? null;
 
   const [sessions, setSessions] = useState<CashSession[] | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [movements, setMovements] = useState<CashMovementRow[]>([]);
+  // Movimentos JÁ carregados e de QUAL caixa são: o resumo só usa se forem do caixa selecionado.
+  const [loaded, setLoaded] = useState<{ cashId: string; rows: CashMovementRow[] } | null>(null);
+  // Movimentos do PRÓPRIO caixa, carregados ao abrir o fechamento (independe da seleção da lista).
+  const [ownMovements, setOwnMovements] = useState<CashMovementRow[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [dialog, setDialog] = useState<"open" | "close" | null>(null);
 
@@ -39,13 +42,10 @@ export function CashAdmin({ source = supabaseCashSource }: { source?: CashSource
   }, [reload]);
 
   useEffect(() => {
-    if (!selectedId) {
-      setMovements([]);
-      return;
-    }
+    if (!selectedId) return;
     let cancelled = false;
     void source.listMovements(selectedId).then((result) => {
-      if (!cancelled && result.data) setMovements(result.data);
+      if (!cancelled && result.data) setLoaded({ cashId: selectedId, rows: result.data });
     });
     return () => {
       cancelled = true;
@@ -54,14 +54,23 @@ export function CashAdmin({ source = supabaseCashSource }: { source?: CashSource
 
   const selected = sessions?.find((s) => s.id === selectedId) ?? null;
   const myOpen = sessions?.find((s) => s.status === "open" && s.openedBy === userId) ?? null;
-  const summary = summarizeMovements(movements);
+  // null = os movimentos do caixa selecionado ainda não chegaram (nunca mostra os de outro caixa).
+  const movements = loaded && loaded.cashId === selectedId ? loaded.rows : null;
+  const summary = summarizeMovements(movements ?? []);
+
+  async function startClose() {
+    if (!myOpen) return;
+    const result = await source.listMovements(myOpen.id);
+    setOwnMovements(result.data ?? []);
+    setDialog("close");
+  }
 
   return (
     <div>
       <div className="page-header">
         <h2>Caixa</h2>
         {myOpen ? (
-          <button className="btn-danger" type="button" onClick={() => setDialog("close")}>
+          <button className="btn-danger" type="button" onClick={() => void startClose()}>
             Fechar meu caixa
           </button>
         ) : (
@@ -124,17 +133,19 @@ export function CashAdmin({ source = supabaseCashSource }: { source?: CashSource
             {PAYMENT_METHODS.map((method) => (
               <div key={method}>
                 <dt>Vendas — {PAYMENT_METHOD_LABEL[method]}</dt>
-                <dd>{formatReais(summary.byMethod[method])}</dd>
+                <dd>{movements === null ? "…" : formatReais(summary.byMethod[method])}</dd>
               </div>
             ))}
             <div>
               <dt>Total vendido</dt>
-              <dd>{formatReais(summary.total)}</dd>
+              <dd>{movements === null ? "…" : formatReais(summary.total)}</dd>
             </div>
           </dl>
 
           <h4>Movimentos</h4>
-          {movements.length === 0 ? (
+          {movements === null ? (
+            <p className="field-hint">Carregando movimentos…</p>
+          ) : movements.length === 0 ? (
             <p className="field-hint">Nenhuma venda registrada neste caixa.</p>
           ) : (
             <div className="table-scroll">
@@ -178,7 +189,9 @@ export function CashAdmin({ source = supabaseCashSource }: { source?: CashSource
       {dialog === "close" && myOpen && (
         <CloseCashDialog
           source={source}
-          cashSessionId={myOpen.id}
+          cash={myOpen}
+          operatorName={profile?.full_name ?? null}
+          movements={ownMovements}
           onClosed={() => {
             setDialog(null);
             void reload();
