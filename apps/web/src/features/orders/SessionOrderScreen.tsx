@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { OPERATIONAL_PATH } from "../../app/accessRules";
 import { useAuth } from "../../app/useAuth";
@@ -6,6 +6,7 @@ import { supabaseCashSource, type CashSource } from "../cash/cashApi";
 import { CheckoutDialog, OpenCashDialog } from "../cash/CashDialogs";
 import { Modal } from "../employees/Modal";
 import { formatOpenedFull } from "../operations/panel";
+import { createCoalescedRunner } from "./coalesce";
 import { Catalog } from "./Catalog";
 import { CartBar, CartPanel } from "./Cart";
 import { OrderHistory } from "./OrderHistory";
@@ -71,11 +72,15 @@ export function SessionOrderScreen({
     if (result.data) setOrders(result.data);
   }, [source, sessionId]);
 
+  // Broadcast, postgres_changes e foco podem chegar quase juntos: uma busca por vez, sem atraso
+  // (se chegar outro pedido durante a busca, roda mais uma logo depois).
+  const requestReload = useMemo(() => createCoalescedRunner(reloadOrders), [reloadOrders]);
+
   // Realtime: uma assinatura por sessão, removida ao trocar de sessão/desmontar (logout desmonta).
   useEffect(() => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const unsubscribe = source.subscribeToOrders(sessionId, () => {
-      void reloadOrders();
+      requestReload();
       if (!submittingRef.current) {
         setSyncNotice(true);
         clearTimeout(timer);
@@ -86,12 +91,12 @@ export function SessionOrderScreen({
       clearTimeout(timer);
       unsubscribe();
     };
-  }, [source, sessionId, reloadOrders]);
+  }, [source, sessionId, requestReload]);
 
   // Fallback barato (sem polling): ao voltar o foco/visibilidade, recarrega uma vez.
   useEffect(() => {
     function refresh() {
-      if (document.visibilityState === "visible") void reloadOrders();
+      if (document.visibilityState === "visible") requestReload();
     }
     document.addEventListener("visibilitychange", refresh);
     window.addEventListener("focus", refresh);
@@ -99,7 +104,7 @@ export function SessionOrderScreen({
       document.removeEventListener("visibilitychange", refresh);
       window.removeEventListener("focus", refresh);
     };
-  }, [reloadOrders]);
+  }, [requestReload]);
 
   useEffect(() => {
     let cancelled = false;
@@ -169,7 +174,7 @@ export function SessionOrderScreen({
     // atendente fecha quando quiser (ou ela volta a ficar vazia/escondida sozinha).
     setCart([]);
     setSubmitNotice("Pedido enviado com sucesso.");
-    void reloadOrders();
+    requestReload();
   }
 
   let content;
@@ -281,7 +286,7 @@ export function SessionOrderScreen({
           onDone={() => setCheckoutStage("done")}
           onClose={() => {
             setCheckoutStage("none");
-            void reloadOrders();
+            requestReload();
           }}
         />
       )}

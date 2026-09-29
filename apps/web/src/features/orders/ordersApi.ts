@@ -1,4 +1,5 @@
 import { supabase } from "../../lib/supabaseClient";
+import { createBroadcastGate, type BroadcastGate } from "./broadcastGate";
 import {
   describeOrderError,
   toSubmitPayload,
@@ -41,8 +42,10 @@ export interface OrdersSource {
   // Só o essencial sai da cesta (ver toSubmitPayload): product_id, quantity, notes. Preço, nome,
   // setor e origem são sempre determinados pelo servidor (submit_service_order).
   submitOrder(sessionId: string, cart: CartItem[]): Promise<{ error: string | null }>;
-  // Avisa (sem payload) que um pedido daquela sessão mudou; a tela recarrega do banco. Devolve o
-  // cancelamento da assinatura. Falha do Realtime é silenciosa: o fallback por foco cobre.
+  // Avisa (sem payload de dados) que um pedido daquela sessão mudou; a tela recarrega do banco.
+  // Dois caminhos: Broadcast (rápido, enviado pelo próprio app depois do submit) e
+  // postgres_changes (fallback). Devolve o cancelamento das assinaturas. Falha do Realtime é
+  // silenciosa: o fallback por foco cobre.
   subscribeToOrders(sessionId: string, onChange: () => void): () => void;
 }
 
@@ -66,6 +69,21 @@ async function loadProfileNames(userIds: string[]): Promise<Map<string, string>>
 function one<T>(value: T | T[] | null | undefined): T | null {
   if (Array.isArray(value)) return value[0] ?? null;
   return value ?? null;
+}
+
+// Canal de Broadcast por atendimento, aberto enquanto a tela está montada. O "gate" garante que o
+// aviso só sai com o canal SUBSCRIBED (ou fica pendente até lá). Só o aviso "order-submitted" com o
+// sessionId trafega: o conteúdo do pedido sempre vem do banco (loadOrders).
+const broadcastGates = new Map<string, BroadcastGate>();
+const BROADCAST_EVENT = "order-submitted";
+
+function devLog(what: string, status: string) {
+  if (import.meta.env.DEV) console.debug(`[realtime] ${what}: ${status}`);
+}
+
+// Não bloqueia nem falha o envio do pedido: sem canal/erro, postgres_changes e o foco cobrem.
+function notifyOrderSubmitted(sessionId: string) {
+  broadcastGates.get(sessionId)?.notify();
 }
 
 export const supabaseOrdersSource: OrdersSource = {
@@ -224,19 +242,51 @@ export const supabaseOrdersSource: OrdersSource = {
       p_items: toSubmitPayload(cart),
     });
     if (error) return { error: describeOrderError(error, SUBMIT_ERROR) };
+    // Só depois do RPC confirmar: avisa os outros aparelhos com esta comanda aberta.
+    notifyOrderSubmitted(sessionId);
     return { error: null };
   },
   subscribeToOrders(sessionId, onChange) {
-    const channel = supabase
-      .channel(`service-orders:${sessionId}:${Math.random().toString(36).slice(2)}`)
+    const suffix = Math.random().toString(36).slice(2);
+
+    // Caminho rápido: Broadcast PRIVADO por atendimento (autorizado por RLS em realtime.messages,
+    // migration 20260929050000). self:false — quem envia não recebe o próprio aviso.
+    const broadcast = supabase.channel(`service-session:${sessionId}`, {
+      config: { private: true, broadcast: { self: false } },
+    });
+    const gate = createBroadcastGate(() => {
+      void broadcast
+        .send({ type: "broadcast", event: BROADCAST_EVENT, payload: { sessionId } })
+        .then((result) => devLog("broadcast send", String(result)))
+        .catch(() => undefined);
+    });
+    broadcastGates.set(sessionId, gate);
+    broadcast
+      .on("broadcast", { event: BROADCAST_EVENT }, (message) => {
+        // Só confere a quem se refere; nenhum dado do payload é usado além disso.
+        const payload = message.payload as { sessionId?: string } | undefined;
+        if (payload?.sessionId === sessionId) onChange();
+      })
+      .subscribe((status) => {
+        devLog("broadcast", status);
+        gate.onStatus(status);
+      });
+
+    // Fallback: mudanças na tabela (independe do app que gravou).
+    const changes = supabase
+      .channel(`service-orders:${sessionId}:${suffix}`)
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "service_orders", filter: `service_session_id=eq.${sessionId}` },
         () => onChange(),
       )
-      .subscribe();
+      .subscribe((status) => devLog("postgres_changes", status));
+
     return () => {
-      void supabase.removeChannel(channel);
+      gate.dispose();
+      if (broadcastGates.get(sessionId) === gate) broadcastGates.delete(sessionId);
+      void supabase.removeChannel(broadcast);
+      void supabase.removeChannel(changes);
     };
   },
 };
