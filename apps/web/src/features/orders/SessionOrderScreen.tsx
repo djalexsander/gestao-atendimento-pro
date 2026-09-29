@@ -70,6 +70,7 @@ export function SessionOrderScreen({
   const reloadOrders = useCallback(async () => {
     const result = await source.loadOrders(sessionId);
     if (result.data) setOrders(result.data);
+    console.info(`[realtime] orders reload ${result.data ? `ok (${result.data.length} pedidos)` : "failed"}`);
   }, [source, sessionId]);
 
   // Broadcast, postgres_changes e foco podem chegar quase juntos: uma busca por vez, sem atraso

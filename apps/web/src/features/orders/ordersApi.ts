@@ -1,3 +1,4 @@
+import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabaseClient";
 import { createBroadcastGate, type BroadcastGate } from "./broadcastGate";
 import {
@@ -77,8 +78,9 @@ function one<T>(value: T | T[] | null | undefined): T | null {
 const broadcastGates = new Map<string, BroadcastGate>();
 const BROADCAST_EVENT = "order-submitted";
 
-function devLog(what: string, status: string) {
-  if (import.meta.env.DEV) console.debug(`[realtime] ${what}: ${status}`);
+// Diagnóstico do Realtime (temporário): só estados técnicos, nunca token, ids ou dados do pedido.
+function rtLog(message: string) {
+  console.info(`[realtime] ${message}`);
 }
 
 // Não bloqueia nem falha o envio do pedido: sem canal/erro, postgres_changes e o foco cobrem.
@@ -256,45 +258,71 @@ export const supabaseOrdersSource: OrdersSource = {
   },
   subscribeToOrders(sessionId, onChange) {
     const suffix = Math.random().toString(36).slice(2);
+    let disposed = false;
+    let broadcast: RealtimeChannel | null = null;
+    let changes: RealtimeChannel | null = null;
 
-    // Caminho rápido: Broadcast PRIVADO por atendimento (autorizado por RLS em realtime.messages,
-    // migration 20260929050000). self:false — quem envia não recebe o próprio aviso.
-    const broadcast = supabase.channel(`service-session:${sessionId}`, {
-      config: { private: true, broadcast: { self: false } },
-    });
+    // O "gate" nasce já e recebe avisos pendentes enquanto o setup assíncrono ainda roda; só envia
+    // com o canal SUBSCRIBED. Sem canal (setup falhou ou tela saiu) o pendente é descartado.
     const gate = createBroadcastGate(() => {
       void broadcast
-        .send({ type: "broadcast", event: BROADCAST_EVENT, payload: { sessionId } })
-        .then((result) => devLog("broadcast send", String(result)))
+        ?.send({ type: "broadcast", event: BROADCAST_EVENT, payload: { sessionId } })
+        .then((result) => rtLog(`broadcast send ${String(result)}`))
         .catch(() => undefined);
     });
     broadcastGates.set(sessionId, gate);
-    broadcast
-      .on("broadcast", { event: BROADCAST_EVENT }, (message) => {
-        // Só confere a quem se refere; nenhum dado do payload é usado além disso.
-        const payload = message.payload as { sessionId?: string } | undefined;
-        if (payload?.sessionId === sessionId) onChange();
-      })
-      .subscribe((status) => {
-        devLog("broadcast", status);
-        gate.onStatus(status);
-      });
 
-    // Fallback: mudanças na tabela (independe do app que gravou).
-    const changes = supabase
-      .channel(`service-orders:${sessionId}:${suffix}`)
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "service_orders", filter: `service_session_id=eq.${sessionId}` },
-        () => onChange(),
-      )
-      .subscribe((status) => devLog("postgres_changes", status));
+    void (async () => {
+      // 1) sessão autenticada -> 2) Realtime autenticado (sem token manual: o supabase-js lê o
+      // token atual e o renova sozinho) -> 3) só então os canais (o privado exige autorização).
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (!data.session) throw new Error("sem sessão");
+        await supabase.realtime.setAuth();
+        rtLog("auth ready");
+      } catch {
+        rtLog("auth failed (canais não criados; foco/visibilidade seguem como fallback)");
+        return;
+      }
+      if (disposed) return; // saiu da tela durante o await: não cria canal nenhum
+
+      // Caminho rápido: Broadcast PRIVADO por atendimento (RLS em realtime.messages, migration
+      // 20260929050000). self:false — quem envia não recebe o próprio aviso.
+      broadcast = supabase
+        .channel(`service-session:${sessionId}`, { config: { private: true, broadcast: { self: false } } })
+        .on("broadcast", { event: BROADCAST_EVENT }, (message) => {
+          // Só confere a quem se refere; nenhum dado do payload é usado além disso.
+          const payload = message.payload as { sessionId?: string } | undefined;
+          if (payload?.sessionId === sessionId) {
+            rtLog("broadcast received");
+            onChange();
+          }
+        })
+        .subscribe((status) => {
+          rtLog(`broadcast ${status}`);
+          gate.onStatus(status);
+        });
+
+      // Fallback: mudanças na tabela (independe do app que gravou). Criado DEPOIS da autenticação.
+      changes = supabase
+        .channel(`service-orders:${sessionId}:${suffix}`)
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "service_orders", filter: `service_session_id=eq.${sessionId}` },
+          () => {
+            rtLog("postgres change received");
+            onChange();
+          },
+        )
+        .subscribe((status) => rtLog(`postgres_changes ${status}`));
+    })();
 
     return () => {
+      disposed = true;
       gate.dispose();
       if (broadcastGates.get(sessionId) === gate) broadcastGates.delete(sessionId);
-      void supabase.removeChannel(broadcast);
-      void supabase.removeChannel(changes);
+      if (broadcast) void supabase.removeChannel(broadcast);
+      if (changes) void supabase.removeChannel(changes);
     };
   },
 };
