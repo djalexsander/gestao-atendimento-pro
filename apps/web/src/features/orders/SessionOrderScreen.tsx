@@ -1,12 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { OPERATIONAL_PATH } from "../../app/accessRules";
+import { useAuth } from "../../app/useAuth";
+import { supabaseCashSource, type CashSource } from "../cash/cashApi";
+import { CheckoutDialog, OpenCashDialog } from "../cash/CashDialogs";
+import { Modal } from "../employees/Modal";
 import { formatOpenedFull } from "../operations/panel";
 import { Catalog } from "./Catalog";
 import { CartBar, CartPanel } from "./Cart";
 import { OrderHistory } from "./OrderHistory";
 import { supabaseOrdersSource, type OrdersSource, type SessionHeader } from "./ordersApi";
-import { addToCart, changeCartQuantity, removeCartItem, setCartItemNotes, type CartItem, type CatalogCategory, type CatalogProduct, type SubmittedOrder } from "./ordersLogic";
+import { addToCart, changeCartQuantity, removeCartItem, sessionTotal, setCartItemNotes, type CartItem, type CatalogCategory, type CatalogProduct, type SubmittedOrder } from "./ordersLogic";
 
 // Tela real de atendimento (substitui o modal provisório): catálogo visual, cesta local e envio
 // via submit_service_order. O MESMO componente serve Atendimento e Caixa — só troca o `variant`
@@ -16,10 +20,12 @@ export function SessionOrderScreen({
   sessionId,
   variant,
   source = supabaseOrdersSource,
+  cashSource = supabaseCashSource,
 }: {
   sessionId: string;
   variant: "attendant" | "cashier";
   source?: OrdersSource;
+  cashSource?: CashSource;
 }) {
   const navigate = useNavigate();
   const backPath = OPERATIONAL_PATH[variant === "attendant" ? "atendimento" : "caixa"];
@@ -39,6 +45,23 @@ export function SessionOrderScreen({
   const [submitNotice, setSubmitNotice] = useState<string | null>(null);
 
   const [syncNotice, setSyncNotice] = useState(false);
+
+  // Fechar conta (só Caixa: owner/admin/cashier). O backend valida papel, caixa e total.
+  const { user, activeMembership } = useAuth();
+  const canCheckout =
+    variant === "cashier" &&
+    (activeMembership?.role === "owner" || activeMembership?.role === "admin" || activeMembership?.role === "cashier");
+  const [checkoutStage, setCheckoutStage] = useState<"none" | "checkout" | "open-cash" | "done">("none");
+  const [checkoutChecking, setCheckoutChecking] = useState(false);
+
+  async function startCheckout() {
+    if (!activeMembership || !user) return;
+    setCheckoutChecking(true);
+    const cash = await cashSource.getMyOpenCash(activeMembership.companyId, user.id);
+    setCheckoutChecking(false);
+    // Falha ao consultar o caixa: abre o fechamento mesmo assim; o servidor decide (PT412).
+    setCheckoutStage(cash.data || cash.error ? "checkout" : "open-cash");
+  }
   const submittingRef = useRef(false);
   submittingRef.current = submitting;
 
@@ -232,7 +255,46 @@ export function SessionOrderScreen({
             </div>
           </dl>
         )}
+        {canCheckout && header && canOrder && (
+          <button className="btn-primary btn-auto" type="button" disabled={checkoutChecking} onClick={() => void startCheckout()}>
+            Fechar conta
+          </button>
+        )}
       </div>
+
+      {checkoutStage === "open-cash" && activeMembership && (
+        <OpenCashDialog
+          source={cashSource}
+          companyId={activeMembership.companyId}
+          notice="Abra o caixa antes de receber esta conta."
+          onOpened={() => setCheckoutStage("checkout")}
+          onClose={() => setCheckoutStage("none")}
+        />
+      )}
+      {checkoutStage === "checkout" && header && (
+        <CheckoutDialog
+          source={cashSource}
+          sessionId={sessionId}
+          pointLabel={`${header.point.displayName} (${header.point.code})`}
+          totalReais={sessionTotal(orders)}
+          onNeedCash={() => setCheckoutStage("open-cash")}
+          onDone={() => setCheckoutStage("done")}
+          onClose={() => {
+            setCheckoutStage("none");
+            void reloadOrders();
+          }}
+        />
+      )}
+      {checkoutStage === "done" && (
+        <Modal title="Conta fechada" onClose={() => navigate(backPath)}>
+          <p className="modal-text">Pagamento registrado e conta fechada com sucesso. A comanda/mesa está livre.</p>
+          <div className="modal-actions">
+            <button className="btn-primary btn-auto" type="button" autoFocus onClick={() => navigate(backPath)}>
+              Voltar para Comandas / Mesas
+            </button>
+          </div>
+        </Modal>
+      )}
 
       {syncNotice && (
         <p className="muted" role="status" style={{ margin: "4px 0", textAlign: "center" }}>

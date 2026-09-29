@@ -1,3 +1,4 @@
+import { CashAdmin } from "./features/cash/CashAdmin";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AppLayout } from "./app/AppLayout";
 import { MasterLayout } from "./app/MasterLayout";
@@ -135,7 +136,7 @@ function App() {
         {/* Placeholders da nova sidebar (ver app/adminNav.ts): módulos ainda não implementados,
             todos com a MESMA página reutilizável — nada de lógica de negócio aqui. */}
         <Route path="financeiro/visao" element={<ModulePlaceholderPage title="Visão financeira" />} />
-        <Route path="financeiro/caixa" element={<ModulePlaceholderPage title="Caixa" />} />
+        <Route path="financeiro/caixa" element={<CashAdmin />} />
         <Route path="financeiro/contas-a-receber" element={<ModulePlaceholderPage title="Contas a receber" />} />
         <Route path="financeiro/contas-a-pagar" element={<ModulePlaceholderPage title="Contas a pagar" />} />
         <Route path="financeiro/relatorios" element={<ModulePlaceholderPage title="Relatórios financeiros" />} />
