@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { OPERATIONAL_PATH } from "../../app/accessRules";
 import { formatOpenedFull } from "../operations/panel";
@@ -38,10 +38,45 @@ export function SessionOrderScreen({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitNotice, setSubmitNotice] = useState<string | null>(null);
 
+  const [syncNotice, setSyncNotice] = useState(false);
+  const submittingRef = useRef(false);
+  submittingRef.current = submitting;
+
+  // Recarrega SÓ o histórico enviado (o banco é a fonte da verdade); nunca toca na cesta local.
   const reloadOrders = useCallback(async () => {
     const result = await source.loadOrders(sessionId);
     if (result.data) setOrders(result.data);
   }, [source, sessionId]);
+
+  // Realtime: uma assinatura por sessão, removida ao trocar de sessão/desmontar (logout desmonta).
+  useEffect(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const unsubscribe = source.subscribeToOrders(sessionId, () => {
+      void reloadOrders();
+      if (!submittingRef.current) {
+        setSyncNotice(true);
+        clearTimeout(timer);
+        timer = setTimeout(() => setSyncNotice(false), 3000);
+      }
+    });
+    return () => {
+      clearTimeout(timer);
+      unsubscribe();
+    };
+  }, [source, sessionId, reloadOrders]);
+
+  // Fallback barato (sem polling): ao voltar o foco/visibilidade, recarrega uma vez.
+  useEffect(() => {
+    function refresh() {
+      if (document.visibilityState === "visible") void reloadOrders();
+    }
+    document.addEventListener("visibilitychange", refresh);
+    window.addEventListener("focus", refresh);
+    return () => {
+      document.removeEventListener("visibilitychange", refresh);
+      window.removeEventListener("focus", refresh);
+    };
+  }, [reloadOrders]);
 
   useEffect(() => {
     let cancelled = false;
@@ -198,6 +233,12 @@ export function SessionOrderScreen({
           </dl>
         )}
       </div>
+
+      {syncNotice && (
+        <p className="muted" role="status" style={{ margin: "4px 0", textAlign: "center" }}>
+          Pedido atualizado
+        </p>
+      )}
 
       {content}
     </div>

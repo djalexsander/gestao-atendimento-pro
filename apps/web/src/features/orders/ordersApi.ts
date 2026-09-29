@@ -41,6 +41,9 @@ export interface OrdersSource {
   // Só o essencial sai da cesta (ver toSubmitPayload): product_id, quantity, notes. Preço, nome,
   // setor e origem são sempre determinados pelo servidor (submit_service_order).
   submitOrder(sessionId: string, cart: CartItem[]): Promise<{ error: string | null }>;
+  // Avisa (sem payload) que um pedido daquela sessão mudou; a tela recarrega do banco. Devolve o
+  // cancelamento da assinatura. Falha do Realtime é silenciosa: o fallback por foco cobre.
+  subscribeToOrders(sessionId: string, onChange: () => void): () => void;
 }
 
 async function loadProfileNames(userIds: string[]): Promise<Map<string, string>> {
@@ -222,5 +225,18 @@ export const supabaseOrdersSource: OrdersSource = {
     });
     if (error) return { error: describeOrderError(error, SUBMIT_ERROR) };
     return { error: null };
+  },
+  subscribeToOrders(sessionId, onChange) {
+    const channel = supabase
+      .channel(`service-orders:${sessionId}:${Math.random().toString(36).slice(2)}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "service_orders", filter: `service_session_id=eq.${sessionId}` },
+        () => onChange(),
+      )
+      .subscribe();
+    return () => {
+      void supabase.removeChannel(channel);
+    };
   },
 };
