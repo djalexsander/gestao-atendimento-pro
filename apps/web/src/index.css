@@ -1847,3 +1847,8 @@ button {
   grid-template-columns: repeat(2, 1fr);
   margin-top: 0;
 }
+
+.cash-control-alert {
+  flex-basis: 100%;
+  margin: 0;
+}

@@ -3,6 +3,7 @@ import { useAuth } from "../../app/useAuth";
 import { formatReais } from "../../lib/money";
 import { supabaseCashSource, type CashSession, type CashSource } from "./cashApi";
 import { CloseCashDialog, OpenCashDialog } from "./CashDialogs";
+import { notifyCashChanged } from "./useMyOpenCash";
 import { PAYMENT_METHODS, PAYMENT_METHOD_LABEL, summarizeMovements, type CashMovementRow } from "./cashLogic";
 
 const dateTime = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" });
@@ -23,7 +24,9 @@ export function CashAdmin({ source = supabaseCashSource }: { source?: CashSource
   // Movimentos do PRÓPRIO caixa, carregados ao abrir o fechamento (independe da seleção da lista).
   const [ownMovements, setOwnMovements] = useState<CashMovementRow[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [dialog, setDialog] = useState<"open" | "close" | null>(null);
+  const [dialog, setDialog] = useState<"open" | "close" | "close-other" | null>(null);
+  const role = activeMembership?.role ?? null;
+  const canAdminClose = role === "owner" || role === "admin";
 
   const reload = useCallback(async () => {
     if (!companyId) return;
@@ -57,6 +60,10 @@ export function CashAdmin({ source = supabaseCashSource }: { source?: CashSource
   // null = os movimentos do caixa selecionado ainda não chegaram (nunca mostra os de outro caixa).
   const movements = loaded && loaded.cashId === selectedId ? loaded.rows : null;
   const summary = summarizeMovements(movements ?? []);
+
+  // Owner/admin podem encerrar o caixa aberto de OUTRO operador (o servidor confirma o papel).
+  const canCloseSelected =
+    canAdminClose && selected !== null && selected.status === "open" && selected.openedBy !== userId && movements !== null;
 
   async function startClose() {
     if (!myOpen) return;
@@ -125,6 +132,11 @@ export function CashAdmin({ source = supabaseCashSource }: { source?: CashSource
             Caixa de {selected.openedByName ?? "—"} · {fmt(selected.openedAt)}
           </h3>
           {selected.closingNotes && <p className="field-hint">Observação: {selected.closingNotes}</p>}
+          {canCloseSelected && (
+            <button className="btn-danger" type="button" onClick={() => setDialog("close-other")}>
+              Fechar caixa do operador
+            </button>
+          )}
           <dl className="cash-summary">
             <div>
               <dt>Saldo inicial</dt>
@@ -182,6 +194,7 @@ export function CashAdmin({ source = supabaseCashSource }: { source?: CashSource
             setDialog(null);
             setSelectedId(null);
             void reload();
+            notifyCashChanged();
           }}
           onClose={() => setDialog(null)}
         />
@@ -192,6 +205,23 @@ export function CashAdmin({ source = supabaseCashSource }: { source?: CashSource
           cash={myOpen}
           operatorName={profile?.full_name ?? null}
           movements={ownMovements}
+          onClosed={() => {
+            setDialog(null);
+            void reload();
+            notifyCashChanged();
+          }}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog === "close-other" && selected && movements && (
+        <CloseCashDialog
+          source={source}
+          cash={selected}
+          operatorName={selected.openedByName}
+          movements={movements}
+          requireNotes
+          title="Fechar caixa do operador"
+          notesHint="Ex.: Operador encerrou o expediente sem fechar o caixa."
           onClosed={() => {
             setDialog(null);
             void reload();

@@ -106,10 +106,18 @@ export const supabaseOrdersSource: OrdersSource = {
       customer_name: string | null;
       opened_at: string;
       opened_by: string;
-      point: SessionHeader["point"] | SessionHeader["point"][] | null;
+      point: RawPoint | RawPoint[] | null;
     };
-    const point = one(row.point);
-    if (!point) return { data: null, error: SESSION_NOT_FOUND };
+    // O banco devolve snake_case (display_name); a tela usa camelCase (displayName).
+    type RawPoint = { id: string; type: "command" | "table"; code: string; display_name: string };
+    const rawPoint = one(row.point);
+    if (!rawPoint) return { data: null, error: SESSION_NOT_FOUND };
+    const point: SessionHeader["point"] = {
+      id: rawPoint.id,
+      type: rawPoint.type,
+      code: rawPoint.code,
+      displayName: rawPoint.display_name,
+    };
 
     const names = await loadProfileNames([row.opened_by]);
     return {

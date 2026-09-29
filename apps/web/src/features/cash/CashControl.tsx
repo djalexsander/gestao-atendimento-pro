@@ -1,40 +1,35 @@
-import { useCallback, useEffect, useState } from "react";
+import { useState } from "react";
 import { useAuth } from "../../app/useAuth";
 import { formatReais } from "../../lib/money";
-import { supabaseCashSource, type CashSession, type CashSource } from "./cashApi";
+import { supabaseCashSource, type CashSource } from "./cashApi";
 import { CloseCashDialog, OpenCashDialog } from "./CashDialogs";
 import type { CashMovementRow } from "./cashLogic";
+import { notifyCashChanged, useMyOpenCash } from "./useMyOpenCash";
 
 const dateTime = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" });
+const dateOnly = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
+const timeOnly = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" });
 
-// Faixa do Caixa / Balcão com o estado do PRÓPRIO caixa: sem caixa aberto oferece "Abrir caixa";
-// com caixa aberto oferece "Fechar caixa" (abre o resumo). Só owner/admin/cashier veem; attendant
-// não vê nada. O servidor continua sendo a autoridade (open/close_cash_session).
+// Caixa aberto num dia anterior ao de hoje (fuso local): merece alerta destacado.
+export function isFromPreviousDay(openedAtIso: string, now: Date = new Date()): boolean {
+  return dateOnly.format(new Date(openedAtIso)) !== dateOnly.format(now);
+}
+
+// Faixa do Caixa / Balcão no TOPO da tela (antes das Comandas/Mesas) com o estado do PRÓPRIO
+// caixa: sem caixa aberto oferece "Abrir caixa"; com caixa aberto mostra operador, abertura e
+// saldo inicial e oferece "Fechar caixa" (resumo). Um caixa aberto é sempre retomado (o banco
+// só admite um por operador). Só owner/admin/cashier veem; attendant não. O servidor é a
+// autoridade (open/close_cash_session). Comandas abertas não impedem o fechamento do caixa.
 export function CashControl({ source = supabaseCashSource }: { source?: CashSource }) {
-  const { activeMembership, user, profile } = useAuth();
+  const { activeMembership, profile } = useAuth();
   const companyId = activeMembership?.companyId ?? null;
   const role = activeMembership?.role ?? null;
-  const userId = user?.id ?? null;
   const allowed = role === "owner" || role === "admin" || role === "cashier";
 
-  const [cash, setCash] = useState<CashSession | null>(null);
-  const [loaded, setLoaded] = useState(false);
+  const { cash, loaded } = useMyOpenCash(allowed, source);
   const [movements, setMovements] = useState<CashMovementRow[]>([]);
   const [dialog, setDialog] = useState<"open" | "close" | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-
-  const refresh = useCallback(async () => {
-    if (!companyId || !userId) return;
-    const result = await source.getMyOpenCash(companyId, userId);
-    if (!result.error) {
-      setCash(result.data);
-      setLoaded(true);
-    }
-  }, [companyId, userId, source]);
-
-  useEffect(() => {
-    if (allowed) void refresh();
-  }, [allowed, refresh]);
 
   async function startClose() {
     if (!cash) return;
@@ -45,11 +40,19 @@ export function CashControl({ source = supabaseCashSource }: { source?: CashSour
 
   if (!allowed || !companyId || !loaded) return null;
 
+  const operatorName = cash?.openedByName ?? profile?.full_name ?? null;
+
   return (
     <div className="cash-control">
+      {cash && isFromPreviousDay(cash.openedAt) && (
+        <div className="form-error cash-control-alert" role="alert">
+          Existe um caixa aberto desde {dateOnly.format(new Date(cash.openedAt))} às{" "}
+          {timeOnly.format(new Date(cash.openedAt))}. Feche esse caixa antes de iniciar um novo turno.
+        </div>
+      )}
       <span>
         {cash
-          ? `Caixa aberto desde ${dateTime.format(new Date(cash.openedAt))} · saldo inicial ${formatReais(cash.openingAmount)}`
+          ? `Caixa aberto${operatorName ? ` por ${operatorName}` : ""} desde ${dateTime.format(new Date(cash.openedAt))} · saldo inicial ${formatReais(cash.openingAmount)}`
           : "Nenhum caixa aberto."}
       </span>
       {cash ? (
@@ -74,7 +77,7 @@ export function CashControl({ source = supabaseCashSource }: { source?: CashSour
           onOpened={() => {
             setDialog(null);
             setNotice(null);
-            void refresh();
+            notifyCashChanged();
           }}
           onClose={() => setDialog(null)}
         />
@@ -83,12 +86,12 @@ export function CashControl({ source = supabaseCashSource }: { source?: CashSour
         <CloseCashDialog
           source={source}
           cash={cash}
-          operatorName={profile?.full_name ?? null}
+          operatorName={operatorName}
           movements={movements}
           onClosed={() => {
             setDialog(null);
-            setCash(null);
             setNotice("Caixa fechado com sucesso.");
+            notifyCashChanged();
           }}
           onClose={() => setDialog(null)}
         />

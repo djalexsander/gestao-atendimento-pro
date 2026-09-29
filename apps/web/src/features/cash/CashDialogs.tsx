@@ -98,6 +98,9 @@ export function CloseCashDialog({
   cash,
   operatorName,
   movements,
+  requireNotes = false,
+  title = "Fechar caixa",
+  notesHint,
   onClosed,
   onClose,
 }: {
@@ -105,6 +108,10 @@ export function CloseCashDialog({
   cash: CashSession;
   operatorName: string | null;
   movements: CashMovementRow[];
+  // Fechamento administrativo do caixa de outro operador: a observação passa a ser obrigatória.
+  requireNotes?: boolean;
+  title?: string;
+  notesHint?: string;
   onClosed: () => void;
   onClose: () => void;
 }) {
@@ -116,6 +123,10 @@ export function CloseCashDialog({
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (submitting) return;
+    if (requireNotes && notes.trim() === "") {
+      setError("Informe uma observação para fechar o caixa de outro operador.");
+      return;
+    }
     setError(null);
     setSubmitting(true);
     const result = await source.closeCash(cash.id, notes.trim() || null);
@@ -128,7 +139,7 @@ export function CloseCashDialog({
   }
 
   return (
-    <Modal title="Fechar caixa" onClose={submitting ? () => undefined : onClose}>
+    <Modal title={title} onClose={submitting ? () => undefined : onClose}>
       <form onSubmit={handleSubmit}>
         <dl className="cash-summary cash-summary-modal">
           <div>
@@ -157,8 +168,15 @@ export function CloseCashDialog({
         <p className="modal-text">Depois de fechado, este caixa não recebe mais vendas.</p>
         {error && <div className="form-error">{error}</div>}
         <div className="field">
-          <label htmlFor="closing-notes">Observação (opcional)</label>
-          <input id="closing-notes" maxLength={500} value={notes} onChange={(e) => setNotes(e.target.value)} />
+          <label htmlFor="closing-notes">{requireNotes ? "Observação (obrigatória)" : "Observação (opcional)"}</label>
+          <input
+            id="closing-notes"
+            maxLength={500}
+            required={requireNotes}
+            placeholder={notesHint}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+          />
         </div>
         <div className="modal-actions">
           <button className="btn-secondary" type="button" disabled={submitting} onClick={onClose}>
