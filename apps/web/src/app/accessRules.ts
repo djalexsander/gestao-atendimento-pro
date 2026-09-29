@@ -25,10 +25,9 @@ export const ADMIN_LOGIN_PATH = "/login";
 export const ADMIN_HOME_PATH = "/app";
 export const ONBOARDING_PATH = "/onboarding";
 
-// Área operacional de cada papel nesta etapa: attendant → Atendimento, cashier → Caixa /
-// Balcão. owner e admin seguem no app administrativo (a Home com Administrativo +
-// Operacional vem numa etapa futura). Cada rota operacional é só do papel dela; ampliar o
-// acesso (ex.: caixa também em Atendimento) é uma decisão de produto para depois.
+// Área operacional de cada papel nesta etapa (landing): attendant → Atendimento, cashier → Caixa /
+// Balcão. owner e admin pousam no app administrativo; de lá entram no Caixa / Balcão pelo menu
+// (ver AREA_ROLES abaixo). Ampliar o acesso (ex.: caixa também em Atendimento) é decisão de produto.
 const ROLE_AREA: Partial<Record<CompanyRole, OperationalArea>> = {
   attendant: "atendimento",
   cashier: "caixa",
@@ -36,6 +35,18 @@ const ROLE_AREA: Partial<Record<CompanyRole, OperationalArea>> = {
 
 export function operationalAreaOf(role: CompanyRole): OperationalArea | null {
   return ROLE_AREA[role] ?? null;
+}
+
+// Quem PODE abrir cada rota operacional. O Caixa / Balcão também é aberto por owner e admin
+// (menu Operacional → Caixa / Balcão do Administrativo): é a MESMA tela do cashier. Atendimento
+// segue só do attendant. A landing de cada papel (operationalAreaOf) não muda.
+const AREA_ROLES: Record<OperationalArea, readonly CompanyRole[]> = {
+  atendimento: ["attendant"],
+  caixa: ["cashier", "owner", "admin"],
+};
+
+export function canOpenOperationalArea(role: CompanyRole, area: OperationalArea): boolean {
+  return AREA_ROLES[area].includes(role);
 }
 
 export function homePathForRole(role: CompanyRole): string {
@@ -99,6 +110,6 @@ export function decide(route: GuardedRoute, s: AuthSnapshot): Decision {
       return s.role === "owner" || s.role === "admin" ? RENDER : redirect(landing);
     case "atendimento":
     case "caixa":
-      return s.role !== null && operationalAreaOf(s.role) === route ? RENDER : redirect(landing);
+      return s.role !== null && canOpenOperationalArea(s.role, route) ? RENDER : redirect(landing);
   }
 }
