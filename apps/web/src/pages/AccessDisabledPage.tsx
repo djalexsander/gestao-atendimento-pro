@@ -7,7 +7,7 @@ export function AccessDisabledPage() {
   return (
     <div className="auth-page">
       <div className="auth-card">
-        <div className="brand">Gestão de Atendimento Pro</div>
+        <div className="brand">Gestão Atendimento Pro</div>
         <h1 style={{ fontSize: 22 }}>Acesso desativado.</h1>
         <p style={{ color: "var(--text-muted)" }}>Procure o administrador da empresa.</p>
         <button className="btn-secondary" type="button" onClick={() => void signOut()}>

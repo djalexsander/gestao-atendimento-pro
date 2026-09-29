@@ -36,7 +36,7 @@ export function SignupPage() {
     return (
       <div className="auth-page">
         <div className="auth-card">
-          <div className="brand">Gestão de Atendimento Pro</div>
+          <div className="brand">Gestão Atendimento Pro</div>
           <h1 style={{ fontSize: 22 }}>Confirme seu e-mail</h1>
           <div className="form-notice">
             Enviamos um link de confirmação para <strong>{email}</strong>. Clique no
@@ -53,7 +53,7 @@ export function SignupPage() {
   return (
     <div className="auth-page">
       <div className="auth-card">
-        <div className="brand">Gestão de Atendimento Pro</div>
+        <div className="brand">Gestão Atendimento Pro</div>
         <h1 style={{ fontSize: 22 }}>Criar conta</h1>
 
         {error && <div className="form-error">{error}</div>}

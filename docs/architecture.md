@@ -1,4 +1,4 @@
-# Arquitetura — Gestão de Atendimento Pro
+# Arquitetura — Gestão Atendimento Pro
 
 > Documento de arquitetura aprovado antes do início da implementação. Mantido no repo
 > para acompanhar decisões à medida que o projeto evolui.

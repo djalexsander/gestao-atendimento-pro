@@ -152,7 +152,7 @@ export function MasterPlansPage() {
         )}
       </div>
       <p style={{ color: "var(--text-muted)", fontSize: 14 }}>
-        Planos comerciais do Gestão de Atendimento Pro. O código não pode ser alterado depois de criado.
+        Planos comerciais do Gestão Atendimento Pro. O código não pode ser alterado depois de criado.
         Limites vazios ou marcados como "ilimitado" não restringem o recurso.
       </p>
 

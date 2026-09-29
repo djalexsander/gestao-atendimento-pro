@@ -183,7 +183,7 @@ export function EmployeeLoginPage() {
   return (
     <div className="auth-page">
       <div className="auth-card">
-        <div className="brand">Gestão de Atendimento Pro</div>
+        <div className="brand">Gestão Atendimento Pro</div>
         <h1 style={{ fontSize: 22 }}>Entrar como funcionário</h1>
         {accessCode === null ? (
           <CompanyStep onConfirmed={setAccessCode} />

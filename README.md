@@ -1,4 +1,4 @@
-# Gestão de Atendimento Pro
+# Gestão Atendimento Pro
 
 SaaS multiempresa de orçamentos assistidos por IA, com WhatsApp como canal de entrada.
 

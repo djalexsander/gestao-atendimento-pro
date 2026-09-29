@@ -10,9 +10,9 @@ export default defineConfig({
       // atualização automática: o novo service worker assume assim que instalado
       registerType: 'autoUpdate',
       manifest: {
-        name: 'Gestão de Atendimento Pro',
+        name: 'Gestão Atendimento Pro',
         short_name: 'Gestão Atendimento',
-        description: 'Gestão de Atendimento Pro: comandas, mesas, pedidos e caixa para a sua empresa.',
+        description: 'Gestão Atendimento Pro: comandas, mesas, pedidos e caixa para a sua empresa.',
         lang: 'pt-BR',
         start_url: '/',
         scope: '/',
