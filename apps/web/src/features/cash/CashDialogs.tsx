@@ -11,6 +11,7 @@ import {
   draftChangeCents,
   draftProblem,
   newDraft,
+  parseDraftCents,
   PAYMENT_METHODS,
   PAYMENT_METHOD_LABEL,
   parseOpeningAmount,
@@ -94,6 +95,104 @@ export function OpenCashDialog({
 
 const dateTime = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" });
 
+// Suprimento (entrada) ou sangria (retirada) de dinheiro no caixa ABERTO. Pertence ao caixa, não a
+// uma comanda. Na sangria mostra o dinheiro disponível (prévia; o servidor recusa valor maior).
+export function CashMovementDialog({
+  source,
+  cash,
+  kind,
+  movements,
+  operatorName,
+  onDone,
+  onClose,
+}: {
+  source: CashSource;
+  cash: CashSession;
+  kind: "supply" | "withdrawal";
+  movements: CashMovementRow[];
+  operatorName: string | null;
+  onDone: (message: string) => void;
+  onClose: () => void;
+}) {
+  const [amount, setAmount] = useState("");
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const isWithdrawal = kind === "withdrawal";
+  const title = isWithdrawal ? "Sangria" : "Suprimento";
+  const availableCents = reconcile(cash.openingAmount, summarizeMovements(movements).netCash, "").expectedCents;
+  const valueCents = parseDraftCents(amount);
+  const tooMuch = isWithdrawal && valueCents !== null && valueCents > availableCents;
+  const valid = valueCents !== null && valueCents > 0 && reason.trim() !== "" && !tooMuch;
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (submitting || !valid || valueCents === null) return;
+    setError(null);
+    setSubmitting(true);
+    const result = await source.addMovement(cash.id, kind, valueCents / 100, reason.trim());
+    setSubmitting(false);
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
+    onDone(isWithdrawal ? "Sangria registrada." : "Suprimento registrado.");
+  }
+
+  return (
+    <Modal title={title} onClose={submitting ? () => undefined : onClose}>
+      <form onSubmit={handleSubmit}>
+        <p className="modal-text">
+          Caixa de <strong>{operatorName ?? cash.openedByName ?? "—"}</strong>
+        </p>
+        {isWithdrawal && (
+          <div className="cash-expected">
+            <span>Dinheiro disponível no caixa</span>
+            <strong>{cents(availableCents)}</strong>
+          </div>
+        )}
+        {error && <div className="form-error">{error}</div>}
+        <div className="field">
+          <label htmlFor="movement-amount">{isWithdrawal ? "Valor da sangria" : "Valor do suprimento"}</label>
+          <input
+            id="movement-amount"
+            inputMode="decimal"
+            placeholder="R$ 0,00"
+            autoFocus
+            value={amount}
+            onChange={(e) => {
+              setError(null);
+              setAmount(e.target.value);
+            }}
+          />
+          {amount.trim() !== "" && (valueCents === null || valueCents <= 0) && (
+            <div className="field-error">Informe um valor maior que zero, ex.: 100,00.</div>
+          )}
+          {tooMuch && <div className="field-error">Valor da sangria maior que o dinheiro disponível no caixa.</div>}
+        </div>
+        <div className="field">
+          <label htmlFor="movement-reason">Motivo (obrigatório)</label>
+          <input
+            id="movement-reason"
+            maxLength={200}
+            placeholder={isWithdrawal ? "Ex.: Retirada para cofre" : "Ex.: Troco adicional"}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
+        </div>
+        <div className="modal-actions">
+          <button className="btn-secondary" type="button" disabled={submitting} onClick={onClose}>
+            Cancelar
+          </button>
+          <button className="btn-primary btn-auto" type="submit" disabled={!valid || submitting}>
+            {submitting ? "Registrando…" : isWithdrawal ? "Confirmar sangria" : "Confirmar suprimento"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
 // Fechar o caixa COM conferência: resumo, dinheiro esperado (saldo inicial + vendas em dinheiro),
 // dinheiro contado e diferença. O servidor recalcula esperado e diferença (close_cash_session);
 // aqui é só a prévia. Diferença ou caixa de outro operador exigem observação.
@@ -124,7 +223,7 @@ export function CloseCashDialog({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const summary = summarizeMovements(movements);
-  const rec = reconcile(cash.openingAmount, summary.byMethod.cash, counted);
+  const rec = reconcile(cash.openingAmount, summary.netCash, counted);
   const notesRequired = closingNotesRequired(rec.differenceCents, otherOperator);
   const hasDifference = rec.differenceCents !== null && rec.differenceCents !== 0;
   const countedInvalid = counted.trim() !== "" && rec.countedCents === null;
@@ -184,11 +283,23 @@ export function CloseCashDialog({
           </div>
         </dl>
 
+        <h4 className="cash-section-title">Movimentos de caixa</h4>
+        <dl className="cash-summary cash-summary-modal">
+          <div>
+            <dt>Suprimentos</dt>
+            <dd>{formatReais(summary.supply)}</dd>
+          </div>
+          <div>
+            <dt>Sangrias</dt>
+            <dd>{formatReais(summary.withdrawal)}</dd>
+          </div>
+        </dl>
+
         <h4 className="cash-section-title">Conferência do dinheiro</h4>
         <div className="cash-expected">
           <span>Dinheiro esperado no caixa</span>
           <strong>{cents(rec.expectedCents)}</strong>
-          <small>Saldo inicial + vendas em dinheiro</small>
+          <small>Saldo inicial + vendas em dinheiro + suprimentos − sangrias</small>
         </div>
         <div className="field">
           <label htmlFor="closing-counted">Dinheiro contado</label>

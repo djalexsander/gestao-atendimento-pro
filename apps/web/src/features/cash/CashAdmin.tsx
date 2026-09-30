@@ -9,10 +9,11 @@ import {
   type CashSession,
   type CashSource,
 } from "./cashApi";
-import { CloseCashDialog, OpenCashDialog } from "./CashDialogs";
+import { CashMovementDialog, CloseCashDialog, OpenCashDialog } from "./CashDialogs";
 import { notifyCashChanged } from "./useMyOpenCash";
 import {
   describeDifference,
+  MOVEMENT_TYPE_LABEL,
   PAYMENT_METHODS,
   PAYMENT_METHOD_LABEL,
   reconcile,
@@ -44,15 +45,17 @@ function CashDetail({
   cash,
   movements,
   onCloseCash,
+  onMovement,
 }: {
   cash: CashSession;
   movements: CashMovementRow[] | null;
   onCloseCash?: () => void;
+  onMovement?: (kind: "supply" | "withdrawal") => void;
 }) {
   const summary = summarizeMovements(movements ?? []);
   const loading = movements === null;
   const value = (reais: number) => (loading ? "…" : formatReais(reais));
-  const expected = reconcile(cash.openingAmount, summary.byMethod.cash, "").expectedCents / 100;
+  const expected = reconcile(cash.openingAmount, summary.netCash, "").expectedCents / 100;
 
   return (
     <section className="cash-detail cash-detail-panel" aria-label="Detalhe do caixa">
@@ -61,6 +64,17 @@ function CashDetail({
         <button className="btn-danger" type="button" disabled={loading} onClick={onCloseCash}>
           Fechar caixa do operador
         </button>
+      )}
+
+      {onMovement && (
+        <div className="cash-detail-actions">
+          <button className="btn-secondary btn-small" type="button" disabled={loading} onClick={() => onMovement("supply")}>
+            Suprimento
+          </button>
+          <button className="btn-secondary btn-small" type="button" disabled={loading} onClick={() => onMovement("withdrawal")}>
+            Sangria
+          </button>
+        </div>
       )}
 
       <h4 className="cash-section-title">Informações</h4>
@@ -101,9 +115,21 @@ function CashDetail({
         </div>
       </dl>
 
+      <h4 className="cash-section-title">Movimentos de caixa</h4>
+      <dl className="cash-summary">
+        <div>
+          <dt>Suprimentos</dt>
+          <dd>{value(summary.supply)}</dd>
+        </div>
+        <div>
+          <dt>Sangrias</dt>
+          <dd>{value(summary.withdrawal)}</dd>
+        </div>
+      </dl>
+
       <h4 className="cash-section-title">Conferência</h4>
       {cash.status === "open" ? (
-        !loading && <p className="field-hint">Dinheiro esperado no caixa até agora: {formatReais(expected)}</p>
+        !loading && <p className="field-hint">Dinheiro esperado atual: {formatReais(expected)} (saldo inicial + vendas em dinheiro + suprimentos − sangrias)</p>
       ) : cash.closingCashAmount === null || cash.cashDifference === null ? (
         <p className="field-hint">Este caixa foi fechado antes da conferência de dinheiro existir.</p>
       ) : (
@@ -138,7 +164,8 @@ function CashDetail({
             <thead>
               <tr>
                 <th>Hora</th>
-                <th>Comanda / mesa</th>
+                <th>Tipo</th>
+                <th>Comanda / mesa / motivo</th>
                 <th>Forma</th>
                 <th>Valor</th>
               </tr>
@@ -147,9 +174,10 @@ function CashDetail({
               {movements.map((m) => (
                 <tr key={m.id}>
                   <td>{fmt(m.createdAt)}</td>
+                  <td>{MOVEMENT_TYPE_LABEL[m.movementType]}</td>
                   <td>{m.description}</td>
                   <td>{PAYMENT_METHOD_LABEL[m.paymentMethod]}</td>
-                  <td>{formatReais(m.amount)}</td>
+                  <td>{m.movementType === "withdrawal" ? `− ${formatReais(m.amount)}` : formatReais(m.amount)}</td>
                 </tr>
               ))}
             </tbody>
@@ -184,7 +212,8 @@ export function CashAdmin({ source = supabaseCashSource }: { source?: CashSource
   const [loaded, setLoaded] = useState<{ cashId: string; rows: CashMovementRow[] } | null>(null);
   // Movimentos do PRÓPRIO caixa, carregados ao abrir o fechamento (independe da seleção).
   const [ownMovements, setOwnMovements] = useState<CashMovementRow[]>([]);
-  const [dialog, setDialog] = useState<"open" | "close" | "close-other" | null>(null);
+  const [dialog, setDialog] = useState<"open" | "close" | "close-other" | "supply" | "withdrawal" | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const reloadOpen = useCallback(async () => {
     if (!companyId) return;
@@ -238,6 +267,10 @@ export function CashAdmin({ source = supabaseCashSource }: { source?: CashSource
   const movements = selected && loaded && loaded.cashId === selected.id ? loaded.rows : null;
   const canCloseSelected =
     canAdminClose && selected !== null && selected.status === "open" && selected.openedBy !== userId && movements !== null;
+
+  // Owner/admin movimentam qualquer caixa aberto; o cashier só o próprio (o servidor confirma).
+  const canMoveSelected =
+    selected !== null && selected.status === "open" && (canAdminClose || selected.openedBy === userId) && movements !== null;
 
   async function startClose() {
     if (!myOpen) return;
@@ -413,8 +446,43 @@ export function CashAdmin({ source = supabaseCashSource }: { source?: CashSource
         </>
       )}
 
+      {notice && (
+        <div role="status" className="form-notice">
+          {notice}
+        </div>
+      )}
+
       {selected && (
-        <CashDetail cash={selected} movements={movements} onCloseCash={canCloseSelected ? () => setDialog("close-other") : undefined} />
+        <CashDetail
+          cash={selected}
+          movements={movements}
+          onCloseCash={canCloseSelected ? () => setDialog("close-other") : undefined}
+          onMovement={
+            canMoveSelected
+              ? (kind) => {
+                  setNotice(null);
+                  setDialog(kind);
+                }
+              : undefined
+          }
+        />
+      )}
+      {(dialog === "supply" || dialog === "withdrawal") && selected && movements && (
+        <CashMovementDialog
+          source={source}
+          cash={selected}
+          kind={dialog}
+          movements={movements}
+          operatorName={selected.openedByName}
+          onDone={(message) => {
+            setDialog(null);
+            setNotice(message);
+            setLoaded(null);
+            setSelected({ ...selected }); // recarrega os movimentos do caixa selecionado
+            void reloadOpen();
+          }}
+          onClose={() => setDialog(null)}
+        />
       )}
 
       {dialog === "open" && companyId && (

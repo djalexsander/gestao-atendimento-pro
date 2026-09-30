@@ -112,8 +112,17 @@ export function parseOpeningAmount(text: string): number | null {
 
 // --- Resumo do caixa (tela administrativa) ---------------------------------
 
+export type MovementType = "sale" | "supply" | "withdrawal";
+
+export const MOVEMENT_TYPE_LABEL: Record<MovementType, string> = {
+  sale: "Venda",
+  supply: "Suprimento",
+  withdrawal: "Sangria",
+};
+
 export interface CashMovementRow {
   id: string;
+  movementType: MovementType;
   paymentMethod: PaymentMethod;
   amount: number;
   description: string;
@@ -121,13 +130,25 @@ export interface CashMovementRow {
 }
 
 export interface CashSummary {
+  // Vendas por forma de pagamento (suprimento/sangria NUNCA entram aqui).
   byMethod: Record<PaymentMethod, number>;
-  total: number;
+  total: number; // total vendido (só vendas)
+  supply: number;
+  withdrawal: number;
+  // Dinheiro físico movimentado no caixa: vendas em dinheiro + suprimentos - sangrias
+  // (somado ao saldo inicial dá o dinheiro esperado/disponível; o servidor é a autoridade).
+  netCash: number;
 }
 
 export function summarizeMovements(movements: CashMovementRow[]): CashSummary {
   const cents: Record<PaymentMethod, number> = { cash: 0, pix: 0, debit_card: 0, credit_card: 0, other: 0 };
-  for (const m of movements) cents[m.paymentMethod] += toCents(m.amount);
+  let supply = 0;
+  let withdrawal = 0;
+  for (const m of movements) {
+    if (m.movementType === "supply") supply += toCents(m.amount);
+    else if (m.movementType === "withdrawal") withdrawal += toCents(m.amount);
+    else cents[m.paymentMethod] += toCents(m.amount);
+  }
   const total = Object.values(cents).reduce((a, b) => a + b, 0);
   return {
     byMethod: {
@@ -138,10 +159,14 @@ export function summarizeMovements(movements: CashMovementRow[]): CashSummary {
       other: cents.other / 100,
     },
     total: total / 100,
+    supply: supply / 100,
+    withdrawal: withdrawal / 100,
+    netCash: (cents.cash + supply - withdrawal) / 100,
   };
 }
 
 // --- Conferência do dinheiro no fechamento ---------------------------------
+// netCash = vendas em dinheiro + suprimentos - sangrias (CashSummary.netCash).
 // A tela só PREVÊ o que o servidor vai gravar (close_cash_session recalcula tudo e é a autoridade).
 
 export interface CashReconciliation {
@@ -150,8 +175,8 @@ export interface CashReconciliation {
   differenceCents: number | null; // contado - esperado
 }
 
-export function reconcile(openingAmount: number, cashSales: number, countedText: string): CashReconciliation {
-  const expectedCents = toCents(openingAmount) + toCents(cashSales);
+export function reconcile(openingAmount: number, netCash: number, countedText: string): CashReconciliation {
+  const expectedCents = toCents(openingAmount) + toCents(netCash);
   const countedCents = parseDraftCents(countedText);
   return { expectedCents, countedCents, differenceCents: countedCents === null ? null : countedCents - expectedCents };
 }

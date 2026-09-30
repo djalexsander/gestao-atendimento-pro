@@ -1923,6 +1923,12 @@ button {
 .cash-filters .field {
   min-width: 140px;
 }
+.cash-detail-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
 .cash-detail {
   margin-top: 24px;
   padding-top: 8px;

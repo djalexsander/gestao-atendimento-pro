@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useAuth } from "../../app/useAuth";
 import { formatReais } from "../../lib/money";
 import { supabaseCashSource, type CashSource } from "./cashApi";
-import { CloseCashDialog, OpenCashDialog } from "./CashDialogs";
+import { CashMovementDialog, CloseCashDialog, OpenCashDialog } from "./CashDialogs";
 import type { CashMovementRow } from "./cashLogic";
 import { notifyCashChanged, useMyOpenCash } from "./useMyOpenCash";
 
@@ -28,14 +28,16 @@ export function CashControl({ source = supabaseCashSource }: { source?: CashSour
 
   const { cash, loaded } = useMyOpenCash(allowed, source);
   const [movements, setMovements] = useState<CashMovementRow[]>([]);
-  const [dialog, setDialog] = useState<"open" | "close" | null>(null);
+  const [dialog, setDialog] = useState<"open" | "close" | "supply" | "withdrawal" | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
-  async function startClose() {
+  // Carrega os movimentos do caixa (prévia de esperado/disponível) e abre o modal.
+  async function startDialog(kind: "close" | "supply" | "withdrawal") {
     if (!cash) return;
     const result = await source.listMovements(cash.id);
     setMovements(result.data ?? []);
-    setDialog("close");
+    setNotice(null);
+    setDialog(kind);
   }
 
   if (!allowed || !companyId || !loaded) return null;
@@ -56,9 +58,17 @@ export function CashControl({ source = supabaseCashSource }: { source?: CashSour
           : "Nenhum caixa aberto."}
       </span>
       {cash ? (
-        <button className="btn-secondary btn-small" type="button" onClick={() => void startClose()}>
-          Fechar caixa
-        </button>
+        <>
+          <button className="btn-secondary btn-small" type="button" onClick={() => void startDialog("supply")}>
+            Suprimento
+          </button>
+          <button className="btn-secondary btn-small" type="button" onClick={() => void startDialog("withdrawal")}>
+            Sangria
+          </button>
+          <button className="btn-secondary btn-small" type="button" onClick={() => void startDialog("close")}>
+            Fechar caixa
+          </button>
+        </>
       ) : (
         <button className="btn-primary btn-auto btn-small" type="button" onClick={() => setDialog("open")}>
           Abrir caixa
@@ -77,6 +87,21 @@ export function CashControl({ source = supabaseCashSource }: { source?: CashSour
           onOpened={() => {
             setDialog(null);
             setNotice(null);
+            notifyCashChanged();
+          }}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {(dialog === "supply" || dialog === "withdrawal") && cash && (
+        <CashMovementDialog
+          source={source}
+          cash={cash}
+          kind={dialog}
+          movements={movements}
+          operatorName={operatorName}
+          onDone={(message) => {
+            setDialog(null);
+            setNotice(message);
             notifyCashChanged();
           }}
           onClose={() => setDialog(null)}

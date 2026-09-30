@@ -1,10 +1,11 @@
 import { supabase } from "../../lib/supabaseClient";
 import { describeOrderError } from "../orders/ordersLogic";
-import type { CashMovementRow, PaymentMethod, PaymentPayload } from "./cashLogic";
+import type { CashMovementRow, MovementType, PaymentMethod, PaymentPayload } from "./cashLogic";
 
 const LOAD_ERROR = "Não foi possível carregar o caixa agora. Tente novamente.";
 const OPEN_ERROR = "Não foi possível abrir o caixa agora. Tente novamente.";
 const CLOSE_CASH_ERROR = "Não foi possível fechar o caixa agora. Tente novamente.";
+const MOVEMENT_ERROR = "Não foi possível registrar o movimento agora. Tente novamente.";
 const CLOSE_ACCOUNT_ERROR = "Não foi possível fechar a conta agora. Tente novamente.";
 
 // Código que o banco devolve quando falta caixa aberto (PT412, "Abra o caixa antes de receber").
@@ -17,7 +18,9 @@ export interface CashTotals {
   debit: number;
   credit: number;
   other: number;
-  total: number;
+  total: number; // só vendas
+  supply: number;
+  withdrawal: number;
 }
 
 export interface CashSession {
@@ -59,6 +62,13 @@ export interface CashSource {
   openCash(companyId: string, openingAmount: number): Promise<{ data: CashSession | null; error: string | null }>;
   // `countedAmount` = dinheiro contado na gaveta. Esperado e diferença são calculados no servidor.
   closeCash(cashSessionId: string, countedAmount: number, notes: string | null): Promise<{ error: string | null }>;
+  // Suprimento/sangria manuais em dinheiro (motivo obrigatório; o servidor valida permissão e saldo).
+  addMovement(
+    cashSessionId: string,
+    type: Exclude<MovementType, "sale">,
+    amount: number,
+    reason: string,
+  ): Promise<{ error: string | null }>;
   // Recebe e fecha a conta. Total, quitação e troco são validados no servidor.
   closeAccount(sessionId: string, payments: PaymentPayload[]): Promise<CloseAccountResult>;
   // Administrativo
@@ -94,6 +104,8 @@ interface TotalsRow {
   credit_total: number | string;
   other_total: number | string;
   total_sold: number | string;
+  supply_total: number | string;
+  withdrawal_total: number | string;
 }
 
 const CASH_COLUMNS =
@@ -109,6 +121,8 @@ function toTotals(row: TotalsRow | undefined): CashTotals {
     credit: Number(row?.credit_total ?? 0),
     other: Number(row?.other_total ?? 0),
     total: Number(row?.total_sold ?? 0),
+    supply: Number(row?.supply_total ?? 0),
+    withdrawal: Number(row?.withdrawal_total ?? 0),
   };
 }
 
@@ -183,6 +197,20 @@ export const supabaseCashSource: CashSource = {
     return { error: null };
   },
 
+  async addMovement(cashSessionId, type, amount, reason) {
+    const { error } = await supabase.rpc("add_cash_movement", {
+      p_cash_session_id: cashSessionId,
+      p_movement_type: type,
+      p_amount: amount,
+      p_reason: reason,
+    });
+    if (error) {
+      console.error("Falha ao registrar o movimento de caixa:", error.code);
+      return { error: describeOrderError(error, MOVEMENT_ERROR) };
+    }
+    return { error: null };
+  },
+
   async closeAccount(sessionId, payments) {
     const { error } = await supabase.rpc("close_service_session", {
       p_service_session_id: sessionId,
@@ -220,7 +248,7 @@ export const supabaseCashSource: CashSource = {
       ids.length
         ? supabase
             .from("cash_session_totals")
-            .select("cash_session_id, cash_total, pix_total, debit_total, credit_total, other_total, total_sold")
+            .select("cash_session_id, cash_total, pix_total, debit_total, credit_total, other_total, total_sold, supply_total, withdrawal_total")
             .in("cash_session_id", ids)
         : Promise.resolve({ data: [] as TotalsRow[], error: null }),
     ]);
@@ -253,17 +281,18 @@ export const supabaseCashSource: CashSource = {
   async listMovements(cashSessionId) {
     const { data, error } = await supabase
       .from("cash_movements")
-      .select("id, payment_method, amount, description, created_at")
+      .select("id, movement_type, payment_method, amount, description, created_at")
       .eq("cash_session_id", cashSessionId)
       .order("created_at", { ascending: false });
     if (error) {
       console.error("Falha ao listar os movimentos:", error.code);
       return { data: null, error: LOAD_ERROR };
     }
-    const rows = (data ?? []) as { id: string; payment_method: PaymentMethod; amount: number | string; description: string; created_at: string }[];
+    const rows = (data ?? []) as { id: string; movement_type: MovementType; payment_method: PaymentMethod; amount: number | string; description: string; created_at: string }[];
     return {
       data: rows.map((r) => ({
         id: r.id,
+        movementType: r.movement_type,
         paymentMethod: r.payment_method,
         amount: Number(r.amount),
         description: r.description,
