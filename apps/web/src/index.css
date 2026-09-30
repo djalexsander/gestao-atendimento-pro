@@ -1928,3 +1928,54 @@ button {
   padding-top: 8px;
   border-top: 1px solid var(--border);
 }
+
+/* Caixa > Histórico: tabela compacta (desktop) e cards (< 900px), sem mexer no .data-table global */
+.cash-history-table {
+  overflow-x: auto; /* só proteção; as 7 colunas normalmente cabem */
+}
+.cash-history-table .data-table th,
+.cash-history-table .data-table td {
+  padding-left: 10px;
+  padding-right: 10px;
+}
+.cash-history-cards {
+  display: none;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+  gap: 8px;
+}
+.cash-history-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 14px;
+}
+.cash-detail-panel .table-scroll {
+  overflow-x: auto;
+}
+.cash-filters {
+  align-items: flex-end;
+}
+.cash-filters .field {
+  flex: 1 1 150px;
+  max-width: 220px;
+  margin-bottom: 0;
+}
+@media (max-width: 900px) {
+  .cash-history-table {
+    display: none;
+  }
+  .cash-history-cards {
+    display: flex;
+    flex-direction: column;
+  }
+  .cash-filters .field {
+    max-width: none;
+  }
+}

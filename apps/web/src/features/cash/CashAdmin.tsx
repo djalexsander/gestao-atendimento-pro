@@ -55,22 +55,35 @@ function CashDetail({
   const expected = reconcile(cash.openingAmount, summary.byMethod.cash, "").expectedCents / 100;
 
   return (
-    <section className="cash-detail" aria-label="Detalhe do caixa">
-      <h3>
-        Caixa de {cash.openedByName ?? "—"} · {fmt(cash.openedAt)}
-      </h3>
-      <p className="field-hint">
-        {cash.status === "open"
-          ? "Aberto"
-          : `Fechado em ${cash.closedAt ? fmt(cash.closedAt) : "—"} por ${cash.closedByName ?? "—"}`}
-      </p>
-      {cash.closingNotes && <p className="field-hint">Observação: {cash.closingNotes}</p>}
+    <section className="cash-detail cash-detail-panel" aria-label="Detalhe do caixa">
+      <h3>Detalhe do caixa</h3>
       {onCloseCash && (
         <button className="btn-danger" type="button" disabled={loading} onClick={onCloseCash}>
           Fechar caixa do operador
         </button>
       )}
 
+      <h4 className="cash-section-title">Informações</h4>
+      <dl className="cash-summary">
+        <div>
+          <dt>Operador</dt>
+          <dd>{cash.openedByName ?? "—"}</dd>
+        </div>
+        <div>
+          <dt>Aberto em</dt>
+          <dd>{fmt(cash.openedAt)}</dd>
+        </div>
+        <div>
+          <dt>Fechado em</dt>
+          <dd>{cash.closedAt ? fmt(cash.closedAt) : "Ainda aberto"}</dd>
+        </div>
+        <div>
+          <dt>Fechado por</dt>
+          <dd>{cash.status === "closed" ? (cash.closedByName ?? "—") : "—"}</dd>
+        </div>
+      </dl>
+
+      <h4 className="cash-section-title">Resumo financeiro</h4>
       <dl className="cash-summary">
         <div>
           <dt>Saldo inicial</dt>
@@ -78,7 +91,7 @@ function CashDetail({
         </div>
         {PAYMENT_METHODS.map((method) => (
           <div key={method}>
-            <dt>Vendas — {PAYMENT_METHOD_LABEL[method]}</dt>
+            <dt>{PAYMENT_METHOD_LABEL[method]}</dt>
             <dd>{value(summary.byMethod[method])}</dd>
           </div>
         ))}
@@ -88,35 +101,31 @@ function CashDetail({
         </div>
       </dl>
 
-      {cash.status === "closed" && (
-        <>
-          <h4 className="cash-section-title">Conferência do dinheiro</h4>
-          {cash.closingCashAmount === null || cash.cashDifference === null ? (
-            <p className="field-hint">Este caixa foi fechado antes da conferência de dinheiro existir.</p>
-          ) : (
-            <dl className="cash-summary">
-              <div>
-                <dt>Dinheiro esperado</dt>
-                {/* derivado: contado - diferença (o servidor não grava o esperado) */}
-                <dd>{formatReais(Math.round((cash.closingCashAmount - cash.cashDifference) * 100) / 100)}</dd>
-              </div>
-              <div>
-                <dt>Dinheiro contado</dt>
-                <dd>{formatReais(cash.closingCashAmount)}</dd>
-              </div>
-              <div>
-                <dt>Diferença</dt>
-                <dd>
-                  <DifferenceBadge cash={cash} />
-                </dd>
-              </div>
-            </dl>
-          )}
-        </>
+      <h4 className="cash-section-title">Conferência</h4>
+      {cash.status === "open" ? (
+        !loading && <p className="field-hint">Dinheiro esperado no caixa até agora: {formatReais(expected)}</p>
+      ) : cash.closingCashAmount === null || cash.cashDifference === null ? (
+        <p className="field-hint">Este caixa foi fechado antes da conferência de dinheiro existir.</p>
+      ) : (
+        <dl className="cash-summary">
+          <div>
+            <dt>Dinheiro esperado</dt>
+            {/* derivado: contado - diferença (o servidor não grava o esperado) */}
+            <dd>{formatReais(Math.round((cash.closingCashAmount - cash.cashDifference) * 100) / 100)}</dd>
+          </div>
+          <div>
+            <dt>Dinheiro contado</dt>
+            <dd>{formatReais(cash.closingCashAmount)}</dd>
+          </div>
+          <div>
+            <dt>Diferença</dt>
+            <dd>
+              <DifferenceBadge cash={cash} />
+            </dd>
+          </div>
+        </dl>
       )}
-      {cash.status === "open" && !loading && (
-        <p className="field-hint">Dinheiro esperado no caixa até agora: {formatReais(expected)}</p>
-      )}
+      {cash.status === "closed" && <p className="field-hint">Observação: {cash.closingNotes ?? "—"}</p>}
 
       <h4 className="cash-section-title">Movimentos</h4>
       {loading ? (
@@ -347,24 +356,16 @@ export function CashAdmin({ source = supabaseCashSource }: { source?: CashSource
 
       {list && list.length > 0 && tab === "history" && (
         <>
-          <div className="table-scroll">
+          <div className="cash-history-table">
             <table className="data-table">
               <thead>
                 <tr>
                   <th>Operador</th>
                   <th>Abertura</th>
                   <th>Fechamento</th>
-                  <th>Fechado por</th>
-                  <th>Saldo inicial</th>
-                  <th>Dinheiro</th>
-                  <th>Pix</th>
-                  <th>Débito</th>
-                  <th>Crédito</th>
-                  <th>Outros</th>
                   <th>Total vendido</th>
-                  <th>Contado</th>
-                  <th>Diferença</th>
-                  <th>Observação</th>
+                  <th>Conferência</th>
+                  <th>Fechado por</th>
                   <th />
                 </tr>
               </thead>
@@ -374,19 +375,11 @@ export function CashAdmin({ source = supabaseCashSource }: { source?: CashSource
                     <td>{s.openedByName ?? "—"}</td>
                     <td>{fmt(s.openedAt)}</td>
                     <td>{s.closedAt ? fmt(s.closedAt) : "—"}</td>
-                    <td>{s.closedByName ?? "—"}</td>
-                    <td>{formatReais(s.openingAmount)}</td>
-                    <td>{formatReais(s.totals?.cash ?? 0)}</td>
-                    <td>{formatReais(s.totals?.pix ?? 0)}</td>
-                    <td>{formatReais(s.totals?.debit ?? 0)}</td>
-                    <td>{formatReais(s.totals?.credit ?? 0)}</td>
-                    <td>{formatReais(s.totals?.other ?? 0)}</td>
                     <td>{formatReais(s.totals?.total ?? 0)}</td>
-                    <td>{s.closingCashAmount === null ? "—" : formatReais(s.closingCashAmount)}</td>
                     <td>
                       <DifferenceBadge cash={s} />
                     </td>
-                    <td>{s.closingNotes ?? "—"}</td>
+                    <td>{s.closedByName ?? "—"}</td>
                     <td>
                       <button className="btn-secondary btn-small" type="button" onClick={() => select(s)}>
                         {s.id === selected?.id ? "Selecionado" : "Ver detalhe"}
@@ -397,6 +390,21 @@ export function CashAdmin({ source = supabaseCashSource }: { source?: CashSource
               </tbody>
             </table>
           </div>
+          <ul className="cash-history-cards">
+            {list.map((s) => (
+              <li key={s.id} className="cash-history-card">
+                <strong>{s.openedByName ?? "—"}</strong>
+                <span>
+                  {fmt(s.openedAt)} → {s.closedAt ? fmt(s.closedAt) : "—"}
+                </span>
+                <span>Total vendido: {formatReais(s.totals?.total ?? 0)}</span>
+                <DifferenceBadge cash={s} />
+                <button className="btn-secondary btn-small" type="button" onClick={() => select(s)}>
+                  {s.id === selected?.id ? "Selecionado" : "Ver detalhe"}
+                </button>
+              </li>
+            ))}
+          </ul>
           {hasMore && (
             <button className="btn-secondary btn-small" type="button" onClick={() => setLimit((current) => current + CASH_HISTORY_PAGE)}>
               Carregar mais
