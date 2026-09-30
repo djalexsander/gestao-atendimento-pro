@@ -33,6 +33,15 @@ export interface CartItem {
   notes: string;
 }
 
+// Um evento de cancelamento (append-only no banco): quantidade, motivo, quem e quando.
+export interface ItemCancellation {
+  id: string;
+  quantity: number;
+  reason: string;
+  createdAt: string;
+  cancelledByName: string | null;
+}
+
 export interface SubmittedOrderItem {
   id: string;
   productId: string;
@@ -43,6 +52,9 @@ export interface SubmittedOrderItem {
   sectorName: string | null;
   // Estado de produção do item (somente leitura aqui; quem altera é a tela de Produção).
   productionStatus: "pending" | "preparing" | "ready";
+  // `quantity` é a ORIGINAL (nunca muda); cobrável = quantity - cancelledQuantity.
+  cancelledQuantity: number;
+  cancellations: ItemCancellation[];
 }
 
 export type OrderOrigin = "attendant" | "cashier" | "whatsapp";
@@ -142,10 +154,28 @@ export function toSubmitPayload(cart: CartItem[]): OrderItemPayload[] {
 
 // Soma dos pedidos já ENVIADOS (não cancelados) da session, pelos snapshots gravados — não pelo
 // preço atual do produto.
+// Quantidade cobrável de um item (a original menos o que foi cancelado).
+export function activeQuantity(item: Pick<SubmittedOrderItem, "quantity" | "cancelledQuantity">): number {
+  return Math.max(0, item.quantity - item.cancelledQuantity);
+}
+
+// Só informativo para a UX (o total real é do servidor): usa a quantidade cobrável.
 export function sessionTotal(orders: SubmittedOrder[]): number {
   return orders
     .filter((order) => order.status !== "cancelled")
-    .reduce((sum, order) => sum + order.items.reduce((s, item) => s + item.unitPrice * item.quantity, 0), 0);
+    .reduce((sum, order) => sum + order.items.reduce((s, item) => s + item.unitPrice * activeQuantity(item), 0), 0);
+}
+
+// Quem pode cancelar o quê (espelho da regra do servidor, só para decidir o que a tela MOSTRA):
+// owner/admin qualquer item; attendant/cashier só item ainda pendente na produção.
+export function canCancelItem(
+  role: string | null | undefined,
+  item: Pick<SubmittedOrderItem, "quantity" | "cancelledQuantity" | "productionStatus">,
+): boolean {
+  if (activeQuantity(item) <= 0) return false;
+  if (role === "owner" || role === "admin") return true;
+  if (role === "attendant" || role === "cashier") return item.productionStatus === "pending";
+  return false;
 }
 
 // Mais recente primeiro.

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../app/useAuth";
 import { formatReais } from "../../lib/money";
 import {
@@ -9,16 +9,21 @@ import {
   type CashSession,
   type CashSource,
 } from "./cashApi";
-import { CashMovementDialog, CloseCashDialog, OpenCashDialog } from "./CashDialogs";
+import { CashMovementDialog, CloseCashDialog, OpenCashDialog, RefundDialog } from "./CashDialogs";
 import { notifyCashChanged } from "./useMyOpenCash";
 import {
   describeDifference,
+  buildRefundablePayments,
   MOVEMENT_TYPE_LABEL,
   PAYMENT_METHODS,
   PAYMENT_METHOD_LABEL,
   reconcile,
+  refundTotals,
   summarizeMovements,
   type CashMovementRow,
+  type PaymentRefund,
+  type RefundablePayment,
+  type SalePaymentRow,
 } from "./cashLogic";
 
 const dateTime = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" });
@@ -44,13 +49,17 @@ function DifferenceBadge({ cash }: { cash: CashSession }) {
 function CashDetail({
   cash,
   movements,
+  payments,
   onCloseCash,
   onMovement,
+  onRefund,
 }: {
   cash: CashSession;
   movements: CashMovementRow[] | null;
+  payments: RefundablePayment[] | null;
   onCloseCash?: () => void;
   onMovement?: (kind: "supply" | "withdrawal") => void;
+  onRefund?: (payment: RefundablePayment) => void;
 }) {
   const summary = summarizeMovements(movements ?? []);
   const loading = movements === null;
@@ -125,7 +134,66 @@ function CashDetail({
           <dt>Sangrias</dt>
           <dd>{value(summary.withdrawal)}</dd>
         </div>
+        <div>
+          <dt>Estornos pagos por este caixa</dt>
+          <dd>{value(summary.refund)}</dd>
+        </div>
       </dl>
+
+      {payments && payments.length > 0 && (
+        <>
+          <h4 className="cash-section-title">Pagamentos e estornos</h4>
+          {(() => {
+            const totals = refundTotals(payments);
+            return (
+              <dl className="cash-summary">
+                <div>
+                  <dt>Vendido (original)</dt>
+                  <dd>{formatReais(totals.original)}</dd>
+                </div>
+                <div>
+                  <dt>Estornado</dt>
+                  <dd>{formatReais(totals.refunded)}</dd>
+                </div>
+                <div className="cash-summary-strong">
+                  <dt>Líquido</dt>
+                  <dd>{formatReais(totals.net)}</dd>
+                </div>
+              </dl>
+            );
+          })()}
+          <ul className="refund-list">
+            {payments.map((p) => (
+              <li key={p.paymentId} className="refund-card">
+                <div className="refund-card-head">
+                  <strong>
+                    {PAYMENT_METHOD_LABEL[p.method]} · {p.label.replace(/^Venda - /, "")}
+                  </strong>
+                  <span className="muted">{fmt(p.createdAt)}</span>
+                </div>
+                <p className="refund-card-values">
+                  Pago: {formatReais(p.amount)} · Estornado: {formatReais(p.refunded)} · Disponível: {formatReais(p.available)}
+                </p>
+                {onRefund && p.available > 0 && (
+                  <button type="button" className="btn-secondary btn-small btn-danger-text" onClick={() => onRefund(p)}>
+                    Estornar
+                  </button>
+                )}
+                {p.refunds.length > 0 && (
+                  <ul className="refund-events">
+                    {p.refunds.map((r) => (
+                      <li key={r.id}>
+                        Estorno {PAYMENT_METHOD_LABEL[p.method]} {formatReais(r.amount)} · Motivo: {r.reason} · Realizado por{" "}
+                        {r.createdByName ?? "—"} · {fmt(r.createdAt)}
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
 
       <h4 className="cash-section-title">Conferência</h4>
       {cash.status === "open" ? (
@@ -177,7 +245,7 @@ function CashDetail({
                   <td>{MOVEMENT_TYPE_LABEL[m.movementType]}</td>
                   <td>{m.description}</td>
                   <td>{PAYMENT_METHOD_LABEL[m.paymentMethod]}</td>
-                  <td>{m.movementType === "withdrawal" ? `− ${formatReais(m.amount)}` : formatReais(m.amount)}</td>
+                  <td>{m.movementType === "withdrawal" || m.movementType === "refund" ? `− ${formatReais(m.amount)}` : formatReais(m.amount)}</td>
                 </tr>
               ))}
             </tbody>
@@ -214,6 +282,9 @@ export function CashAdmin({ source = supabaseCashSource }: { source?: CashSource
   const [ownMovements, setOwnMovements] = useState<CashMovementRow[]>([]);
   const [dialog, setDialog] = useState<"open" | "close" | "close-other" | "supply" | "withdrawal" | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Pagamentos do caixa selecionado + estornos (só owner/admin leem estornos) e o pagamento em estorno.
+  const [paymentData, setPaymentData] = useState<{ cashId: string; sales: SalePaymentRow[]; refunds: PaymentRefund[] } | null>(null);
+  const [refunding, setRefunding] = useState<RefundablePayment | null>(null);
 
   const reloadOpen = useCallback(async () => {
     if (!companyId) return;
@@ -262,6 +333,23 @@ export function CashAdmin({ source = supabaseCashSource }: { source?: CashSource
       cancelled = true;
     };
   }, [selected, source]);
+
+  useEffect(() => {
+    if (!selected) return;
+    const cashId = selected.id;
+    let cancelled = false;
+    void source.listPayments(cashId).then((result) => {
+      if (!cancelled && result.data) setPaymentData({ cashId, ...result.data });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected, source]);
+
+  const payments = useMemo(
+    () => (paymentData && selected && paymentData.cashId === selected.id ? buildRefundablePayments(paymentData.sales, paymentData.refunds) : null),
+    [paymentData, selected],
+  );
 
   const myOpen = openSessions?.find((s) => s.openedBy === userId) ?? null;
   const movements = selected && loaded && loaded.cashId === selected.id ? loaded.rows : null;
@@ -456,6 +544,8 @@ export function CashAdmin({ source = supabaseCashSource }: { source?: CashSource
         <CashDetail
           cash={selected}
           movements={movements}
+          payments={payments}
+          onRefund={canAdminClose ? (payment) => setRefunding(payment) : undefined}
           onCloseCash={canCloseSelected ? () => setDialog("close-other") : undefined}
           onMovement={
             canMoveSelected
@@ -465,6 +555,21 @@ export function CashAdmin({ source = supabaseCashSource }: { source?: CashSource
                 }
               : undefined
           }
+        />
+      )}
+      {refunding && (
+        <RefundDialog
+          source={source}
+          payment={refunding}
+          onDone={(message) => {
+            setRefunding(null);
+            setNotice(message);
+            setLoaded(null);
+            setPaymentData(null);
+            if (selected) setSelected({ ...selected }); // recarrega movimentos e pagamentos
+            void reloadOpen();
+          }}
+          onClose={() => setRefunding(null)}
         />
       )}
       {(dialog === "supply" || dialog === "withdrawal") && selected && movements && (

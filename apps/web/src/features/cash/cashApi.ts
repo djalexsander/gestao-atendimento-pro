@@ -1,10 +1,11 @@
 import { supabase } from "../../lib/supabaseClient";
 import { describeOrderError } from "../orders/ordersLogic";
-import type { CashMovementRow, MovementType, PaymentMethod, PaymentPayload } from "./cashLogic";
+import type { CashMovementRow, MovementType, PaymentMethod, PaymentPayload, PaymentRefund, SalePaymentRow } from "./cashLogic";
 
 const LOAD_ERROR = "Não foi possível carregar o caixa agora. Tente novamente.";
 const OPEN_ERROR = "Não foi possível abrir o caixa agora. Tente novamente.";
 const CLOSE_CASH_ERROR = "Não foi possível fechar o caixa agora. Tente novamente.";
+const REFUND_ERROR = "Não foi possível registrar o estorno agora. Tente novamente.";
 const MOVEMENT_ERROR = "Não foi possível registrar o movimento agora. Tente novamente.";
 const CLOSE_ACCOUNT_ERROR = "Não foi possível fechar a conta agora. Tente novamente.";
 
@@ -21,6 +22,7 @@ export interface CashTotals {
   total: number; // só vendas
   supply: number;
   withdrawal: number;
+  refund: number; // estornos pagos por este caixa (à parte; total nunca é reduzido)
 }
 
 export interface CashSession {
@@ -69,6 +71,10 @@ export interface CashSource {
     amount: number,
     reason: string,
   ): Promise<{ error: string | null }>;
+  // Pagamentos de vendas DESTE caixa e os estornos já feitos sobre eles (estornos: só owner/admin leem).
+  listPayments(cashSessionId: string): Promise<{ data: { sales: SalePaymentRow[]; refunds: PaymentRefund[] } | null; error: string | null }>;
+  // Estorna (parcial ou total) um pagamento de conta FECHADA. Só owner/admin, com caixa aberto próprio.
+  refundPayment(paymentId: string, amount: number, reason: string): Promise<{ error: string | null }>;
   // Recebe e fecha a conta. Total, quitação e troco são validados no servidor.
   closeAccount(sessionId: string, payments: PaymentPayload[]): Promise<CloseAccountResult>;
   // Administrativo
@@ -106,6 +112,7 @@ interface TotalsRow {
   total_sold: number | string;
   supply_total: number | string;
   withdrawal_total: number | string;
+  refund_total: number | string;
 }
 
 const CASH_COLUMNS =
@@ -123,6 +130,7 @@ function toTotals(row: TotalsRow | undefined): CashTotals {
     total: Number(row?.total_sold ?? 0),
     supply: Number(row?.supply_total ?? 0),
     withdrawal: Number(row?.withdrawal_total ?? 0),
+    refund: Number(row?.refund_total ?? 0),
   };
 }
 
@@ -211,6 +219,63 @@ export const supabaseCashSource: CashSource = {
     return { error: null };
   },
 
+  async listPayments(cashSessionId) {
+    const { data, error } = await supabase
+      .from("cash_movements")
+      .select("service_payment_id, payment_method, amount, description, created_at")
+      .eq("cash_session_id", cashSessionId)
+      .eq("movement_type", "sale")
+      .order("created_at", { ascending: false });
+    if (error) {
+      console.error("Falha ao listar os pagamentos:", error.code);
+      return { data: null, error: LOAD_ERROR };
+    }
+    const sales = ((data ?? []) as { service_payment_id: string | null; payment_method: PaymentMethod; amount: number | string; description: string; created_at: string }[])
+      .filter((r) => r.service_payment_id !== null)
+      .map((r) => ({
+        paymentId: r.service_payment_id as string,
+        method: r.payment_method,
+        amount: Number(r.amount),
+        label: r.description,
+        createdAt: r.created_at,
+      }));
+    if (sales.length === 0) return { data: { sales, refunds: [] }, error: null };
+
+    const { data: refundData, error: refundError } = await supabase
+      .from("service_refunds")
+      .select("id, service_payment_id, amount, reason, created_by, created_at")
+      .in("service_payment_id", sales.map((s) => s.paymentId))
+      .order("created_at", { ascending: false });
+    if (refundError) {
+      console.error("Falha ao listar os estornos:", refundError.code);
+      return { data: null, error: LOAD_ERROR };
+    }
+    const rawRefunds = (refundData ?? []) as { id: string; service_payment_id: string; amount: number | string; reason: string; created_by: string; created_at: string }[];
+    const names = await loadNames(rawRefunds.map((r) => r.created_by));
+    const refunds = rawRefunds.map((r) => ({
+      id: r.id,
+      paymentId: r.service_payment_id,
+      amount: Number(r.amount),
+      reason: r.reason,
+      createdAt: r.created_at,
+      createdByName: names.get(r.created_by) ?? null,
+    }));
+    return { data: { sales, refunds }, error: null };
+  },
+
+  async refundPayment(paymentId, amount, reason) {
+    const { error } = await supabase.rpc("refund_service_payment", {
+      p_service_payment_id: paymentId,
+      p_amount: amount,
+      p_reason: reason,
+    });
+    if (error) {
+      console.error("Falha ao registrar o estorno:", error.code);
+      return { error: describeOrderError(error, REFUND_ERROR) };
+    }
+    return { error: null };
+  },
+
   async closeAccount(sessionId, payments) {
     const { error } = await supabase.rpc("close_service_session", {
       p_service_session_id: sessionId,
@@ -248,7 +313,7 @@ export const supabaseCashSource: CashSource = {
       ids.length
         ? supabase
             .from("cash_session_totals")
-            .select("cash_session_id, cash_total, pix_total, debit_total, credit_total, other_total, total_sold, supply_total, withdrawal_total")
+            .select("cash_session_id, cash_total, pix_total, debit_total, credit_total, other_total, total_sold, supply_total, withdrawal_total, refund_total")
             .in("cash_session_id", ids)
         : Promise.resolve({ data: [] as TotalsRow[], error: null }),
     ]);

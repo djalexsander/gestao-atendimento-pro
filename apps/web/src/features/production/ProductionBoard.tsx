@@ -14,7 +14,9 @@ import {
   formatAge,
   formatDuration,
   groupByOrder,
+  cancellationText,
   groupHistory,
+  newCancellations,
   pointLabel,
   previousDayLabel,
   PRODUCTION_COLUMNS,
@@ -122,6 +124,9 @@ function QueueView({
   const [readyLimit, setReadyLimit] = useState(READY_PAGE);
   const [now, setNow] = useState(() => Date.now());
   const requestId = useRef(0);
+  // Avisos de cancelamento: só o que acontece com a tela aberta (a 1ª carga só "aprende" os ids).
+  const seenCancellations = useRef<Set<string> | null>(null);
+  const [alerts, setAlerts] = useState<Array<{ id: string; text: string; reason: string }>>([]);
 
   // Trocar de setor volta ao limite inicial de prontos.
   useEffect(() => {
@@ -139,7 +144,21 @@ function QueueView({
     }
     setError(null);
     setQueue(result.data);
+
+    const fresh = newCancellations(result.data.cancellations, seenCancellations.current);
+    const seen = seenCancellations.current ?? new Set<string>();
+    for (const c of result.data.cancellations) seen.add(c.id);
+    seenCancellations.current = seen;
+    if (fresh.length > 0) {
+      setAlerts((current) => [...fresh.map((c) => ({ id: c.id, text: cancellationText(c), reason: c.reason })), ...current].slice(0, 5));
+    }
   }, [companyId, sectorId, readyLimit, source]);
+
+  // Trocar de setor muda quais cancelamentos interessam: recomeça a "aprender" sem avisar o que já existia.
+  useEffect(() => {
+    seenCancellations.current = null;
+    setAlerts([]);
+  }, [sectorId]);
 
   useEffect(() => {
     void reload();
@@ -189,6 +208,21 @@ function QueueView({
   return (
     <>
       <p className="kds-count">{items ? `${activeCount} ${activeCount === 1 ? "item na fila" : "itens na fila"}` : ""}</p>
+      {alerts.length > 0 && (
+        <div className="kds-cancel-alerts" role="alert" aria-live="assertive">
+          {alerts.map((a) => (
+            <div key={a.id} className="kds-cancel-alert">
+              <span>
+                {a.text}
+                {a.reason ? ` (${a.reason})` : ""}
+              </span>
+              <button type="button" className="btn-secondary btn-small" onClick={() => setAlerts((cur) => cur.filter((x) => x.id !== a.id))}>
+                OK
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
       {error && <div className="form-error">{error}</div>}
       {actionError && (
         <div className="form-error" role="alert">

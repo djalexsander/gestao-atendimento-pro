@@ -2192,3 +2192,81 @@ button {
   letter-spacing: 0.04em;
   color: var(--text-muted);
 }
+
+/* Cancelamento de itens */
+.order-history-struck {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+.order-history-item-cancel-summary {
+  display: block;
+  font-size: 13px;
+  color: var(--danger);
+}
+.order-history-cancellations {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.order-history-cancellations summary {
+  cursor: pointer;
+}
+.order-history-cancellations ul {
+  margin: 4px 0 0;
+  padding-left: 18px;
+}
+.kds-cancel-alerts {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+.kds-cancel-alert {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 2px solid var(--danger);
+  border-radius: 8px;
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-weight: 700;
+}
+
+/* Estornos */
+.refund-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 10px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+.refund-card {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.refund-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+.refund-card-values {
+  margin: 4px 0 8px;
+  font-size: 14px;
+}
+.refund-events {
+  margin: 8px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+@media (max-width: 640px) {
+  .refund-list {
+    grid-template-columns: 1fr;
+  }
+}

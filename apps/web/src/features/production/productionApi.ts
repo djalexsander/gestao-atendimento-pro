@@ -4,6 +4,9 @@ import { describeOrderError } from "../orders/ordersLogic";
 import {
   toHistoryItem,
   toProductionItem,
+  toQueueCancellation,
+  type QueueCancellation,
+  type RawQueueCancellation,
   type HistoryItem,
   type HistorySummary,
   type ProductionItem,
@@ -18,6 +21,8 @@ export interface QueueData {
   items: ProductionItem[];
   readyTotal: number;
   today: string;
+  // Cancelamentos dos últimos 15 min (por evento): a tela avisa a cozinha dos que forem novos.
+  cancellations: QueueCancellation[];
 }
 
 export interface HistoryData {
@@ -84,8 +89,16 @@ export const supabaseProductionSource: ProductionSource = {
       console.error("Falha ao carregar a fila de produção:", error.code);
       return { data: null, error: describeOrderError(error, LOAD_ERROR) };
     }
-    const raw = data as { items: RawProductionItem[]; ready_total: number; today: string };
-    return { data: { items: raw.items.map(toProductionItem), readyTotal: raw.ready_total, today: raw.today }, error: null };
+    const raw = data as { items: RawProductionItem[]; ready_total: number; today: string; cancellations: RawQueueCancellation[] };
+    return {
+      data: {
+        items: raw.items.map(toProductionItem),
+        readyTotal: raw.ready_total,
+        today: raw.today,
+        cancellations: (raw.cancellations ?? []).map(toQueueCancellation),
+      },
+      error: null,
+    };
   },
 
   async loadHistory(companyId, date, sectorId) {

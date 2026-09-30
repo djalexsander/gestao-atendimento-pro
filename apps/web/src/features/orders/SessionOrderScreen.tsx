@@ -7,11 +7,12 @@ import { CheckoutDialog, OpenCashDialog } from "../cash/CashDialogs";
 import { Modal } from "../employees/Modal";
 import { formatOpenedFull } from "../operations/panel";
 import { createCoalescedRunner } from "./coalesce";
+import { CancelItemDialog } from "./CancelItemDialog";
 import { Catalog } from "./Catalog";
 import { CartBar, CartPanel } from "./Cart";
 import { OrderHistory } from "./OrderHistory";
 import { supabaseOrdersSource, type OrdersSource, type SessionHeader } from "./ordersApi";
-import { addToCart, changeCartQuantity, removeCartItem, sessionTotal, setCartItemNotes, type CartItem, type CatalogCategory, type CatalogProduct, type SubmittedOrder } from "./ordersLogic";
+import { addToCart, changeCartQuantity, removeCartItem, sessionTotal, setCartItemNotes, type CartItem, type CatalogCategory, type CatalogProduct, type SubmittedOrder, type SubmittedOrderItem } from "./ordersLogic";
 
 // Tela real de atendimento (substitui o modal provisório): catálogo visual, cesta local e envio
 // via submit_service_order. O MESMO componente serve Atendimento e Caixa — só troca o `variant`
@@ -54,6 +55,7 @@ export function SessionOrderScreen({
     (activeMembership?.role === "owner" || activeMembership?.role === "admin" || activeMembership?.role === "cashier");
   const [checkoutStage, setCheckoutStage] = useState<"none" | "checkout" | "open-cash" | "done">("none");
   const [checkoutChecking, setCheckoutChecking] = useState(false);
+  const [cancelTarget, setCancelTarget] = useState<SubmittedOrderItem | null>(null);
 
   async function startCheckout() {
     if (!activeMembership || !user) return;
@@ -219,7 +221,23 @@ export function SessionOrderScreen({
             onSubmit={() => void handleSubmit()}
           />
         </div>
-        <OrderHistory orders={orders} />
+        <OrderHistory
+          orders={orders}
+          role={activeMembership?.role}
+          sessionOpen={canOrder}
+          onCancelItem={(item) => setCancelTarget(item)}
+        />
+        {cancelTarget && (
+          <CancelItemDialog
+            source={source}
+            item={cancelTarget}
+            onDone={() => {
+              setCancelTarget(null);
+              requestReload();
+            }}
+            onClose={() => setCancelTarget(null)}
+          />
+        )}
         <CartBar cart={cart} onOpen={() => setCartOpen(true)} />
       </>
     );

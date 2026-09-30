@@ -113,12 +113,13 @@ export function parseOpeningAmount(text: string): number | null {
 
 // --- Resumo do caixa (tela administrativa) ---------------------------------
 
-export type MovementType = "sale" | "supply" | "withdrawal";
+export type MovementType = "sale" | "supply" | "withdrawal" | "refund";
 
 export const MOVEMENT_TYPE_LABEL: Record<MovementType, string> = {
   sale: "Venda",
   supply: "Suprimento",
   withdrawal: "Sangria",
+  refund: "Estorno",
 };
 
 export interface CashMovementRow {
@@ -136,8 +137,10 @@ export interface CashSummary {
   total: number; // total vendido (só vendas)
   supply: number;
   withdrawal: number;
-  // Dinheiro físico movimentado no caixa: vendas em dinheiro + suprimentos - sangrias
-  // (somado ao saldo inicial dá o dinheiro esperado/disponível; o servidor é a autoridade).
+  // Estornos PAGOS por este caixa (todas as formas); só os em dinheiro saem da gaveta.
+  refund: number;
+  // Dinheiro físico movimentado no caixa: vendas em dinheiro + suprimentos - sangrias - estornos
+  // em dinheiro (somado ao saldo inicial dá o dinheiro esperado/disponível; o servidor é a autoridade).
   netCash: number;
 }
 
@@ -145,10 +148,15 @@ export function summarizeMovements(movements: CashMovementRow[]): CashSummary {
   const cents: Record<PaymentMethod, number> = { cash: 0, pix: 0, debit_card: 0, credit_card: 0, other: 0 };
   let supply = 0;
   let withdrawal = 0;
+  let refund = 0;
+  let refundCash = 0;
   for (const m of movements) {
     if (m.movementType === "supply") supply += toCents(m.amount);
     else if (m.movementType === "withdrawal") withdrawal += toCents(m.amount);
-    else cents[m.paymentMethod] += toCents(m.amount);
+    else if (m.movementType === "refund") {
+      refund += toCents(m.amount);
+      if (m.paymentMethod === "cash") refundCash += toCents(m.amount);
+    } else cents[m.paymentMethod] += toCents(m.amount);
   }
   const total = Object.values(cents).reduce((a, b) => a + b, 0);
   return {
@@ -162,8 +170,56 @@ export function summarizeMovements(movements: CashMovementRow[]): CashSummary {
     total: total / 100,
     supply: supply / 100,
     withdrawal: withdrawal / 100,
-    netCash: (cents.cash + supply - withdrawal) / 100,
+    refund: refund / 100,
+    netCash: (cents.cash + supply - withdrawal - refundCash) / 100,
   };
+}
+
+// --- Estorno ------------------------------------------------------------------------------------
+// O estorno é financeiro e ligado ao PAGAMENTO original: cada pagamento sabe quanto foi pago, quanto
+// já foi estornado e quanto ainda pode ser. O servidor (refund_service_payment) é a autoridade.
+
+export interface PaymentRefund {
+  id: string;
+  paymentId: string;
+  amount: number;
+  reason: string;
+  createdAt: string;
+  createdByName: string | null;
+}
+
+export interface SalePaymentRow {
+  paymentId: string;
+  method: PaymentMethod;
+  amount: number;
+  label: string; // "Venda - Comanda CMD001"
+  createdAt: string;
+}
+
+export interface RefundablePayment extends SalePaymentRow {
+  refunded: number;
+  available: number;
+  refunds: PaymentRefund[];
+}
+
+export function buildRefundablePayments(sales: SalePaymentRow[], refunds: PaymentRefund[]): RefundablePayment[] {
+  return sales.map((sale) => {
+    const mine = refunds.filter((r) => r.paymentId === sale.paymentId);
+    const refundedCents = mine.reduce((sum, r) => sum + toCents(r.amount), 0);
+    return {
+      ...sale,
+      refunded: refundedCents / 100,
+      available: Math.max(0, toCents(sale.amount) - refundedCents) / 100,
+      refunds: [...mine].sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1)),
+    };
+  });
+}
+
+// Original / estornado / líquido do conjunto de pagamentos (a venda bruta original nunca é reduzida).
+export function refundTotals(payments: RefundablePayment[]): { original: number; refunded: number; net: number } {
+  const original = payments.reduce((s, p) => s + toCents(p.amount), 0);
+  const refunded = payments.reduce((s, p) => s + toCents(p.refunded), 0);
+  return { original: original / 100, refunded: refunded / 100, net: (original - refunded) / 100 };
 }
 
 // --- Conferência do dinheiro no fechamento ---------------------------------

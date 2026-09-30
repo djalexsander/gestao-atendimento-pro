@@ -22,6 +22,7 @@ import {
   totalInformedCents,
   type CashMovementRow,
   type PaymentDraft,
+  type RefundablePayment,
   type PaymentMethod,
 } from "./cashLogic";
 
@@ -293,13 +294,17 @@ export function CloseCashDialog({
             <dt>Sangrias</dt>
             <dd>{formatReais(summary.withdrawal)}</dd>
           </div>
+          <div>
+            <dt>Estornos pagos</dt>
+            <dd>{formatReais(summary.refund)}</dd>
+          </div>
         </dl>
 
         <h4 className="cash-section-title">Conferência do dinheiro</h4>
         <div className="cash-expected">
           <span>Dinheiro esperado no caixa</span>
           <strong>{cents(rec.expectedCents)}</strong>
-          <small>Saldo inicial + vendas em dinheiro + suprimentos − sangrias</small>
+          <small>Saldo inicial + vendas em dinheiro + suprimentos − sangrias − estornos em dinheiro</small>
         </div>
         <div className="field">
           <label htmlFor="closing-counted">Dinheiro contado</label>
@@ -508,6 +513,108 @@ export function CheckoutDialog({
           </button>
           <button className="btn-primary btn-auto" type="submit" disabled={!finalizable || submitting}>
             {submitting ? "Finalizando…" : "Finalizar e fechar conta"}
+          </button>
+        </div>
+      </form>
+    </Modal>
+  );
+}
+
+// Estornar (parte de) um pagamento de conta FECHADA. Registro financeiro interno: a conta e o
+// pagamento originais não mudam; o servidor limita ao valor ainda estornável e exige caixa aberto.
+export function RefundDialog({
+  source,
+  payment,
+  onDone,
+  onClose,
+}: {
+  source: CashSource;
+  payment: RefundablePayment;
+  onDone: (message: string) => void;
+  onClose: () => void;
+}) {
+  const [amount, setAmount] = useState("");
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const availableCents = Math.round(payment.available * 100);
+  const valueCents = parseDraftCents(amount);
+  const tooMuch = valueCents !== null && valueCents > availableCents;
+  const valid = valueCents !== null && valueCents > 0 && !tooMuch && reason.trim() !== "";
+
+  async function handleSubmit(event: FormEvent) {
+    event.preventDefault();
+    if (submitting || !valid || valueCents === null) return;
+    setError(null);
+    setSubmitting(true);
+    const result = await source.refundPayment(payment.paymentId, valueCents / 100, reason.trim());
+    setSubmitting(false);
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
+    onDone("Estorno registrado.");
+  }
+
+  return (
+    <Modal title="Estornar pagamento" onClose={submitting ? () => undefined : onClose}>
+      <form onSubmit={handleSubmit}>
+        <dl className="cash-summary cash-summary-modal">
+          <div>
+            <dt>Forma</dt>
+            <dd>{PAYMENT_METHOD_LABEL[payment.method]}</dd>
+          </div>
+          <div>
+            <dt>Valor pago</dt>
+            <dd>{formatReais(payment.amount)}</dd>
+          </div>
+          <div>
+            <dt>Já estornado</dt>
+            <dd>{formatReais(payment.refunded)}</dd>
+          </div>
+          <div className="cash-summary-strong">
+            <dt>Disponível para estorno</dt>
+            <dd>{formatReais(payment.available)}</dd>
+          </div>
+        </dl>
+        {payment.method === "cash" && (
+          <p className="field-hint">Estorno em dinheiro sai do dinheiro do SEU caixa aberto.</p>
+        )}
+        {error && <div className="form-error">{error}</div>}
+        <div className="field">
+          <label htmlFor="refund-amount">Valor a estornar</label>
+          <input
+            id="refund-amount"
+            inputMode="decimal"
+            placeholder="R$ 0,00"
+            autoFocus
+            value={amount}
+            onChange={(e) => {
+              setError(null);
+              setAmount(e.target.value);
+            }}
+          />
+          {amount.trim() !== "" && (valueCents === null || valueCents <= 0) && (
+            <div className="field-error">Informe um valor maior que zero, ex.: 50,00.</div>
+          )}
+          {tooMuch && <div className="field-error">Valor maior que o disponível para estorno.</div>}
+        </div>
+        <div className="field">
+          <label htmlFor="refund-reason">Motivo (obrigatório)</label>
+          <input
+            id="refund-reason"
+            maxLength={200}
+            placeholder="Ex.: Cobrança duplicada"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
+        </div>
+        <div className="modal-actions">
+          <button className="btn-secondary" type="button" disabled={submitting} onClick={onClose}>
+            Cancelar
+          </button>
+          <button className="btn-danger" type="submit" disabled={!valid || submitting}>
+            {submitting ? "Estornando…" : "Confirmar estorno"}
           </button>
         </div>
       </form>

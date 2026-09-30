@@ -7,12 +7,14 @@ import {
   type CartItem,
   type CatalogCategory,
   type CatalogProduct,
+  type ItemCancellation,
   type SubmittedOrder,
 } from "./ordersLogic";
 
 const LOAD_ERROR = "Não foi possível carregar esta tela agora. Tente novamente.";
 const CATALOG_ERROR = "Não foi possível carregar o catálogo agora. Tente novamente.";
 const ORDERS_ERROR = "Não foi possível carregar os pedidos agora. Tente novamente.";
+const CANCEL_ERROR = "Não foi possível cancelar o item agora. Tente novamente.";
 const SUBMIT_ERROR = "Não foi possível enviar o pedido agora. Tente novamente.";
 const SESSION_NOT_FOUND = "Este atendimento não foi encontrado.";
 
@@ -43,6 +45,9 @@ export interface OrdersSource {
   // Só o essencial sai da cesta (ver toSubmitPayload): product_id, quantity, notes. Preço, nome,
   // setor e origem são sempre determinados pelo servidor (submit_service_order).
   submitOrder(sessionId: string, cart: CartItem[]): Promise<{ error: string | null }>;
+  // Cancela quantidade de um item de conta ABERTA (nunca apaga; evento auditável). O servidor valida
+  // papel, quantidade e se o item já entrou em produção.
+  cancelItem(itemId: string, quantity: number, reason: string): Promise<{ error: string | null }>;
   // Avisa (sem payload de dados) que um pedido daquela sessão mudou; a tela recarrega do banco.
   // Dois caminhos: Broadcast (rápido, enviado pelo próprio app depois do submit) e
   // postgres_changes (fallback). Devolve o cancelamento das assinaturas. Falha do Realtime é
@@ -198,7 +203,7 @@ export const supabaseOrdersSource: OrdersSource = {
       .from("service_orders")
       .select(
         "id, origin, status, submitted_at, created_by, " +
-          "items:service_order_items(id, product_id, product_name_snapshot, quantity, unit_price, notes, production_status, sector:production_sectors(name))",
+          "items:service_order_items(id, product_id, product_name_snapshot, quantity, unit_price, notes, production_status, cancelled_quantity, sector:production_sectors(name))",
       )
       .eq("service_session_id", sessionId)
       .order("submitted_at", { ascending: false });
@@ -215,6 +220,7 @@ export const supabaseOrdersSource: OrdersSource = {
       unit_price: number;
       notes: string | null;
       production_status: SubmittedOrder["items"][number]["productionStatus"];
+      cancelled_quantity: number;
       sector: { name: string } | { name: string }[] | null;
     };
     type RawOrder = {
@@ -226,7 +232,29 @@ export const supabaseOrdersSource: OrdersSource = {
       items: RawItem[];
     };
     const rows = (data ?? []) as unknown as RawOrder[];
-    const names = await loadProfileNames(rows.map((r) => r.created_by));
+    // Eventos de cancelamento dos itens carregados (uma consulta; só itens com algo cancelado).
+    const cancelledIds = rows.flatMap((r) => r.items.filter((i) => i.cancelled_quantity > 0).map((i) => i.id));
+    type RawCancellation = { id: string; service_order_item_id: string; quantity: number; reason: string; created_at: string; cancelled_by: string };
+    let rawCancellations: RawCancellation[] = [];
+    if (cancelledIds.length > 0) {
+      const { data: cancelData, error: cancelError } = await supabase
+        .from("service_order_item_cancellations")
+        .select("id, service_order_item_id, quantity, reason, created_at, cancelled_by")
+        .in("service_order_item_id", cancelledIds)
+        .order("created_at", { ascending: true });
+      if (cancelError) {
+        console.error("Falha ao carregar os cancelamentos:", cancelError.code);
+        return { data: null, error: ORDERS_ERROR };
+      }
+      rawCancellations = (cancelData ?? []) as RawCancellation[];
+    }
+    const names = await loadProfileNames([...rows.map((r) => r.created_by), ...rawCancellations.map((c) => c.cancelled_by)]);
+    const cancellationsByItem = new Map<string, ItemCancellation[]>();
+    for (const c of rawCancellations) {
+      const list = cancellationsByItem.get(c.service_order_item_id) ?? [];
+      list.push({ id: c.id, quantity: c.quantity, reason: c.reason, createdAt: c.created_at, cancelledByName: names.get(c.cancelled_by) ?? null });
+      cancellationsByItem.set(c.service_order_item_id, list);
+    }
 
     const orders: SubmittedOrder[] = rows.map((row) => ({
       id: row.id,
@@ -243,9 +271,24 @@ export const supabaseOrdersSource: OrdersSource = {
         notes: item.notes,
         sectorName: one(item.sector)?.name ?? null,
         productionStatus: item.production_status,
+        cancelledQuantity: item.cancelled_quantity,
+        cancellations: cancellationsByItem.get(item.id) ?? [],
       })),
     }));
     return { data: orders, error: null };
+  },
+
+  async cancelItem(itemId, quantity, reason) {
+    const { error } = await supabase.rpc("cancel_service_order_item", {
+      p_item_id: itemId,
+      p_quantity: quantity,
+      p_reason: reason,
+    });
+    if (error) {
+      console.error("Falha ao cancelar o item:", error.code);
+      return { error: describeOrderError(error, CANCEL_ERROR) };
+    }
+    return { error: null };
   },
 
   async submitOrder(sessionId, cart) {

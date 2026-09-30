@@ -154,6 +154,50 @@ export function actionsFor(status: ProductionStatus): Array<{ to: "preparing" | 
   return [];
 }
 
+// Cancelamento recente informado pela fila (evento do banco): o KDS avisa a cozinha.
+export interface QueueCancellation {
+  id: string;
+  quantity: number;
+  name: string;
+  pointType: "command" | "table";
+  pointCode: string;
+  reason: string;
+  createdAt: string;
+}
+
+export interface RawQueueCancellation {
+  id: string;
+  quantity: number;
+  name: string;
+  point_type: "command" | "table";
+  point_code: string;
+  reason: string;
+  created_at: string;
+}
+
+export function toQueueCancellation(raw: RawQueueCancellation): QueueCancellation {
+  return {
+    id: raw.id,
+    quantity: raw.quantity,
+    name: raw.name,
+    pointType: raw.point_type,
+    pointCode: raw.point_code,
+    reason: raw.reason,
+    createdAt: raw.created_at,
+  };
+}
+
+// Eventos que a tela ainda não conhecia. Na PRIMEIRA carga (seen === null) nada é novo: só avisa o
+// que acontece com a tela aberta, não o que já estava cancelado antes de abrir.
+export function newCancellations(events: QueueCancellation[], seen: Set<string> | null): QueueCancellation[] {
+  if (seen === null) return [];
+  return events.filter((e) => !seen.has(e.id));
+}
+
+export function cancellationText(c: QueueCancellation): string {
+  return `Item cancelado — ${c.quantity}x ${c.name} — ${c.pointType === "table" ? "Mesa" : "Comanda"} ${c.pointCode}`;
+}
+
 export function pointLabel(group: Pick<OrderGroup, "pointType" | "pointCode">): string {
   return `${group.pointType === "table" ? "Mesa" : "Comanda"} ${group.pointCode}`;
 }
