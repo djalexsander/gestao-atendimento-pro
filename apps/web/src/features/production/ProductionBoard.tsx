@@ -395,7 +395,7 @@ function HistoryView({
                         </div>
                         {item.notes && <p className="kds-notes">Obs.: {item.notes}</p>}
                         <p className="kds-card-meta">
-                          Pronto às {hhmm(item.readyAt)} · Tempo de produção: {formatDuration(item.minutes)}
+                          Pronto às {hhmm(item.readyAt)} · Tempo de produção: {item.minutes === null ? "—" : formatDuration(item.minutes)}
                         </p>
                       </li>
                     ))}

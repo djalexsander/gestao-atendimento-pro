@@ -248,7 +248,9 @@ export interface HistoryItem {
   sectorName: string | null;
   submittedAt: string;
   readyAt: string;
-  minutes: number; // pedido -> pronto
+  // Tempo real de preparo (início -> pronto). null quando o preparo não foi iniciado explicitamente
+  // (item foi direto de pendente para pronto): o servidor não inventa duração.
+  minutes: number | null;
   pointType: "command" | "table";
   pointCode: string;
   customerName: string | null;
@@ -263,7 +265,7 @@ export interface RawHistoryItem {
   sector_name: string | null;
   submitted_at: string;
   ready_at: string;
-  minutes: number;
+  minutes: number | null;
   point_type: "command" | "table";
   point_code: string;
   customer_name: string | null;

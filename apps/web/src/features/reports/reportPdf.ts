@@ -70,7 +70,7 @@ export async function buildReportPdf(data: ReportData, companyName: string): Pro
     "Resumo de vendas",
     ["Indicador", "Valor"],
     [
-      ["Total bruto vendido", brl(s.gross)],
+      ["Total vendido", brl(s.gross)],
       ["Total estornado (no período)", brl(s.refunded)],
       ["Total líquido", brl(s.net)],
       ["Contas fechadas", String(s.sessions)],

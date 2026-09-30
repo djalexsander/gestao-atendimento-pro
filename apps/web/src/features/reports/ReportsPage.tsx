@@ -183,7 +183,7 @@ export function ReportsPage({ source = supabaseReportsSource }: { source?: Repor
       {data && (
         <>
           <dl className="cash-summary report-cards">
-            <Card label="Total bruto vendido" value={f(data.sales.gross)} strong />
+            <Card label="Total vendido" value={f(data.sales.gross)} strong />
             <Card label="Estornado" value={f(data.sales.refunded)} />
             <Card label="Líquido" value={f(data.sales.net)} strong />
             <Card label="Contas fechadas" value={String(data.sales.sessions)} />
