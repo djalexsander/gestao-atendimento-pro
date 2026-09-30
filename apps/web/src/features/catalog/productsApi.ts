@@ -66,6 +66,7 @@ export interface ProductsAdminSource {
 // categoria e setor efetivo (ver effectiveSector em productsLogic.ts).
 const PRODUCT_COLUMNS =
   "id, category_id, name, description, code, barcode, sale_price, production_sector_id, image_path, is_active, created_at, updated_at, " +
+  "stock_control, stock_quantity, minimum_stock_quantity, available_for_sale, " +
   "category:product_categories(id, name, is_active, default_sector:production_sectors(id, name, is_active)), " +
   "sector:production_sectors(id, name, is_active)";
 

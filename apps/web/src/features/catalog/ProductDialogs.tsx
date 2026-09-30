@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { BarcodeField } from "../../components/BarcodeField";
+import { ProductStockPanel } from "../stock/ProductStockPanel";
 import { Modal } from "../employees/Modal";
 import type { AdminCategory } from "./categoriesLogic";
 import { ProductImageError, processProductImage, type ProcessedImage } from "./productImage";
@@ -507,8 +508,10 @@ export function EditProductDialog({
   onUploadImage,
   onRemoveImage,
   onGenerateEan,
+  onStockChanged,
   onClose,
 }: {
+  onStockChanged?: () => void;
   product: AdminProduct;
   categories: AdminCategory[];
   sectors: AdminSector[];
@@ -617,6 +620,17 @@ export function EditProductDialog({
           }
         />
         <ErrorBox message={genError} />
+        <ProductStockPanel
+          productId={product.id}
+          productName={product.name}
+          initial={{
+            stock_control: product.stock_control,
+            stock_quantity: product.stock_quantity,
+            minimum_stock_quantity: product.minimum_stock_quantity,
+            available_for_sale: product.available_for_sale,
+          }}
+          onChanged={onStockChanged}
+        />
         <Actions submitting={submitting} submitLabel="Salvar" submittingLabel="Salvando…" onClose={onClose} />
       </form>
       {confirmingRegenerate && (

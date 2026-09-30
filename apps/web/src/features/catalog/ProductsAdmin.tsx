@@ -45,6 +45,21 @@ function SectorInfo({ product }: { product: AdminProduct }) {
   );
 }
 
+// Disponibilidade manual e estoque controlado (só badges; a edição fica na seção Estoque do produto).
+function StockBadges({ product }: { product: AdminProduct }) {
+  return (
+    <>
+      {!product.available_for_sale && <span className="status-badge status-inactive"> Indisponível</span>}
+      {product.stock_control === "quantity" && (
+        <span className={`status-badge ${product.stock_quantity <= 0 ? "stock-out" : product.stock_quantity <= product.minimum_stock_quantity ? "stock-low" : "stock-normal"}`}>
+          {" "}
+          Estoque: {product.stock_quantity}
+        </span>
+      )}
+    </>
+  );
+}
+
 function StatusBadge({ active }: { active: boolean }) {
   return <span className={`status-badge ${active ? "status-active" : "status-inactive"}`}>{active ? "Ativo" : "Inativo"}</span>;
 }
@@ -237,6 +252,7 @@ export function ProductsAdmin({ source = supabaseProductsAdminSource }: { source
                   </td>
                   <td>
                     <StatusBadge active={product.is_active} />
+                    <StockBadges product={product} />
                   </td>
                   <td>
                     <RowActions
@@ -260,6 +276,7 @@ export function ProductsAdmin({ source = supabaseProductsAdminSource }: { source
                   <div className="product-card-name">{product.name}</div>
                   <div className="product-card-price">{formatReais(product.sale_price)}</div>
                   <StatusBadge active={product.is_active} />
+                    <StockBadges product={product} />
                 </div>
               </div>
               <dl className="product-card-details">
@@ -368,6 +385,7 @@ export function ProductsAdmin({ source = supabaseProductsAdminSource }: { source
           onUploadImage={(blob) => handleUploadImage(dialog.product.id, blob)}
           onRemoveImage={() => handleRemoveImage(dialog.product.id)}
           onGenerateEan={(regenerate) => handleGenerateEan(dialog.product.id, regenerate)}
+          onStockChanged={() => void reload()}
           onClose={() => setDialog(null)}
         />
       )}

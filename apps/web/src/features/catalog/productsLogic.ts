@@ -33,6 +33,11 @@ export interface AdminProduct {
   is_active: boolean;
   created_at: string;
   updated_at: string;
+  // Estoque simples e disponibilidade manual (só RPCs alteram; ver features/stock).
+  stock_control: "none" | "quantity";
+  stock_quantity: number;
+  minimum_stock_quantity: number;
+  available_for_sale: boolean;
   // Joins do Supabase (ver PRODUCT_COLUMNS em productsApi.ts).
   category: AdminProductCategory | null;
   sector: AdminProductSector | null;
