@@ -28,6 +28,7 @@ import { ModulePlaceholderPage } from "./pages/ModulePlaceholderPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
 import {
   OperationalCashierOrderPage,
+  OperationalProductionPage,
   OperationalCashierPage,
   OperationalServiceOrderPage,
   OperationalServicePage,
@@ -101,6 +102,14 @@ function App() {
         }
       />
       <Route
+        path="/operacional/producao"
+        element={
+          <OperationalRoute area="producao">
+            <OperationalProductionPage />
+          </OperationalRoute>
+        }
+      />
+      <Route
         path="/operacional/caixa"
         element={
           <OperationalRoute area="caixa">
@@ -148,7 +157,6 @@ function App() {
 
         <Route path="operacional/comandas-abertas" element={<ModulePlaceholderPage title="Comandas / Mesas abertas" />} />
         <Route path="operacional/pedidos" element={<ModulePlaceholderPage title="Pedidos" />} />
-        <Route path="operacional/producao" element={<ModulePlaceholderPage title="Produção" />} />
         <Route path="operacional/caixa" element={<ModulePlaceholderPage title="Caixa / Balcão" />} />
 
         <Route path="configuracoes/impressoras" element={<ModulePlaceholderPage title="Impressoras" />} />

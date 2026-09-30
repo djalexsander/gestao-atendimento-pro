@@ -2,6 +2,12 @@ import { formatOpenedFull } from "../operations/panel";
 import { formatReais } from "../../lib/money";
 import { sessionTotal, sortOrdersByRecent, type SubmittedOrder } from "./ordersLogic";
 
+const PRODUCTION_LABEL: Record<SubmittedOrder["items"][number]["productionStatus"], string> = {
+  pending: "Pendente",
+  preparing: "Em preparo",
+  ready: "Pronto",
+};
+
 const ORIGIN_LABEL: Record<SubmittedOrder["origin"], string> = {
   attendant: "Atendimento",
   cashier: "Caixa",
@@ -40,6 +46,11 @@ export function OrderHistory({ orders }: { orders: SubmittedOrder[] }) {
                   <span className="order-history-item-line">
                     {item.quantity}× {item.productNameSnapshot}
                     {item.sectorName && <span className="muted"> · {item.sectorName}</span>}
+                    {order.status !== "cancelled" && (
+                      <span className={`production-badge production-${item.productionStatus}`}>
+                        {PRODUCTION_LABEL[item.productionStatus]}
+                      </span>
+                    )}
                     <span className="order-history-item-price">{formatReais(item.unitPrice * item.quantity)}</span>
                   </span>
                   {item.notes && <span className="order-history-item-notes">Obs.: {item.notes}</span>}

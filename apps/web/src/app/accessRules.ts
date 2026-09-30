@@ -5,7 +5,7 @@ import type { CompanyRole } from "../lib/types";
 // guards em routeGuards.tsx só as aplicam. A proteção dos DADOS é do backend (RLS); estas
 // regras só decidem para onde a tela vai.
 
-export type OperationalArea = "atendimento" | "caixa";
+export type OperationalArea = "atendimento" | "caixa" | "producao";
 
 export type GuardedRoute =
   | "guest" // /login, /cadastro, /funcionario: só para quem NÃO tem sessão
@@ -13,11 +13,12 @@ export type GuardedRoute =
   | "onboarding" // /onboarding: só para conta normal que ainda não tem empresa
   | "disabled" // /acesso-desativado
   | "app" // /app/*: Administrativo (owner/admin)
-  | OperationalArea; // /operacional/atendimento, /operacional/caixa
+  | OperationalArea; // /operacional/atendimento, /operacional/caixa, /operacional/producao
 
 export const OPERATIONAL_PATH: Record<OperationalArea, string> = {
   atendimento: "/operacional/atendimento",
   caixa: "/operacional/caixa",
+  producao: "/operacional/producao",
 };
 export const DISABLED_ACCESS_PATH = "/acesso-desativado";
 export const EMPLOYEE_LOGIN_PATH = "/funcionario";
@@ -31,6 +32,7 @@ export const ONBOARDING_PATH = "/onboarding";
 const ROLE_AREA: Partial<Record<CompanyRole, OperationalArea>> = {
   attendant: "atendimento",
   cashier: "caixa",
+  production: "producao",
 };
 
 export function operationalAreaOf(role: CompanyRole): OperationalArea | null {
@@ -43,6 +45,8 @@ export function operationalAreaOf(role: CompanyRole): OperationalArea | null {
 const AREA_ROLES: Record<OperationalArea, readonly CompanyRole[]> = {
   atendimento: ["attendant"],
   caixa: ["cashier", "owner", "admin"],
+  // Produção / Cozinha (KDS): o papel production e, pelo menu Operacional do Administrativo, owner/admin.
+  producao: ["production", "owner", "admin"],
 };
 
 export function canOpenOperationalArea(role: CompanyRole, area: OperationalArea): boolean {
@@ -84,7 +88,7 @@ export function landingPath(s: AuthSnapshot): string {
 // Quem chega sem sessão numa rota operacional (ou na tela de acesso desativado) volta para
 // o login do funcionário; nas demais, para o login de proprietário/administrador.
 function signedOutPath(route: GuardedRoute): string {
-  return route === "atendimento" || route === "caixa" || route === "disabled"
+  return route === "atendimento" || route === "caixa" || route === "producao" || route === "disabled"
     ? EMPLOYEE_LOGIN_PATH
     : ADMIN_LOGIN_PATH;
 }
@@ -110,6 +114,7 @@ export function decide(route: GuardedRoute, s: AuthSnapshot): Decision {
       return s.role === "owner" || s.role === "admin" ? RENDER : redirect(landing);
     case "atendimento":
     case "caixa":
+    case "producao":
       return s.role !== null && canOpenOperationalArea(s.role, route) ? RENDER : redirect(landing);
   }
 }

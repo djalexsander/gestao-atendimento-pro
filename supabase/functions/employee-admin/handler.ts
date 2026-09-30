@@ -85,7 +85,7 @@ const GENERIC_ERROR = "Não foi possível concluir a operação agora. Tente nov
 const BAN_DURATION = "876000h";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const CREATABLE_ROLES = ["admin", "cashier", "attendant"];
+const CREATABLE_ROLES = ["admin", "cashier", "attendant", "production"];
 
 // Credencial = PIN OU senha, um campo só. Só dígitos = PIN, que tem de ter EXATAMENTE
 // 6. Qualquer outra coisa é senha, com a política que o Auth aceita hoje: mínimo de 6

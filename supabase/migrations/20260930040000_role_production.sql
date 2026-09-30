@@ -1,0 +1,12 @@
+-- Papel de funcionário PRODUÇÃO (cozinha/bar/churrasqueira): acrescenta 'production' ao enum
+-- company_role.
+--
+-- ADD VALUE: o valor novo só pode ser USADO depois do commit da transação que o criou (regra do
+-- PostgreSQL), por isso esta migration só o cria. A matriz de gestão (can_manage_company_user) e
+-- a RPC de produção que o usam vêm na migration seguinte (20260930050000_production_workflow.sql),
+-- como já foi feito com 'cashier' (20260925010000).
+--
+-- Não altera nenhuma linha. Nenhuma policy/função existente lista 'production': quem tem esse
+-- papel continua SEM acesso a pedidos (submit_service_order), atendimentos (open_service_session),
+-- caixa e financeiro, que listam explicitamente owner/admin/cashier/attendant.
+alter type public.company_role add value if not exists 'production';

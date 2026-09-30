@@ -22,6 +22,7 @@ const ROLE_LABEL: Record<string, string> = {
   admin: "Administrador",
   cashier: "Caixa / Balcão",
   attendant: "Atendente",
+  production: "Produção",
 };
 const cell = { padding: "8px 4px" } as const;
 

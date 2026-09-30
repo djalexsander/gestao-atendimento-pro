@@ -6,7 +6,7 @@ import type { CompanyMember, CompanyRole } from "../../lib/types";
 export type EmployeeRole = Exclude<CompanyRole, "owner">;
 
 const FALLBACK_ERROR = "Não foi possível concluir a operação agora. Tente novamente em instantes.";
-const ROLE_RANK: Record<CompanyRole, number> = { owner: 0, admin: 1, cashier: 2, attendant: 3 };
+const ROLE_RANK: Record<CompanyRole, number> = { owner: 0, admin: 1, cashier: 2, attendant: 3, production: 4 };
 
 // company_users e profiles não têm FK direta entre si (ambas referenciam auth.users),
 // então o PostgREST não monta o embed: duas consultas, juntadas no cliente. O e-mail do

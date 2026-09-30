@@ -10,6 +10,7 @@ const ROLE_LABEL: Record<string, string> = {
   admin: "Administrador",
   cashier: "Caixa / Balcão",
   attendant: "Atendente",
+  production: "Produção",
 };
 
 // Administrativo (owner/admin — a rota /app já garante isso, ver accessRules.ts): sidebar fixa

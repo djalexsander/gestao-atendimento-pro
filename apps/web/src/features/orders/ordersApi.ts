@@ -198,7 +198,7 @@ export const supabaseOrdersSource: OrdersSource = {
       .from("service_orders")
       .select(
         "id, origin, status, submitted_at, created_by, " +
-          "items:service_order_items(id, product_id, product_name_snapshot, quantity, unit_price, notes, sector:production_sectors(name))",
+          "items:service_order_items(id, product_id, product_name_snapshot, quantity, unit_price, notes, production_status, sector:production_sectors(name))",
       )
       .eq("service_session_id", sessionId)
       .order("submitted_at", { ascending: false });
@@ -214,6 +214,7 @@ export const supabaseOrdersSource: OrdersSource = {
       quantity: number;
       unit_price: number;
       notes: string | null;
+      production_status: SubmittedOrder["items"][number]["productionStatus"];
       sector: { name: string } | { name: string }[] | null;
     };
     type RawOrder = {
@@ -241,6 +242,7 @@ export const supabaseOrdersSource: OrdersSource = {
         unitPrice: Number(item.unit_price),
         notes: item.notes,
         sectorName: one(item.sector)?.name ?? null,
+        productionStatus: item.production_status,
       })),
     }));
     return { data: orders, error: null };

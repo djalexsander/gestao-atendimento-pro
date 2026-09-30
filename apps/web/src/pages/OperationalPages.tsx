@@ -8,6 +8,8 @@ import { Modal } from "../features/employees/Modal";
 import { ROLE_LABEL } from "../features/employees/roles";
 import type { ServicePanelSource } from "../features/operations/api";
 import { ServicePointsPanel } from "../features/operations/ServicePointsPanel";
+import { ProductionBoard } from "../features/production/ProductionBoard";
+import type { ProductionSource } from "../features/production/productionApi";
 import { SessionOrderScreen } from "../features/orders/SessionOrderScreen";
 import type { OrdersSource } from "../features/orders/ordersApi";
 
@@ -123,6 +125,15 @@ export function OperationalServicePage({ source }: { source?: ServicePanelSource
   return (
     <OperationalShell title="Área de Atendimento">
       <ServicePointsPanel variant="attendant" source={source} />
+    </OperationalShell>
+  );
+}
+
+// Produção / Cozinha (KDS): pendentes, em preparo e prontos por setor, em tempo real.
+export function OperationalProductionPage({ source }: { source?: ProductionSource }) {
+  return (
+    <OperationalShell title="Produção">
+      <ProductionBoard source={source} />
     </OperationalShell>
   );
 }

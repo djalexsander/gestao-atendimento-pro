@@ -1985,3 +1985,159 @@ button {
     max-width: none;
   }
 }
+
+/* Produção / Cozinha (KDS) */
+.kds-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 16px;
+}
+.kds-sectors {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.kds-sectors-label,
+.kds-count {
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.kds-board {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+.kds-column {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.kds-column-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 12px;
+  font-size: 15px;
+}
+.kds-column-count {
+  min-width: 24px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--border);
+  font-size: 13px;
+  text-align: center;
+}
+.kds-list,
+.kds-items {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.kds-empty {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+.kds-card {
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-left-width: 5px;
+  border-radius: 8px;
+  background: var(--bg, var(--surface));
+}
+.kds-attention {
+  border-left-color: #b7791f;
+}
+.kds-late {
+  border-left-color: var(--danger);
+}
+.kds-card-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+.kds-card-title {
+  font-size: 18px;
+}
+.kds-age {
+  font-size: 13px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+.kds-attention .kds-age {
+  color: #b7791f;
+}
+.kds-late .kds-age {
+  color: var(--danger);
+}
+.kds-card-meta {
+  margin: 2px 0 8px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+.kds-item {
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+.kds-item-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+  font-size: 17px;
+}
+.kds-qty {
+  font-weight: 700;
+}
+.kds-sector {
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--border);
+  font-size: 12px;
+}
+.kds-notes {
+  margin: 4px 0 0;
+  padding: 4px 8px;
+  border-radius: 6px;
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-weight: 700;
+  font-size: 15px;
+}
+.kds-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 8px;
+}
+.kds-btn {
+  flex: 1 1 130px;
+  min-height: 44px;
+  font-size: 15px;
+}
+.production-badge {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--border);
+  font-size: 12px;
+}
+.production-ready {
+  color: var(--success);
+  background: var(--success-bg);
+}
+@media (max-width: 640px) {
+  .kds-board {
+    grid-template-columns: 1fr;
+  }
+}

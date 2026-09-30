@@ -6,16 +6,18 @@ export const ROLE_LABEL: Record<CompanyRole, string> = {
   admin: "Administrador",
   cashier: "Caixa / Balcão",
   attendant: "Atendente",
+  production: "Produção",
 };
 
 // Funções que cada papel pode cadastrar e gerenciar. É só um espelho para decidir o que a
 // tela MOSTRA (botões e opções); a autoridade é o banco (can_manage_company_user), que
 // reavalia tudo a cada pedido.
 const ASSIGNABLE_ROLES: Record<CompanyRole, EmployeeRole[]> = {
-  owner: ["admin", "cashier", "attendant"],
-  admin: ["cashier", "attendant"],
+  owner: ["admin", "cashier", "attendant", "production"],
+  admin: ["cashier", "attendant", "production"],
   cashier: [],
   attendant: [],
+  production: [],
 };
 
 export function assignableRoles(viewerRole: CompanyRole | null): EmployeeRole[] {

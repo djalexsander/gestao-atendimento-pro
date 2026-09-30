@@ -41,6 +41,8 @@ export interface SubmittedOrderItem {
   unitPrice: number;
   notes: string | null;
   sectorName: string | null;
+  // Estado de produção do item (somente leitura aqui; quem altera é a tela de Produção).
+  productionStatus: "pending" | "preparing" | "ready";
 }
 
 export type OrderOrigin = "attendant" | "cashier" | "whatsapp";
