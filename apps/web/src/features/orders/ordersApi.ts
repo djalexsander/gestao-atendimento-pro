@@ -152,7 +152,7 @@ export const supabaseOrdersSource: OrdersSource = {
         .order("name"),
       supabase
         .from("products")
-        .select("id, category_id, name, description, code, barcode, sale_price, image_path")
+        .select("id, category_id, name, description, code, barcode, sale_price, image_path, available_for_sale, stock_control, stock_quantity, minimum_stock_quantity")
         .eq("company_id", companyId)
         .eq("is_active", true)
         .order("name"),
@@ -178,6 +178,10 @@ export const supabaseOrdersSource: OrdersSource = {
         barcode: p.barcode,
         salePrice: Number(p.sale_price),
         imagePath: p.image_path,
+        availableForSale: p.available_for_sale,
+        stockControl: p.stock_control,
+        stockQuantity: p.stock_quantity,
+        minimumStockQuantity: p.minimum_stock_quantity,
       })) as CatalogProduct[];
 
     return { data: { categories, products }, error: null };

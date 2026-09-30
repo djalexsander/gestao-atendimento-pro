@@ -35,6 +35,8 @@ import {
 } from "./pages/OperationalPages";
 import { ProductCategoriesPage } from "./pages/ProductCategoriesPage";
 import { ProductionSectorsPage } from "./pages/ProductionSectorsPage";
+import { ReportsRoutePage } from "./pages/ReportsRoutePage";
+import { StockPage } from "./pages/StockPage";
 import { ProductsPage } from "./pages/ProductsPage";
 import { ServiceModeSettingsPage } from "./pages/ServiceModeSettingsPage";
 import { ServicePointsAdminPage } from "./pages/ServicePointsAdminPage";
@@ -148,11 +150,12 @@ function App() {
         <Route path="financeiro/caixa" element={<CashAdmin />} />
         <Route path="financeiro/contas-a-receber" element={<ModulePlaceholderPage title="Contas a receber" />} />
         <Route path="financeiro/contas-a-pagar" element={<ModulePlaceholderPage title="Contas a pagar" />} />
-        <Route path="financeiro/relatorios" element={<ModulePlaceholderPage title="Relatórios financeiros" />} />
+        <Route path="financeiro/relatorios" element={<ReportsRoutePage />} />
 
         <Route path="cadastros/produtos" element={<ProductsPage />} />
         <Route path="cadastros/categorias" element={<ProductCategoriesPage />} />
         <Route path="cadastros/setores" element={<ProductionSectorsPage />} />
+        <Route path="cadastros/estoque" element={<StockPage />} />
         <Route path="cadastros/clientes" element={<ModulePlaceholderPage title="Clientes" />} />
 
         <Route path="operacional/comandas-abertas" element={<ModulePlaceholderPage title="Comandas / Mesas abertas" />} />

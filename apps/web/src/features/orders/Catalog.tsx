@@ -1,6 +1,6 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { formatReais } from "../../lib/money";
-import { filterCatalog, resolveBarcodeMatch, type CatalogCategory, type CatalogProduct } from "./ordersLogic";
+import { filterCatalog, lowStockNote, resolveBarcodeMatch, unavailableReason, type CatalogCategory, type CatalogProduct } from "./ordersLogic";
 
 function ProductPhoto({ url }: { url: string | null }) {
   return url ? (
@@ -40,6 +40,10 @@ export function Catalog({
       setScanMessage(`Nenhum produto encontrado para "${query.trim()}".`);
       return;
     }
+    if (unavailableReason(match)) {
+      setScanMessage(`${match.name}: ${unavailableReason(match) === "out" ? "sem estoque" : "este produto está indisponível para venda"}.`);
+      return;
+    }
     onAdd(match);
     setQuery("");
     setScanMessage(null);
@@ -53,12 +57,16 @@ export function Catalog({
   } else {
     body = (
       <ul className="catalog-grid" role="list">
-        {shown.map((product) => (
+        {shown.map((product) => {
+          const blocked = unavailableReason(product);
+          const low = lowStockNote(product);
+          return (
           <li key={product.id}>
             <button
               type="button"
-              className="catalog-card"
-              aria-label={`Adicionar ${product.name}, ${formatReais(product.salePrice)}, à cesta`}
+              className={`catalog-card${blocked ? " catalog-card-unavailable" : ""}`}
+              aria-label={blocked ? `${product.name}: ${blocked === "out" ? "sem estoque" : "indisponível"}` : `Adicionar ${product.name}, ${formatReais(product.salePrice)}, à cesta`}
+              disabled={blocked !== null}
               onClick={() => onAdd(product)}
             >
               <ProductPhoto url={product.imagePath ? (imageUrls.get(product.imagePath) ?? null) : null} />
@@ -66,10 +74,13 @@ export function Catalog({
                 <span className="catalog-card-name">{product.name}</span>
                 {product.description && <span className="catalog-card-desc">{product.description}</span>}
                 <span className="catalog-card-price">{formatReais(product.salePrice)}</span>
+                {blocked && <span className="status-badge status-inactive">{blocked === "out" ? "Sem estoque" : "Indisponível"}</span>}
+                {!blocked && low && <span className="status-badge stock-low">{low}</span>}
               </span>
             </button>
           </li>
-        ))}
+          );
+        })}
       </ul>
     );
   }

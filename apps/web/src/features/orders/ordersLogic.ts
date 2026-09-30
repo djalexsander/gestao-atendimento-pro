@@ -20,6 +20,25 @@ export interface CatalogProduct {
   barcode: string | null;
   salePrice: number;
   imagePath: string | null;
+  // Disponibilidade manual e estoque controlado (o servidor é a autoridade no envio do pedido).
+  availableForSale: boolean;
+  stockControl: "none" | "quantity";
+  stockQuantity: number;
+  minimumStockQuantity: number;
+}
+
+// Por que um produto não pode ser lançado agora (null = pode). Só UX: submit_service_order confere.
+export function unavailableReason(product: Pick<CatalogProduct, "availableForSale" | "stockControl" | "stockQuantity">): "unavailable" | "out" | null {
+  if (!product.availableForSale) return "unavailable";
+  if (product.stockControl === "quantity" && product.stockQuantity <= 0) return "out";
+  return null;
+}
+
+// "Restam N" só para produto controlado com estoque baixo (no mínimo ou abaixo, e ainda > 0).
+export function lowStockNote(product: Pick<CatalogProduct, "stockControl" | "stockQuantity" | "minimumStockQuantity">): string | null {
+  if (product.stockControl !== "quantity") return null;
+  if (product.stockQuantity > 0 && product.stockQuantity <= product.minimumStockQuantity) return `Restam ${product.stockQuantity}`;
+  return null;
 }
 
 // Item da cesta LOCAL (frontend-only; nunca persistida como draft no banco). `price` é só

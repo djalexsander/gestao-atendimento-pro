@@ -13,6 +13,9 @@ const ROLE_LABEL: Record<string, string> = {
   production: "Produção",
 };
 
+// Páginas com tabelas/listas que pedem a largura maior (demais seguem em 720px).
+const WIDE_PATHS = ["/app/financeiro/caixa", "/app/cadastros/estoque", "/app/financeiro/relatorios"];
+
 // Administrativo (owner/admin — a rota /app já garante isso, ver accessRules.ts): sidebar fixa
 // à esquerda no desktop/tablet, vira drawer no mobile. Identidade/papel/sair ficam num topo
 // simples do CONTEÚDO (não na sidebar, que é só navegação + marca/empresa).
@@ -20,7 +23,7 @@ export function AppLayout() {
   const { user, profile, activeMembership, isMasterAdmin, signOut } = useAuth();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   // Só o Financeiro > Caixa (histórico com tabela) usa a largura maior; as demais páginas seguem em 720px.
-  const isWidePage = useLocation().pathname.replace(/\/+$/, "") === "/app/financeiro/caixa";
+  const isWidePage = WIDE_PATHS.includes(useLocation().pathname.replace(/\/+$/, ""));
   // Conta de funcionário: mostra o nome, nunca o e-mail técnico do Auth.
   const identity = isManagedAccount(user) ? (profile?.full_name ?? null) : (user?.email ?? null);
 

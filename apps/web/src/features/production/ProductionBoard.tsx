@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../../app/useAuth";
+import { AvailabilityList } from "../stock/AvailabilityList";
 import { createCoalescedRunner } from "../orders/coalesce";
 import {
   supabaseProductionSource,
@@ -418,7 +419,7 @@ export function ProductionBoard({ source = supabaseProductionSource }: { source?
   const { activeMembership } = useAuth();
   const companyId = activeMembership?.companyId ?? null;
 
-  const [tab, setTab] = useState<"queue" | "history">("queue");
+  const [tab, setTab] = useState<"queue" | "history" | "availability">("queue");
   const [sectors, setSectors] = useState<ProductionSector[] | null>(null);
   const [sectorId, setSectorId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -470,8 +471,12 @@ export function ProductionBoard({ source = supabaseProductionSource }: { source?
         <button role="tab" type="button" aria-selected={tab === "history"} className={tab === "history" ? "tab tab-active" : "tab"} onClick={() => setTab("history")}>
           Histórico
         </button>
+        <button role="tab" type="button" aria-selected={tab === "availability"} className={tab === "availability" ? "tab tab-active" : "tab"} onClick={() => setTab("availability")}>
+          Disponibilidade
+        </button>
       </div>
 
+      {tab !== "availability" && (
       <div className="kds-toolbar">
         <div className="kds-sectors" role="group" aria-label="Setor">
           <span className="kds-sectors-label">Setor</span>
@@ -485,13 +490,12 @@ export function ProductionBoard({ source = supabaseProductionSource }: { source?
           ))}
         </div>
       </div>
+      )}
       {error && <div className="form-error">{error}</div>}
 
-      {tab === "queue" ? (
-        <QueueView companyId={companyId} sectorId={sectorId} source={source} />
-      ) : (
-        <HistoryView companyId={companyId} sectorId={sectorId} source={source} today={today} />
-      )}
+      {tab === "queue" && <QueueView companyId={companyId} sectorId={sectorId} source={source} />}
+      {tab === "history" && <HistoryView companyId={companyId} sectorId={sectorId} source={source} today={today} />}
+      {tab === "availability" && <AvailabilityList />}
     </div>
   );
 }
