@@ -40,7 +40,8 @@ export function parseDraftCents(text: string): number | null {
   return reais === null ? null : toCents(reais);
 }
 
-// Valor aplicado da linha (centavos); 0 se vazio/ inválido.
+// Valor do pagamento da linha (centavos) = o que ABATE a conta (amount); 0 se vazio/inválido.
+// O valor entregue pelo cliente (dinheiro) nunca entra aqui: só define o troco.
 export function draftAppliedCents(draft: PaymentDraft): number {
   return parseDraftCents(draft.amount) ?? 0;
 }
@@ -68,8 +69,8 @@ export function draftProblem(draft: PaymentDraft): string | null {
   if (applied === null || applied <= 0) return "Informe um valor maior que zero.";
   if (draft.method === "cash" && draft.received.trim() !== "") {
     const received = parseDraftCents(draft.received);
-    if (received === null) return "Valor recebido inválido.";
-    if (received < applied) return "O valor recebido deve ser igual ou maior que o valor aplicado.";
+    if (received === null) return "Valor entregue inválido.";
+    if (received < applied) return "O valor entregue pelo cliente deve ser igual ou maior que o valor pago em dinheiro.";
   }
   return null;
 }

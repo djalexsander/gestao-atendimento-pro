@@ -441,8 +441,9 @@ export function CheckoutDialog({
             const problem = draft.amount.trim() === "" && draft.received.trim() === "" ? null : draftProblem(draft);
             return (
               <li key={draft.key} className="checkout-payment">
+                <h4 className="checkout-payment-title">Forma de pagamento {index + 1}</h4>
                 <div className="field">
-                  <label htmlFor={`method-${draft.key}`}>Forma de pagamento {drafts.length > 1 ? index + 1 : ""}</label>
+                  <label htmlFor={`method-${draft.key}`}>Forma</label>
                   <select
                     id={`method-${draft.key}`}
                     value={draft.method}
@@ -456,7 +457,7 @@ export function CheckoutDialog({
                   </select>
                 </div>
                 <div className="field">
-                  <label htmlFor={`amount-${draft.key}`}>{draft.method === "cash" ? "Valor aplicado" : "Valor"}</label>
+                  <label htmlFor={`amount-${draft.key}`}>{draft.method === "cash" ? "Valor pago em dinheiro" : "Valor do pagamento"}</label>
                   <input
                     id={`amount-${draft.key}`}
                     inputMode="decimal"
@@ -464,11 +465,12 @@ export function CheckoutDialog({
                     value={draft.amount}
                     onChange={(e) => update(draft.key, { amount: e.target.value })}
                   />
+                  <small className="field-hint">Este valor será abatido do saldo da conta.</small>
                 </div>
                 {draft.method === "cash" && (
                   <>
                     <div className="field">
-                      <label htmlFor={`received-${draft.key}`}>Valor recebido</label>
+                      <label htmlFor={`received-${draft.key}`}>Valor entregue pelo cliente (opcional)</label>
                       <input
                         id={`received-${draft.key}`}
                         inputMode="decimal"

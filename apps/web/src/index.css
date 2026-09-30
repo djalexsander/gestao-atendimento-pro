@@ -2184,3 +2184,11 @@ button {
     grid-template-columns: 1fr;
   }
 }
+
+.checkout-payment-title {
+  margin: 0 0 8px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
