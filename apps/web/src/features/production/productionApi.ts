@@ -1,10 +1,30 @@
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabaseClient";
 import { describeOrderError } from "../orders/ordersLogic";
-import { toProductionItem, type ProductionItem, type RawProductionItem } from "./productionLogic";
+import {
+  toHistoryItem,
+  toProductionItem,
+  type HistoryItem,
+  type HistorySummary,
+  type ProductionItem,
+  type RawHistoryItem,
+  type RawProductionItem,
+} from "./productionLogic";
 
 const LOAD_ERROR = "Não foi possível carregar a produção agora. Tente novamente.";
 const STATUS_ERROR = "Não foi possível atualizar o item agora. Tente novamente.";
+
+export interface QueueData {
+  items: ProductionItem[];
+  readyTotal: number;
+  today: string;
+}
+
+export interface HistoryData {
+  date: string;
+  items: HistoryItem[];
+  summary: HistorySummary;
+}
 
 export interface ProductionSector {
   id: string;
@@ -15,9 +35,20 @@ export interface ProductionSector {
 // a tela com dados simulados. Mesmo padrão de operations/api.ts e cash/cashApi.ts.
 export interface ProductionSource {
   listSectors(companyId: string): Promise<{ data: ProductionSector[] | null; error: string | null }>;
-  // Uma chamada: pendentes + em preparo + prontos recentes (últimos 60 min), filtrando pelo setor
-  // do item (null = todos).
-  loadQueue(companyId: string, sectorId: string | null): Promise<{ data: ProductionItem[] | null; error: string | null }>;
+  // Operação ATUAL numa chamada: todos os pendentes/em preparo (de qualquer dia) + os `readyLimit`
+  // prontos de HOJE mais recentes; readyTotal = prontos de hoje; today = dia do servidor
+  // (America/Sao_Paulo). Filtra pelo setor do item (null = todos).
+  loadQueue(
+    companyId: string,
+    sectorId: string | null,
+    readyLimit: number,
+  ): Promise<{ data: QueueData | null; error: string | null }>;
+  // Histórico de UMA data (yyyy-mm-dd): itens concluídos naquele dia + resumo.
+  loadHistory(
+    companyId: string,
+    date: string,
+    sectorId: string | null,
+  ): Promise<{ data: HistoryData | null; error: string | null }>;
   updateStatus(itemId: string, status: "preparing" | "ready"): Promise<{ error: string | null }>;
   // Avisa (sem dados) quando um item da empresa entra ou muda de status em qualquer aparelho.
   subscribe(companyId: string, onChange: () => void): () => void;
@@ -27,8 +58,6 @@ export interface ProductionSource {
 function rtLog(message: string) {
   console.info(`[realtime] ${message}`);
 }
-
-export const READY_WINDOW_MINUTES = 60;
 
 export const supabaseProductionSource: ProductionSource = {
   async listSectors(companyId) {
@@ -45,17 +74,48 @@ export const supabaseProductionSource: ProductionSource = {
     return { data: (data ?? []) as ProductionSector[], error: null };
   },
 
-  async loadQueue(companyId, sectorId) {
+  async loadQueue(companyId, sectorId, readyLimit) {
     const { data, error } = await supabase.rpc("production_queue", {
       p_company_id: companyId,
       p_sector_id: sectorId,
-      p_ready_minutes: READY_WINDOW_MINUTES,
+      p_ready_limit: readyLimit,
     });
     if (error) {
       console.error("Falha ao carregar a fila de produção:", error.code);
       return { data: null, error: describeOrderError(error, LOAD_ERROR) };
     }
-    return { data: ((data ?? []) as RawProductionItem[]).map(toProductionItem), error: null };
+    const raw = data as { items: RawProductionItem[]; ready_total: number; today: string };
+    return { data: { items: raw.items.map(toProductionItem), readyTotal: raw.ready_total, today: raw.today }, error: null };
+  },
+
+  async loadHistory(companyId, date, sectorId) {
+    const { data, error } = await supabase.rpc("production_history", {
+      p_company_id: companyId,
+      p_date: date,
+      p_sector_id: sectorId,
+    });
+    if (error) {
+      console.error("Falha ao carregar o histórico de produção:", error.code);
+      return { data: null, error: describeOrderError(error, LOAD_ERROR) };
+    }
+    const raw = data as {
+      date: string;
+      items: RawHistoryItem[];
+      summary: { items: number; orders: number; avg_minutes: number | null; by_sector: Array<{ name: string; items: number }> };
+    };
+    return {
+      data: {
+        date: raw.date,
+        items: raw.items.map(toHistoryItem),
+        summary: {
+          items: raw.summary.items,
+          orders: raw.summary.orders,
+          avgMinutes: raw.summary.avg_minutes,
+          bySector: raw.summary.by_sector,
+        },
+      },
+      error: null,
+    };
   },
 
   async updateStatus(itemId, status) {

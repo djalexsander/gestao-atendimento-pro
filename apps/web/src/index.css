@@ -2141,3 +2141,46 @@ button {
     grid-template-columns: 1fr;
   }
 }
+
+/* Produção: dia operacional, histórico e "mostrar mais" */
+.kds-previous {
+  margin: 4px 0 0;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 700;
+}
+.kds-more {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.kds-history-date {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 12px;
+  margin-bottom: 12px;
+}
+.kds-history-date .field {
+  margin-bottom: 0;
+}
+.kds-history-list {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.kds-summary {
+  margin-top: 0;
+}
+@media (max-width: 640px) {
+  .kds-history-list {
+    grid-template-columns: 1fr;
+  }
+}

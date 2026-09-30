@@ -28,6 +28,7 @@ export interface ProductionItem {
   startedAt: string | null;
   readyAt: string | null;
   submittedAt: string;
+  submittedDate: string; // dia do pedido em America/Sao_Paulo (yyyy-mm-dd), calculado no servidor
   pointType: "command" | "table";
   pointCode: string;
   pointName: string;
@@ -48,6 +49,7 @@ export interface RawProductionItem {
   started_at: string | null;
   ready_at: string | null;
   submitted_at: string;
+  submitted_date: string;
   point_type: "command" | "table";
   point_code: string;
   point_name: string;
@@ -68,6 +70,7 @@ export function toProductionItem(raw: RawProductionItem): ProductionItem {
     startedAt: raw.started_at,
     readyAt: raw.ready_at,
     submittedAt: raw.submitted_at,
+    submittedDate: raw.submitted_date,
     pointType: raw.point_type,
     pointCode: raw.point_code,
     pointName: raw.point_name,
@@ -81,6 +84,7 @@ export function toProductionItem(raw: RawProductionItem): ProductionItem {
 export interface OrderGroup {
   orderId: string;
   submittedAt: string;
+  submittedDate: string;
   pointType: "command" | "table";
   pointCode: string;
   pointName: string;
@@ -100,6 +104,7 @@ export function groupByOrder(items: ProductionItem[], status: ProductionStatus):
       group = {
         orderId: item.orderId,
         submittedAt: item.submittedAt,
+        submittedDate: item.submittedDate,
         pointType: item.pointType,
         pointCode: item.pointCode,
         pointName: item.pointName,
@@ -151,4 +156,130 @@ export function actionsFor(status: ProductionStatus): Array<{ to: "preparing" | 
 
 export function pointLabel(group: Pick<OrderGroup, "pointType" | "pointCode">): string {
   return `${group.pointType === "table" ? "Mesa" : "Comanda"} ${group.pointCode}`;
+}
+
+// --- Dia operacional --------------------------------------------------------------------------
+// O "hoje" e o dia de cada pedido vêm do SERVIDOR (America/Sao_Paulo); aqui só se compara texto
+// yyyy-mm-dd. O navegador nunca decide a virada do dia.
+
+function dayNumber(isoDate: string): number {
+  const [y, m, d] = isoDate.split("-").map(Number);
+  return Math.round(Date.UTC(y, m - 1, d) / 86400000);
+}
+
+export function daysBefore(today: string, date: string): number {
+  return dayNumber(today) - dayNumber(date);
+}
+
+// "Pedido de ontem" / "Pedido de 3 dias atrás" para o que ficou sem finalizar; null se for de hoje.
+export function previousDayLabel(today: string | null, submittedDate: string): string | null {
+  if (!today) return null;
+  const days = daysBefore(today, submittedDate);
+  if (days <= 0) return null;
+  return days === 1 ? "Pedido de ontem" : `Pedido de ${days} dias atrás`;
+}
+
+// "Mostrar mais": quantos prontos do dia ainda não estão na tela.
+export const READY_PAGE = 15;
+export function readyRemaining(readyTotal: number, shown: number): number {
+  return Math.max(0, readyTotal - shown);
+}
+
+export function formatDuration(minutes: number): string {
+  if (minutes < 1) return "menos de 1 min";
+  if (minutes < 60) return `${minutes} min`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m === 0 ? `${h} h` : `${h} h ${String(m).padStart(2, "0")} min`;
+}
+
+// --- Histórico -------------------------------------------------------------------------------
+
+export interface HistoryItem {
+  id: string;
+  orderId: string;
+  quantity: number;
+  name: string;
+  notes: string | null;
+  sectorName: string | null;
+  submittedAt: string;
+  readyAt: string;
+  minutes: number; // pedido -> pronto
+  pointType: "command" | "table";
+  pointCode: string;
+  customerName: string | null;
+}
+
+export interface RawHistoryItem {
+  id: string;
+  order_id: string;
+  quantity: number;
+  name: string;
+  notes: string | null;
+  sector_name: string | null;
+  submitted_at: string;
+  ready_at: string;
+  minutes: number;
+  point_type: "command" | "table";
+  point_code: string;
+  customer_name: string | null;
+}
+
+export function toHistoryItem(raw: RawHistoryItem): HistoryItem {
+  return {
+    id: raw.id,
+    orderId: raw.order_id,
+    quantity: raw.quantity,
+    name: raw.name,
+    notes: raw.notes,
+    sectorName: raw.sector_name,
+    submittedAt: raw.submitted_at,
+    readyAt: raw.ready_at,
+    minutes: raw.minutes,
+    pointType: raw.point_type,
+    pointCode: raw.point_code,
+    customerName: raw.customer_name,
+  };
+}
+
+export interface HistorySummary {
+  items: number;
+  orders: number;
+  avgMinutes: number | null;
+  bySector: Array<{ name: string; items: number }>;
+}
+
+export interface HistoryOrder {
+  orderId: string;
+  submittedAt: string;
+  pointType: "command" | "table";
+  pointCode: string;
+  customerName: string | null;
+  lastReadyAt: string;
+  items: HistoryItem[];
+}
+
+// Um card por pedido; o mais recentemente concluído primeiro (itens do card também, do mais recente).
+export function groupHistory(items: HistoryItem[]): HistoryOrder[] {
+  const map = new Map<string, HistoryOrder>();
+  for (const item of items) {
+    let g = map.get(item.orderId);
+    if (!g) {
+      g = {
+        orderId: item.orderId,
+        submittedAt: item.submittedAt,
+        pointType: item.pointType,
+        pointCode: item.pointCode,
+        customerName: item.customerName,
+        lastReadyAt: item.readyAt,
+        items: [],
+      };
+      map.set(item.orderId, g);
+    }
+    g.items.push(item);
+    if (item.readyAt > g.lastReadyAt) g.lastReadyAt = item.readyAt;
+  }
+  const list = Array.from(map.values());
+  for (const g of list) g.items.sort((a, b) => (a.readyAt < b.readyAt ? 1 : -1));
+  return list.sort((a, b) => (a.lastReadyAt < b.lastReadyAt ? 1 : -1));
 }
