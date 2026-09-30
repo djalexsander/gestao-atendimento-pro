@@ -75,6 +75,24 @@ export function SessionOrderScreen({
     console.info(`[realtime] orders reload ${result.data ? `ok (${result.data.length} pedidos)` : "failed"}`);
   }, [source, sessionId]);
 
+  // Recarrega SÓ o catálogo (estoque/disponibilidade mudaram em outro aparelho). Não toca na cesta;
+  // a validação real do saldo continua sendo do servidor no envio do pedido.
+  const companyId = header?.companyId ?? null;
+  const reloadCatalog = useCallback(async () => {
+    if (!companyId) return;
+    const result = await source.loadCatalog(companyId);
+    if (result.data) {
+      setCategories(result.data.categories);
+      setProducts(result.data.products);
+    }
+  }, [source, companyId]);
+  const requestCatalogReload = useMemo(() => createCoalescedRunner(reloadCatalog), [reloadCatalog]);
+
+  useEffect(() => {
+    if (!companyId || !source.subscribeToProducts) return;
+    return source.subscribeToProducts(companyId, requestCatalogReload);
+  }, [source, companyId, requestCatalogReload]);
+
   // Broadcast, postgres_changes e foco podem chegar quase juntos: uma busca por vez, sem atraso
   // (se chegar outro pedido durante a busca, roda mais uma logo depois).
   const requestReload = useMemo(() => createCoalescedRunner(reloadOrders), [reloadOrders]);
@@ -99,7 +117,10 @@ export function SessionOrderScreen({
   // Fallback barato (sem polling): ao voltar o foco/visibilidade, recarrega uma vez.
   useEffect(() => {
     function refresh() {
-      if (document.visibilityState === "visible") requestReload();
+      if (document.visibilityState === "visible") {
+        requestReload();
+        requestCatalogReload();
+      }
     }
     document.addEventListener("visibilitychange", refresh);
     window.addEventListener("focus", refresh);
@@ -107,7 +128,7 @@ export function SessionOrderScreen({
       document.removeEventListener("visibilitychange", refresh);
       window.removeEventListener("focus", refresh);
     };
-  }, [requestReload]);
+  }, [requestReload, requestCatalogReload]);
 
   useEffect(() => {
     let cancelled = false;

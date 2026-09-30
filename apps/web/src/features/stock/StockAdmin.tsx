@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../app/useAuth";
+import { createCoalescedRunner } from "../orders/coalesce";
 import { StockHistoryDialog, StockMovementDialog } from "./StockDialogs";
 import { supabaseStockSource, type StockSource } from "./stockApi";
 import {
@@ -51,6 +52,24 @@ export function StockAdmin({ source = supabaseStockSource }: { source?: StockSou
 
   useEffect(() => {
     void reload();
+  }, [reload]);
+
+  // Realtime: outro aparelho vendeu/devolveu/ajustou/mudou o controle de um produto. Cada evento
+  // recarrega a lista do servidor (coalescido: no máximo 1 busca em andamento + 1 pendente); o saldo
+  // nunca é calculado no navegador, e none <-> quantity entra/sai da lista por ser um reload completo.
+  useEffect(() => {
+    if (!companyId || !source.subscribe) return;
+    const scheduleReload = createCoalescedRunner(reload);
+    return source.subscribe(companyId, scheduleReload);
+  }, [companyId, source, reload]);
+
+  // Fallback barato (sem polling): ao voltar para a aba/PWA, recarrega uma vez.
+  useEffect(() => {
+    function refreshWhenVisible() {
+      if (document.visibilityState === "visible") void reload();
+    }
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => document.removeEventListener("visibilitychange", refreshWhenVisible);
   }, [reload]);
 
   const shown = useMemo(() => filterStock(rows ?? [], query, filter), [rows, query, filter]);

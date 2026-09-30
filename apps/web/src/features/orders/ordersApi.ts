@@ -1,4 +1,5 @@
 import type { RealtimeChannel } from "@supabase/supabase-js";
+import { subscribeToProductChanges, type RealtimeClientLike } from "../../lib/productsRealtime";
 import { supabase } from "../../lib/supabaseClient";
 import { createBroadcastGate, type BroadcastGate } from "./broadcastGate";
 import {
@@ -53,6 +54,9 @@ export interface OrdersSource {
   // postgres_changes (fallback). Devolve o cancelamento das assinaturas. Falha do Realtime é
   // silenciosa: o fallback por foco cobre.
   subscribeToOrders(sessionId: string, onChange: () => void): () => void;
+  // Avisa (sem dados) que um produto da empresa mudou (estoque/disponibilidade): a tela recarrega o
+  // catálogo. Só UX — submit_service_order continua validando o saldo real. Opcional (fontes simuladas).
+  subscribeToProducts?(companyId: string, onChange: () => void): () => void;
 }
 
 async function loadProfileNames(userIds: string[]): Promise<Map<string, string>> {
@@ -94,6 +98,10 @@ function notifyOrderSubmitted(sessionId: string) {
 }
 
 export const supabaseOrdersSource: OrdersSource = {
+  subscribeToProducts(companyId, onChange) {
+    return subscribeToProductChanges(supabase as unknown as RealtimeClientLike, companyId, "catalog-products", onChange);
+  },
+
   async loadSessionHeader(sessionId) {
     const { data, error } = await supabase
       .from("service_sessions")

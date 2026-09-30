@@ -1,3 +1,4 @@
+import { subscribeToProductChanges, type RealtimeClientLike } from "../../lib/productsRealtime";
 import { supabase } from "../../lib/supabaseClient";
 import { describeOrderError } from "../orders/ordersLogic";
 import type { MovementKind, StockRow } from "./stockLogic";
@@ -43,6 +44,9 @@ export interface StockSource {
   history(productId: string): Promise<{ data: StockMovement[] | null; error: string | null }>;
   // Produtos ativos com a disponibilidade manual (owner/admin/production alteram SÓ isso).
   listAvailability(companyId: string): Promise<{ data: AvailabilityRow[] | null; error: string | null }>;
+  // Avisa (sem dados) que um produto da empresa mudou (saldo, disponibilidade, controle, ativo). Quem
+  // chama recarrega do servidor. Opcional: fontes simuladas podem não ter. Devolve o cancelamento.
+  subscribe?(companyId: string, onChange: () => void): () => void;
 }
 
 function toState(row: ProductStockState): ProductStockState {
@@ -55,6 +59,10 @@ function toState(row: ProductStockState): ProductStockState {
 }
 
 export const supabaseStockSource: StockSource = {
+  subscribe(companyId, onChange) {
+    return subscribeToProductChanges(supabase as unknown as RealtimeClientLike, companyId, "stock-products", onChange);
+  },
+
   async listControlled(companyId) {
     const { data, error } = await supabase
       .from("products")
