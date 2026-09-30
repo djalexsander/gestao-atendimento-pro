@@ -3,6 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { OPERATIONAL_PATH } from "../../app/accessRules";
 import { useAuth } from "../../app/useAuth";
 import { supabaseServicePanelSource, type ServicePanelSource } from "./api";
+import { createCoalescedRunner } from "../orders/coalesce";
 import { OpenSessionDialog } from "./PointDialogs";
 import {
   countByStatus,
@@ -138,6 +139,15 @@ export function ServicePointsPanel({
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => document.removeEventListener("visibilitychange", refreshWhenVisible);
   }, [reload]);
+
+  // Realtime: abrir/fechar atendimento em outro aparelho recarrega a lista (o banco é a fonte da
+  // verdade; o evento não altera cards). Coalescido: no máximo 1 busca em andamento + 1 pendente.
+  // Uma assinatura por empresa; removida ao desmontar ou trocar de empresa.
+  useEffect(() => {
+    if (!companyId || !source.subscribe) return;
+    const scheduleReload = createCoalescedRunner(reload);
+    return source.subscribe(companyId, scheduleReload);
+  }, [companyId, source, reload]);
 
   const points = useMemo(() => data?.points ?? [], [data]);
   const mode = data?.service_mode ?? "command";

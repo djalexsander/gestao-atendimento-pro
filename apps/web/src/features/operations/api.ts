@@ -1,3 +1,4 @@
+import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabaseClient";
 import type { OpenSession, ServicePanelData } from "./panel";
 
@@ -15,6 +16,14 @@ export interface ServicePanelSource {
     pointId: string,
     customerName: string | null,
   ): Promise<{ session: OpenSession | null; error: string | null; conflict: boolean }>;
+  // Avisa (sem dados) quando um atendimento da empresa é aberto/fechado em qualquer aparelho.
+  // Devolve a função que encerra a assinatura. Opcional: fontes simuladas podem não ter.
+  subscribe?(companyId: string, onChange: () => void): () => void;
+}
+
+// Diagnóstico do Realtime (temporário): só estados técnicos, nunca token, ids ou dados.
+function rtLog(message: string) {
+  console.info(`[realtime] ${message}`);
 }
 
 // As RPCs levantam PT400/401/403/404/409 com mensagem amigável em português; qualquer outro
@@ -50,6 +59,45 @@ export const supabaseServicePanelSource: ServicePanelSource = {
       },
       error: null,
       conflict: false,
+    };
+  },
+
+  subscribe(companyId, onChange) {
+    let disposed = false;
+    let channel: RealtimeChannel | null = null;
+
+    void (async () => {
+      // 1) sessão autenticada -> 2) Realtime autenticado -> 3) só então o canal.
+      try {
+        const { data } = await supabase.auth.getSession();
+        if (!data.session) throw new Error("sem sessão");
+        await supabase.realtime.setAuth();
+        rtLog("service_sessions auth ready");
+      } catch {
+        rtLog("service_sessions auth failed (foco/visibilidade seguem como fallback)");
+        return;
+      }
+      if (disposed) return;
+
+      channel = supabase
+        .channel(`service-sessions:${companyId}:${Math.random().toString(36).slice(2)}`)
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "service_sessions", filter: `company_id=eq.${companyId}` },
+          () => {
+            rtLog("service_sessions change received");
+            onChange();
+          },
+        )
+        .subscribe((status) => {
+          if (status === "SUBSCRIBED") rtLog("service_sessions SUBSCRIBED");
+          else rtLog(`service_sessions ${status}`); // CHANNEL_ERROR / TIMED_OUT / CLOSED
+        });
+    })();
+
+    return () => {
+      disposed = true;
+      if (channel) void supabase.removeChannel(channel);
     };
   },
 };
