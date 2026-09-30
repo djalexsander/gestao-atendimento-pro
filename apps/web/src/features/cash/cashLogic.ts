@@ -140,3 +140,30 @@ export function summarizeMovements(movements: CashMovementRow[]): CashSummary {
     total: total / 100,
   };
 }
+
+// --- Conferência do dinheiro no fechamento ---------------------------------
+// A tela só PREVÊ o que o servidor vai gravar (close_cash_session recalcula tudo e é a autoridade).
+
+export interface CashReconciliation {
+  expectedCents: number; // saldo inicial + vendas em dinheiro
+  countedCents: number | null; // null = campo vazio/inválido
+  differenceCents: number | null; // contado - esperado
+}
+
+export function reconcile(openingAmount: number, cashSales: number, countedText: string): CashReconciliation {
+  const expectedCents = toCents(openingAmount) + toCents(cashSales);
+  const countedCents = parseDraftCents(countedText);
+  return { expectedCents, countedCents, differenceCents: countedCents === null ? null : countedCents - expectedCents };
+}
+
+// Texto do resultado da conferência (cents em centavos; sinal decide falta/sobra).
+export function describeDifference(differenceCents: number, format: (reais: number) => string): string {
+  if (differenceCents === 0) return "Caixa confere";
+  const value = format(Math.abs(differenceCents) / 100);
+  return differenceCents < 0 ? `Falta ${value}` : `Sobra ${value}`;
+}
+
+// Diferença exige observação; o fechamento de caixa alheio também (uma só observação vale pelas duas).
+export function closingNotesRequired(differenceCents: number | null, otherOperator: boolean): boolean {
+  return otherOperator || (differenceCents !== null && differenceCents !== 0);
+}

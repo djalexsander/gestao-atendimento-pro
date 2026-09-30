@@ -4,6 +4,9 @@ import { Modal } from "../employees/Modal";
 import type { CashSession, CashSource } from "./cashApi";
 import {
   canFinalize,
+  closingNotesRequired,
+  describeDifference,
+  reconcile,
   draftAppliedCents,
   draftChangeCents,
   draftProblem,
@@ -91,14 +94,15 @@ export function OpenCashDialog({
 
 const dateTime = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" });
 
-// Fechar o caixa (simples, sem conferência física): mostra o resumo do caixa e pede só uma
-// observação opcional. Quem valida a permissão é o servidor (close_cash_session).
+// Fechar o caixa COM conferência: resumo, dinheiro esperado (saldo inicial + vendas em dinheiro),
+// dinheiro contado e diferença. O servidor recalcula esperado e diferença (close_cash_session);
+// aqui é só a prévia. Diferença ou caixa de outro operador exigem observação.
 export function CloseCashDialog({
   source,
   cash,
   operatorName,
   movements,
-  requireNotes = false,
+  otherOperator = false,
   title = "Fechar caixa",
   notesHint,
   onClosed,
@@ -108,28 +112,37 @@ export function CloseCashDialog({
   cash: CashSession;
   operatorName: string | null;
   movements: CashMovementRow[];
-  // Fechamento administrativo do caixa de outro operador: a observação passa a ser obrigatória.
-  requireNotes?: boolean;
+  // Fechamento administrativo do caixa de outro operador: a observação é sempre obrigatória.
+  otherOperator?: boolean;
   title?: string;
   notesHint?: string;
   onClosed: () => void;
   onClose: () => void;
 }) {
+  const [counted, setCounted] = useState("");
   const [notes, setNotes] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const summary = summarizeMovements(movements);
+  const rec = reconcile(cash.openingAmount, summary.byMethod.cash, counted);
+  const notesRequired = closingNotesRequired(rec.differenceCents, otherOperator);
+  const hasDifference = rec.differenceCents !== null && rec.differenceCents !== 0;
+  const countedInvalid = counted.trim() !== "" && rec.countedCents === null;
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (submitting) return;
-    if (requireNotes && notes.trim() === "") {
-      setError("Informe uma observação para fechar o caixa de outro operador.");
+    if (rec.countedCents === null) {
+      setError("Informe o dinheiro contado, ex.: 350,00 (pode ser 0).");
+      return;
+    }
+    if (notesRequired && notes.trim() === "") {
+      setError(hasDifference ? "Informe o motivo da diferença encontrada no caixa." : "Informe uma observação para fechar o caixa de outro operador.");
       return;
     }
     setError(null);
     setSubmitting(true);
-    const result = await source.closeCash(cash.id, notes.trim() || null);
+    const result = await source.closeCash(cash.id, rec.countedCents / 100, notes.trim() || null);
     setSubmitting(false);
     if (result.error) {
       setError(result.error);
@@ -141,39 +154,75 @@ export function CloseCashDialog({
   return (
     <Modal title={title} onClose={submitting ? () => undefined : onClose}>
       <form onSubmit={handleSubmit}>
+        <h4 className="cash-section-title">Resumo do caixa</h4>
         <dl className="cash-summary cash-summary-modal">
           <div>
             <dt>Operador</dt>
             <dd>{operatorName ?? cash.openedByName ?? "—"}</dd>
           </div>
           <div>
-            <dt>Abertura</dt>
+            <dt>Aberto em</dt>
             <dd>{dateTime.format(new Date(cash.openedAt))}</dd>
           </div>
           <div>
             <dt>Saldo inicial</dt>
             <dd>{formatReais(cash.openingAmount)}</dd>
           </div>
+        </dl>
+
+        <h4 className="cash-section-title">Vendas</h4>
+        <dl className="cash-summary cash-summary-modal">
           {PAYMENT_METHODS.map((method) => (
             <div key={method}>
-              <dt>Vendas — {PAYMENT_METHOD_LABEL[method]}</dt>
+              <dt>{PAYMENT_METHOD_LABEL[method]}</dt>
               <dd>{formatReais(summary.byMethod[method])}</dd>
             </div>
           ))}
-          <div>
+          <div className="cash-summary-strong">
             <dt>Total vendido</dt>
             <dd>{formatReais(summary.total)}</dd>
           </div>
         </dl>
+
+        <h4 className="cash-section-title">Conferência do dinheiro</h4>
+        <div className="cash-expected">
+          <span>Dinheiro esperado no caixa</span>
+          <strong>{cents(rec.expectedCents)}</strong>
+          <small>Saldo inicial + vendas em dinheiro</small>
+        </div>
+        <div className="field">
+          <label htmlFor="closing-counted">Dinheiro contado</label>
+          <input
+            id="closing-counted"
+            inputMode="decimal"
+            placeholder="R$ 0,00"
+            autoFocus
+            value={counted}
+            onChange={(e) => {
+              setError(null);
+              setCounted(e.target.value);
+            }}
+          />
+          {countedInvalid && <div className="field-error">Informe um valor válido, ex.: 350,00.</div>}
+        </div>
+        {rec.differenceCents !== null && (
+          <p
+            role="status"
+            className={`cash-difference ${rec.differenceCents === 0 ? "cash-difference-ok" : "cash-difference-bad"}`}
+          >
+            {describeDifference(rec.differenceCents, formatReais)}
+          </p>
+        )}
+
         <p className="modal-text">Depois de fechado, este caixa não recebe mais vendas.</p>
         {error && <div className="form-error">{error}</div>}
         <div className="field">
-          <label htmlFor="closing-notes">{requireNotes ? "Observação (obrigatória)" : "Observação (opcional)"}</label>
+          <label htmlFor="closing-notes">{notesRequired ? "Observação (obrigatória)" : "Observação (opcional)"}</label>
           <input
             id="closing-notes"
             maxLength={500}
-            required={requireNotes}
-            placeholder={notesHint}
+            required={notesRequired}
+            placeholder={hasDifference ? "Motivo da diferença encontrada" : notesHint}
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
           />
@@ -182,7 +231,7 @@ export function CloseCashDialog({
           <button className="btn-secondary" type="button" disabled={submitting} onClick={onClose}>
             Cancelar
           </button>
-          <button className="btn-danger" type="submit" disabled={submitting}>
+          <button className="btn-danger" type="submit" disabled={submitting || rec.countedCents === null}>
             {submitting ? "Fechando…" : "Confirmar fechamento"}
           </button>
         </div>

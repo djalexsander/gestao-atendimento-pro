@@ -1852,3 +1852,79 @@ button {
   flex-basis: 100%;
   margin: 0;
 }
+
+/* Caixa: conferência, abas, filtros e detalhe */
+.cash-section-title {
+  margin: 16px 0 4px;
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.cash-summary-strong {
+  border-width: 2px !important;
+}
+.cash-expected {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 8px 0 12px;
+  padding: 12px;
+  border: 2px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.cash-expected strong {
+  font-size: 22px;
+}
+.cash-expected small {
+  color: var(--text-muted);
+}
+.cash-difference {
+  margin: 4px 0 12px;
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-weight: 700;
+}
+.cash-difference-ok {
+  color: var(--success);
+  background: var(--success-bg);
+}
+.cash-difference-bad {
+  color: var(--danger);
+  background: var(--danger-bg);
+}
+.tab-bar {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 16px;
+  border-bottom: 1px solid var(--border);
+}
+.tab {
+  padding: 8px 14px;
+  border: 0;
+  border-bottom: 3px solid transparent;
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+}
+.tab-active {
+  border-bottom-color: currentColor;
+  color: inherit;
+  font-weight: 700;
+}
+.cash-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+.cash-filters .field {
+  min-width: 140px;
+}
+.cash-detail {
+  margin-top: 24px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
