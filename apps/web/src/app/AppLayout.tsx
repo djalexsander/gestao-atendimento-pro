@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Link, Outlet } from "react-router-dom";
+import { Link, Outlet, useLocation } from "react-router-dom";
 import { AdminSidebar } from "./AdminSidebar";
 import { CompanySwitcher } from "./CompanySwitcher";
 import { isManagedAccount } from "../lib/managedAccount";
@@ -18,6 +18,8 @@ const ROLE_LABEL: Record<string, string> = {
 export function AppLayout() {
   const { user, profile, activeMembership, isMasterAdmin, signOut } = useAuth();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  // Só o Financeiro > Caixa (histórico com tabela) usa a largura maior; as demais páginas seguem em 720px.
+  const isWidePage = useLocation().pathname.replace(/\/+$/, "") === "/app/financeiro/caixa";
   // Conta de funcionário: mostra o nome, nunca o e-mail técnico do Auth.
   const identity = isManagedAccount(user) ? (profile?.full_name ?? null) : (user?.email ?? null);
 
@@ -57,7 +59,7 @@ export function AppLayout() {
             </button>
           </div>
         </header>
-        <main className="app-body">
+        <main className={isWidePage ? "app-body app-body-wide" : "app-body"}>
           <Outlet />
         </main>
       </div>
