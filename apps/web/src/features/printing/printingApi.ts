@@ -1,4 +1,6 @@
+import type { RealtimeClientLike } from "../../lib/productsRealtime";
 import { supabase } from "../../lib/supabaseClient";
+import { subscribeToPrintChanges, type PrintTable } from "./printingRealtime";
 import {
   describePrintError,
   type DeviceInput,
@@ -36,6 +38,8 @@ export interface PrintingSource {
   createPairingCode(companyId: string): Promise<{ data: PairingCode | null; error: string | null }>;
   revokeAgent(agentId: string): Promise<{ error: string | null }>;
   unbindDevice(deviceId: string): Promise<{ error: string | null }>;
+  // Realtime (opcional: fontes simuladas não têm). Só avisa qual tabela mudou; a tela recarrega do servidor.
+  subscribeToChanges?(companyId: string, onChange: (table: PrintTable) => void): () => void;
 }
 
 async function rpc(name: string, args: Record<string, unknown>): Promise<{ error: string | null }> {
@@ -161,6 +165,7 @@ export const supabasePrintingSource: PrintingSource = {
 
   revokeAgent: (agentId) => rpc("revoke_print_agent", { p_agent_id: agentId }),
   unbindDevice: (deviceId) => rpc("unbind_print_device", { p_device_id: deviceId }),
+  subscribeToChanges: (companyId, onChange) => subscribeToPrintChanges(supabase as unknown as RealtimeClientLike, companyId, onChange),
   resolveFailure: (failureId) => rpc("resolve_print_enqueue_failure", { p_failure_id: failureId }),
   archiveDevice: (deviceId) => rpc("archive_print_device", { p_device_id: deviceId }),
   testPrint: (deviceId) => rpc("enqueue_test_print", { p_device_id: deviceId }),

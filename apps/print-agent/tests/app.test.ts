@@ -66,6 +66,7 @@ const mkApp = (fetchFn: FetchLike, st: KeyValueStore, sec: SecretStore = secrets
     api: new AgentApi(CFG, fetchFn),
     store: st,
     secrets: sec,
+    rawPort: { printRaw: async () => {} },
     listPrinters: printers,
     hostName: async () => "CAIXA-01",
     newId: () => "machine-test-0001",
@@ -180,9 +181,10 @@ test("desconectar (ação do usuário) remove o token do cofre e mantém o machi
   assert.equal(JSON.parse(st.value!).machineId, "machine-test-0001");
 });
 
-test("jobs do servidor SEMPRE em simulação nesta etapa", async () => {
+test("padrão do modo de impressão = simulação, com a fila pausada", async () => {
   const app = mkApp(fakeServer({}).fetchFn, store(), secrets());
   await app.init();
   assert.equal(app.snapshot().printMode, "simulation");
   assert.equal(app.snapshot().simulation, true);
+  assert.equal(app.snapshot().queuePaused, true);
 });

@@ -34,6 +34,9 @@ export async function processJob(job: JobModel, deps: ProcessorDeps): Promise<"c
   }
 
   let mode: "simulation" | "real";
+  let sentBytes: number | undefined;
+  const target = job.windowsPrinter ?? "impressora não vinculada";
+  if (deps.transport.mode === "real") deps.log(`Enviando para ${target}...`);
   try {
     const result = await deps.transport.print({
       printerName: job.windowsPrinter,
@@ -44,11 +47,19 @@ export async function processJob(job: JobModel, deps: ProcessorDeps): Promise<"c
       job,
     });
     mode = result.mode;
+    sentBytes = result.bytes;
     deps.onPreview?.(job, result.preview);
   } catch (error) {
-    return failJob(job, deps, `Falha ao imprimir: ${messageOf(error)}`);
+    // Falha física: NUNCA marca printed; avisa o servidor com mensagem sem segredos. Não repete sozinho.
+    const reason = messageOf(error);
+    deps.log(`Falha de impressão: ${reason}`);
+    return failJob(job, deps, `Falha ao imprimir em ${target}: ${reason}`, false);
   }
-  deps.log(mode === "simulation" ? "Simulação concluída (nenhum papel foi impresso)" : "Impressão concluída");
+  if (mode === "simulation") deps.log("Simulação concluída (nenhum papel foi impresso)");
+  else {
+    if (sentBytes !== undefined) deps.log(`${sentBytes} bytes enviados ao spooler`);
+    deps.log("Impressão concluída.");
+  }
 
   for (let attempt = 1; attempt <= COMPLETE_RETRIES; attempt += 1) {
     const done = await deps.complete(deps.creds, job.id);
@@ -64,8 +75,8 @@ export async function processJob(job: JobModel, deps: ProcessorDeps): Promise<"c
   return "stuck";
 }
 
-async function failJob(job: JobModel, deps: ProcessorDeps, message: string): Promise<"failed"> {
-  deps.log(`Erro: ${message}`);
+async function failJob(job: JobModel, deps: ProcessorDeps, message: string, logIt = true): Promise<"failed"> {
+  if (logIt) deps.log(`Erro: ${message}`);
   const res = await deps.fail(deps.creds, job.id, message);
   if (!res.ok) deps.log(`Não foi possível avisar o servidor da falha: ${res.message}`);
   return "failed";

@@ -3,6 +3,10 @@
 //   * TOKEN: somente no Windows Credential Manager (SecretStore), nunca em arquivo, localStorage, log ou bundle.
 // machine_id = UUID gerado na 1ª execução (nada de serial/MAC/hardware).
 
+// Modo de impressão dos jobs do servidor. Não é segredo (fica no state.json). Padrão SEMPRE "simulation":
+// só vira "real" por escolha explícita do usuário na interface (nunca por atualização ou padrão).
+export type PrintMode = "simulation" | "real";
+
 export interface StoredState {
   machineId: string;
   agentId: string | null;
@@ -10,6 +14,7 @@ export interface StoredState {
   agentName: string | null;
   companyName: string | null;
   computerName: string | null;
+  printMode: PrintMode;
 }
 
 export interface KeyValueStore {
@@ -61,6 +66,8 @@ export function parseState(raw: string | null): StoredState | null {
     agentName: agentId ? str(o.agentName) : null,
     companyName: agentId ? str(o.companyName) : null,
     computerName: str(o.computerName),
+    // Qualquer coisa diferente de "real" (ausente, inválido, arquivo antigo) = simulação.
+    printMode: o.printMode === "real" ? "real" : "simulation",
   };
 }
 
@@ -72,6 +79,7 @@ export function serializeState(state: StoredState): string {
     agentName: state.agentName,
     companyName: state.companyName,
     computerName: state.computerName,
+    printMode: state.printMode,
   });
 }
 
@@ -97,7 +105,7 @@ export async function loadOrCreateState(store: KeyValueStore, secrets: SecretSto
     await store.save(serializeState(unpaired));
     return unpaired;
   }
-  const fresh: StoredState = { machineId: newId(), agentId: null, token: null, agentName: null, companyName: null, computerName: null };
+  const fresh: StoredState = { machineId: newId(), agentId: null, token: null, agentName: null, companyName: null, computerName: null, printMode: "simulation" };
   await store.save(serializeState(fresh));
   return fresh;
 }

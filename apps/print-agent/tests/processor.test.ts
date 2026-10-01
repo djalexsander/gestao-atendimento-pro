@@ -76,7 +76,7 @@ test("falha do transporte (erro do spooler): fail_print_job com mensagem, NUNCA 
     log: () => {},
   });
   assert.equal(res, "failed");
-  assert.deepEqual(calls, ["fail:Falha ao imprimir: A impressora está sem papel. (erro 28 do Windows)"]);
+  assert.deepEqual(calls, ["fail:Falha ao imprimir em EPSON: A impressora está sem papel. (erro 28 do Windows)"]);
 });
 
 test("sem rede no complete: tenta 3x e deixa o job claimed (não marca falha)", async () => {

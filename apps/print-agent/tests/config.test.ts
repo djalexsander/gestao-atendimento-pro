@@ -63,7 +63,7 @@ test("estado corrompido não derruba: gera novo machine_id sem token", async () 
 });
 
 test("o arquivo state.json NUNCA contém o token (nem de arquivo antigo)", async () => {
-  const state = { machineId: "abcdefgh-1234", agentId: "a1", token: "SEGREDO", agentName: "Caixa", companyName: "ACME", computerName: "PC" };
+  const state = { machineId: "abcdefgh-1234", agentId: "a1", token: "SEGREDO", agentName: "Caixa", companyName: "ACME", computerName: "PC", printMode: "simulation" as const };
   assert.ok(!serializeState(state).includes("SEGREDO"));
   assert.ok(!serializeState(state).includes("token"));
   const legacy = JSON.stringify({ machineId: "abcdefgh-1234", agentId: "a1", token: "SEGREDO-ANTIGO" });

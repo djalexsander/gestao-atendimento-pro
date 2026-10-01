@@ -1,12 +1,9 @@
 //! Impressão RAW (ESC/POS) pelo Print Spooler do Windows: OpenPrinter -> StartDocPrinter(datatype RAW)
 //! -> StartPagePrinter -> WritePrinter -> EndPagePrinter -> EndDocPrinter -> ClosePrinter.
 //! Nunca abre diálogo de impressão. O comando exposto ao frontend (`print_raw`) passa por `validate`,
-//! que é a defesa NO LADO NATIVO: mesmo que o JavaScript seja alterado, jobs reais do servidor são
-//! recusados enquanto `REAL_JOB_PRINTING_ENABLED` for falso, e só se imprime em impressora instalada.
-
-/// Interruptor de segurança desta etapa: impressão REAL de jobs do servidor está desligada.
-/// Só o diagnóstico local (clique explícito do usuário) pode gerar papel.
-pub const REAL_JOB_PRINTING_ENABLED: bool = false;
+//! que é a defesa NO LADO NATIVO: jobs do servidor (purpose "job") só são aceitos quando o modo de impressão
+//! salvo no state.json do usuário é "real" (escolha explícita na interface); o diagnóstico ("diagnostic") é
+//! independente do modo. Só se imprime em impressora instalada.
 
 /// Limite do documento (um ticket nunca chega perto disso).
 pub const MAX_BYTES: usize = 256 * 1024;
@@ -26,10 +23,11 @@ pub fn parse_purpose(value: &str) -> Result<Purpose, String> {
 }
 
 /// Valida o pedido ANTES de qualquer chamada ao spooler.
-pub fn validate(printer: &str, bytes: &[u8], purpose: &str, installed: &[String]) -> Result<(), String> {
+/// `real_mode`: o usuário escolheu explicitamente o modo REAL (lido do state.json por quem chama).
+pub fn validate(printer: &str, bytes: &[u8], purpose: &str, installed: &[String], real_mode: bool) -> Result<(), String> {
     let purpose = parse_purpose(purpose)?;
-    if purpose == Purpose::Job && !REAL_JOB_PRINTING_ENABLED {
-        return Err("A impressão real de pedidos ainda não está habilitada nesta versão. Os jobs do servidor continuam em simulação.".into());
+    if purpose == Purpose::Job && !real_mode {
+        return Err("O modo de impressão REAL não está ativado neste computador. Os jobs do servidor não são impressos em modo simulação.".into());
     }
     if bytes.is_empty() {
         return Err("Documento vazio.".into());
@@ -199,27 +197,33 @@ mod tests {
 
     #[test]
     fn diagnostic_on_installed_printer_is_valid() {
-        assert!(validate("POS-80", &GOOD, "diagnostic", &installed()).is_ok());
+        assert!(validate("POS-80", &GOOD, "diagnostic", &installed(), false).is_ok());
     }
 
     #[test]
-    fn real_jobs_are_refused_while_disabled() {
-        assert!(!REAL_JOB_PRINTING_ENABLED);
-        let err = validate("POS-80", &GOOD, "job", &installed()).unwrap_err();
-        assert!(err.contains("ainda não está habilitada"));
+    fn diagnostic_does_not_depend_on_mode() {
+        assert!(validate("POS-80", &GOOD, "diagnostic", &installed(), true).is_ok());
+        assert!(validate("POS-80", &GOOD, "diagnostic", &installed(), false).is_ok());
+    }
+
+    #[test]
+    fn jobs_require_explicit_real_mode() {
+        let err = validate("POS-80", &GOOD, "job", &installed(), false).unwrap_err();
+        assert!(err.contains("REAL não está ativado"));
+        assert!(validate("POS-80", &GOOD, "job", &installed(), true).is_ok());
     }
 
     #[test]
     fn rejects_unknown_purpose_empty_oversize_and_non_escpos() {
-        assert!(validate("POS-80", &GOOD, "qualquer", &installed()).is_err());
-        assert!(validate("POS-80", &[], "diagnostic", &installed()).is_err());
-        assert!(validate("POS-80", &vec![0x1b; MAX_BYTES + 1], "diagnostic", &installed()).is_err());
-        assert!(validate("POS-80", b"texto solto", "diagnostic", &installed()).is_err());
+        assert!(validate("POS-80", &GOOD, "qualquer", &installed(), true).is_err());
+        assert!(validate("POS-80", &[], "diagnostic", &installed(), true).is_err());
+        assert!(validate("POS-80", &vec![0x1b; MAX_BYTES + 1], "diagnostic", &installed(), true).is_err());
+        assert!(validate("POS-80", b"texto solto", "diagnostic", &installed(), true).is_err());
     }
 
     #[test]
     fn rejects_printer_not_installed() {
-        let err = validate("OUTRA", &GOOD, "diagnostic", &installed()).unwrap_err();
+        let err = validate("OUTRA", &GOOD, "diagnostic", &installed(), true).unwrap_err();
         assert!(err.contains("não encontrada"));
     }
 
@@ -245,7 +249,7 @@ mod tests {
         let bytes = std::fs::read(&file).expect("ler bytes");
         let installed: Vec<String> = crate::printers::list().expect("listar").into_iter().map(|p| p.name).collect();
         println!("IMPRESSORA: {printer} | BYTES: {}", bytes.len());
-        validate(&printer, &bytes, "diagnostic", &installed).expect("validação");
+        validate(&printer, &bytes, "diagnostic", &installed, false).expect("validação");
         println!("VALIDAÇÃO: ok");
         let mut trace = |line: &str| println!("{line}");
         match send_traced(&printer, &bytes, &mut trace) {

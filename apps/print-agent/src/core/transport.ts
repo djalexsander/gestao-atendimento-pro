@@ -4,11 +4,12 @@ import type { JobModel } from "./model.ts";
 import { renderText } from "./text-renderer.ts";
 
 // Transporte de impressão = o último passo do pipeline (claim -> documento -> TRANSPORTE -> complete).
-// O processamento de jobs do servidor usa SEMPRE a simulação nesta etapa. A impressão física existe só
-// para o diagnóstico local, e o lado nativo (Rust) recusa jobs reais enquanto REAL_JOB_PRINTING_ENABLED
-// for falso — mesmo que este código fosse alterado para tentar.
+// Jobs do servidor: modo REAL (escolha explícita do usuário, state.json printMode="real") usa o transporte RAW;
+// em SIMULAÇÃO o agente nem faz claim. O lado nativo (Rust) também confere o modo salvo antes de aceitar
+// purpose="job". O diagnóstico local ("diagnostic") é independente do modo.
 
-export type PrintMode = "simulation" | "real";
+import type { PrintMode } from "./config.ts";
+export type { PrintMode };
 
 export interface PrintRequest {
   printerName: string | null; // impressora do Windows (null na simulação sem vínculo)

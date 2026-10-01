@@ -60,13 +60,23 @@ fn secret_delete() -> Result<(), String> {
     secrets::delete(secrets::SERVICE)
 }
 
-/// Envia um documento ESC/POS RAW ao spooler. NÃO é uma API livre: só aceita impressora instalada,
-/// documento que começa com ESC @ e, enquanto `REAL_JOB_PRINTING_ENABLED` for falso, apenas a
-/// finalidade "diagnostic" (clique explícito no diagnóstico). Jobs do servidor ("job") são recusados aqui.
+/// Modo REAL escolhido explicitamente pelo usuário (state.json: printMode == "real"). Ausente/ilegível = falso.
+fn real_mode(app: &tauri::AppHandle) -> bool {
+    let Ok(path) = state_path(app) else { return false };
+    let Ok(text) = fs::read_to_string(path) else { return false };
+    serde_json::from_str::<serde_json::Value>(&text)
+        .ok()
+        .and_then(|v| v.get("printMode").and_then(|m| m.as_str().map(|s| s == "real")))
+        .unwrap_or(false)
+}
+
+/// Envia um documento ESC/POS RAW ao spooler. NÃO é uma API livre: só aceita impressora instalada e
+/// documento que começa com ESC @. Finalidade "diagnostic" (clique explícito no diagnóstico) é sempre aceita;
+/// "job" (fila automática) só se o modo REAL estiver salvo no state.json.
 #[tauri::command]
-fn print_raw(printer_name: String, bytes: Vec<u8>, purpose: String) -> Result<(), String> {
+fn print_raw(app: tauri::AppHandle, printer_name: String, bytes: Vec<u8>, purpose: String) -> Result<(), String> {
     let installed: Vec<String> = printers::list()?.into_iter().map(|p| p.name).collect();
-    raw_print::validate(&printer_name, &bytes, &purpose, &installed)?;
+    raw_print::validate(&printer_name, &bytes, &purpose, &installed, real_mode(&app))?;
     raw_print::send(&printer_name, &bytes)
 }
 

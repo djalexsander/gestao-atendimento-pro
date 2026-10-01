@@ -155,6 +155,7 @@ if (!config) {
     api: new AgentApi({ supabaseUrl: config.supabaseUrl, anonKey: config.anonKey }, (url, init) => fetch(url, init)),
     store: nativeStore,
     secrets: nativeSecrets,
+    rawPort: nativeRawPort,
     listPrinters: listWindowsPrinters,
     hostName: computerName,
     newId: () => crypto.randomUUID(),
@@ -213,6 +214,51 @@ if (!config) {
     return row;
   }
 
+  // Confirmação explícita SIMULAÇÃO -> REAL (nunca ativa sozinha).
+  function askEnableReal(): void {
+    const dialog = el("dialog", { class: "confirm" });
+    const cancel = el("button", { class: "secondary" }, "Cancelar");
+    const enable = el("button", { class: "danger" }, "Ativar impressão real");
+    dialog.append(
+      el("h2", {}, "Ativar impressão real?"),
+      el("p", {}, "A partir de agora, pedidos recebidos pelo Agente serão enviados automaticamente às impressoras vinculadas."),
+      el("div", { class: "bind" }, cancel, enable),
+    );
+    const close = () => {
+      dialog.close();
+      dialog.remove();
+    };
+    cancel.addEventListener("click", close);
+    dialog.addEventListener("cancel", () => dialog.remove());
+    enable.addEventListener("click", async () => {
+      close();
+      await app.setPrintMode("real");
+    });
+    document.body.append(dialog);
+    dialog.showModal();
+  }
+
+  function modeSection(s: Snapshot): HTMLElement {
+    const real = s.printMode === "real";
+    const sim = el("button", { class: real ? "secondary" : "", "aria-pressed": String(!real) }, "Simulação");
+    const live = el("button", { class: real ? "danger" : "secondary", "aria-pressed": String(real) }, "Real");
+    sim.addEventListener("click", () => {
+      if (real) void app.setPrintMode("simulation");
+    });
+    live.addEventListener("click", () => {
+      if (!real) askEnableReal();
+    });
+    const section = el(
+      "section",
+      { class: "mode" },
+      el("h2", {}, "Modo de impressão"),
+      el("div", { class: "bind" }, sim, live),
+      el("p", { class: real ? "mode-banner real" : "mode-banner" }, real ? "Modo REAL — pedidos recebidos serão impressos automaticamente." : "Modo simulação — nenhum pedido será enviado para a impressora."),
+    );
+    if (!real) section.append(el("p", { class: "muted" }, "Fila automática pausada — modo simulação."));
+    return section;
+  }
+
   function render(): void {
     const s = app.snapshot();
     const status = statusText(s);
@@ -245,13 +291,13 @@ if (!config) {
       main.append(printersSection(s.printers));
     } else {
       main.append(el("dl", { class: "info" }, el("dt", {}, "Computador"), el("dd", {}, s.computerName || "—"), el("dt", {}, "Agente"), el("dd", {}, s.agentName ?? "—"), el("dt", {}, "Empresa"), el("dd", {}, s.companyName ?? "—")));
-      main.append(el("p", { class: "sim" }, "Simulação de impressão: ", el("strong", {}, "ATIVO"), " — jobs do servidor não imprimem papel nesta versão."));
+      main.append(modeSection(s));
       main.append(printersSection(s.printers));
       const devices = el("section", {}, el("h2", {}, "Impressoras do sistema"));
       if (s.devices.length === 0) devices.append(el("p", { class: "muted" }, "Nenhuma impressora cadastrada no sistema (Configurações → Impressão)."));
       for (const d of s.devices) devices.append(deviceRow(d, s.printers));
       main.append(devices);
-      if (s.preview) main.append(el("section", {}, el("h2", {}, "Último papel simulado"), el("pre", { class: "paper" }, s.preview.join("\n"))));
+      if (s.preview) main.append(el("section", {}, el("h2", {}, s.printMode === "real" ? "Último papel impresso" : "Último papel simulado"), el("pre", { class: "paper" }, s.preview.join("\n"))));
       const disconnect = el("button", { class: "secondary" }, "Desconectar este computador");
       disconnect.addEventListener("click", () => {
         if (window.confirm("Desconectar este computador do sistema? A credencial será removida daqui. Para apagar o agente do painel, use Revogar em Configurações → Impressão → Agentes.")) void app.disconnect();

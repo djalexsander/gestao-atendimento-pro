@@ -4,7 +4,7 @@ import { ConnectionTracker, pollDelayMs, type ConnectionState } from "./connecti
 import type { JobModel } from "./model.ts";
 import { Poller, type Timers } from "./poller.ts";
 import { processJob } from "./processor.ts";
-import { SimulationPrinterTransport, type PrinterTransport, type PrintMode } from "./transport.ts";
+import { RawEscPosPrinterTransport, type PrinterTransport, type PrintMode, type RawPrinterPort } from "./transport.ts";
 
 export interface WindowsPrinter {
   name: string;
@@ -29,6 +29,8 @@ export interface Snapshot {
   log: LogLine[];
   simulation: boolean;
   printMode: PrintMode;
+  // Fila automática pausada (modo simulação): o agente NÃO faz claim, então nenhum job é consumido.
+  queuePaused: boolean;
   preview: string[] | null;
   message: string | null;
 }
@@ -37,6 +39,8 @@ export interface AppDeps {
   api: AgentApi;
   store: KeyValueStore;
   secrets: SecretStore;
+  // Porta nativa de impressão RAW (usada SÓ no modo real).
+  rawPort: RawPrinterPort;
   listPrinters(): Promise<WindowsPrinter[]>;
   hostName(): Promise<string>;
   newId(): string;
@@ -64,9 +68,16 @@ export class PrintAgentApp {
   private readonly listeners = new Set<() => void>();
   private claimPoller: Poller;
   private heartbeatPoller: Poller;
-  // Jobs do servidor SEMPRE em simulação nesta etapa (nenhum papel sai). Não há como ligar o modo real daqui.
-  private readonly printMode: PrintMode = "simulation";
-  private readonly transport: PrinterTransport = new SimulationPrinterTransport();
+
+  // Modo de impressão (persistido em state.json). Padrão: simulação. Só setPrintMode("real"), chamado por uma
+  // ação explícita do usuário, liga a impressão automática.
+  get printMode(): PrintMode {
+    return this.state?.printMode ?? "simulation";
+  }
+
+  private transport(): PrinterTransport {
+    return new RawEscPosPrinterTransport(this.deps.rawPort, "job");
+  }
 
   constructor(deps: AppDeps) {
     this.deps = deps;
@@ -113,6 +124,7 @@ export class PrintAgentApp {
       log: this.logLines,
       simulation: this.printMode === "simulation",
       printMode: this.printMode,
+      queuePaused: this.printMode !== "real",
       preview: this.preview,
       message: this.message,
     };
@@ -136,18 +148,36 @@ export class PrintAgentApp {
       const parsed = parseState(await this.deps.store.load());
       this.state = parsed
         ? { ...parsed, agentId: null, token: null, agentName: null, companyName: null }
-        : { machineId: this.deps.newId(), agentId: null, token: null, agentName: null, companyName: null, computerName: null };
+        : { machineId: this.deps.newId(), agentId: null, token: null, agentName: null, companyName: null, computerName: null, printMode: "simulation" as const };
       this.message = SECRET_ERROR_MESSAGE;
     }
     await this.refreshPrinters();
     this.phase = isPaired(this.state) ? "paired" : "unpaired";
+    this.log(this.printMode === "real" ? "Impressão automática REAL ativada." : "Fila automática pausada — modo simulação.");
     this.emit();
     if (this.phase === "paired") this.startLoops();
   }
 
   private startLoops(): void {
     this.heartbeatPoller.start();
-    this.claimPoller.start();
+    // Fila automática SÓ no modo real. Em simulação não há claim (nada é consumido nem marcado printed/error).
+    if (this.printMode === "real") this.claimPoller.start();
+  }
+
+  // Troca o modo. Chamar APENAS a partir de uma escolha explícita do usuário (a UI pede confirmação para real).
+  async setPrintMode(mode: PrintMode): Promise<boolean> {
+    if (!this.state || mode === this.state.printMode) return false;
+    this.state = { ...this.state, printMode: mode };
+    await saveState(this.deps.store, this.state);
+    if (mode === "real") {
+      this.log("Impressão automática REAL ativada.");
+      if (this.phase === "paired") this.claimPoller.start();
+    } else {
+      this.claimPoller.stop();
+      this.log("Fila automática pausada — modo simulação.");
+    }
+    this.emit();
+    return true;
   }
 
   stop(): void {
@@ -256,7 +286,8 @@ export class PrintAgentApp {
       this.log("Aviso: não foi possível remover a credencial do cofre do Windows.");
     }
     if (this.state) {
-      this.state = { ...this.state, agentId: null, token: null, agentName: null, companyName: null };
+      // Sem credencial não há fila: volta ao modo seguro (simulação).
+      this.state = { ...this.state, agentId: null, token: null, agentName: null, companyName: null, printMode: "simulation" };
       await saveState(this.deps.store, this.state);
     }
   }
@@ -303,6 +334,7 @@ export class PrintAgentApp {
   private async claimCycle(): Promise<void> {
     const c = this.creds();
     if (!c || this.phase !== "paired") return;
+    if (this.printMode !== "real") return; // simulação: não faz claim
     const res = await this.deps.api.claim(c, this.deps.claimLimit ?? 5);
     if (!res.ok) {
       this.noteFailure(res.kind);
@@ -311,7 +343,7 @@ export class PrintAgentApp {
     this.connection.reachable();
     if (res.data.invalid > 0) this.log(`${res.data.invalid} job(s) com formato inválido ignorado(s)`);
     for (const job of res.data.jobs) {
-      if (this.phase !== "paired") return;
+      if (this.phase !== "paired" || this.printMode !== "real") return;
       await this.process(c, job);
     }
   }
@@ -321,7 +353,7 @@ export class PrintAgentApp {
       creds: c,
       complete: (cr, id) => this.deps.api.complete(cr, id),
       fail: (cr, id, err) => this.deps.api.fail(cr, id, err),
-      transport: this.transport,
+      transport: this.transport(),
       log: (line) => this.log(line),
       onPreview: (_j, lines) => {
         this.preview = lines;

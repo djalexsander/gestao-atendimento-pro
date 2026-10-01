@@ -148,7 +148,7 @@ export function jobTypeLabel(job: Pick<PrintJob, "job_type" | "reprint_of_id">):
 }
 
 export const STATUS_LABEL: Record<JobStatus, string> = {
-  pending: "Aguardando impressão",
+  pending: "Pendente",
   claimed: "Imprimindo",
   printed: "Impresso",
   error: "Erro",

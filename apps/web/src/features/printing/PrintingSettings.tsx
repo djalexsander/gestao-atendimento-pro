@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "../../app/useAuth";
 import { ConfirmDialog, ManageAgentDialog, PairingCodeDialog } from "./AgentDialogs";
 import { JobDetailsDialog, PrinterDialog, RemovePrinterDialog, formatDateTime } from "./PrinterDialogs";
 import { QUEUE_LIMIT, supabasePrintingSource, type PrintingSource } from "./printingApi";
+import { startPrintLive, startUiClock } from "./printingLive";
 import {
   STATUS_LABEL,
   deviceStatusLabel,
@@ -98,20 +99,33 @@ export function PrintingSettings({ source = supabasePrintingSource }: { source?:
     if (canManage) {
       void reloadConfig();
       void reloadFailures();
+      void reloadAgents();
     }
-  }, [canManage, reloadConfig, reloadFailures]);
-
-  // Agentes: recarrega ao abrir a aba e a cada 30 s enquanto ela está aberta (heartbeat do agente é de 30 s).
-  useEffect(() => {
-    if (!canManage || tab !== "agents") return;
-    void reloadAgents();
-    const timer = setInterval(() => void reloadAgents(), 30_000);
-    return () => clearInterval(timer);
-  }, [canManage, tab, reloadAgents]);
+  }, [canManage, reloadConfig, reloadFailures, reloadAgents]);
 
   useEffect(() => {
     if (canManage && tab === "queue") void reloadQueue();
   }, [canManage, tab, reloadQueue]);
+
+  // TEMPO REAL: Realtime (fila, impressoras, agentes, avisos) -> reload coalescido; ao voltar a ficar visível,
+  // um reload. Sem polling de banco. O "Atualizar" da fila continua como fallback manual.
+  const queueActiveRef = useRef(false);
+  queueActiveRef.current = tab === "queue" || jobs !== null;
+  useEffect(() => {
+    if (!canManage || !companyId) return;
+    return startPrintLive({
+      companyId,
+      subscribe: source.subscribeToChanges,
+      reload: { config: reloadConfig, agents: reloadAgents, queue: reloadQueue, failures: reloadFailures },
+      isQueueActive: () => queueActiveRef.current,
+    });
+  }, [canManage, companyId, source, reloadConfig, reloadAgents, reloadQueue, reloadFailures]);
+
+  // Online/Offline depende do TEMPO (sem heartbeat não chega evento): relógio local que só recalcula, sem consultar o servidor.
+  useEffect(() => {
+    if (!canManage) return;
+    return startUiClock(() => setNow(Date.now()));
+  }, [canManage]);
 
   if (!canManage) {
     return <p className="form-notice">Somente donos(as) e administradores(as) podem configurar a impressão.</p>;
