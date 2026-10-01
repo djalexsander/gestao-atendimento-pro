@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { WindowsPrinter } from "./core/app.ts";
 import type { KeyValueStore, SecretStore } from "./core/config.ts";
+import type { StartupPort } from "./core/app.ts";
 import type { RawPrinterPort } from "./core/transport.ts";
 
 // Ponte com o shell nativo (Rust). O navegador/webview NÃO enumera impressoras nem imprime: quem faz é o Rust.
@@ -30,3 +31,17 @@ export const nativeSecrets: SecretStore = {
 export const nativeRawPort: RawPrinterPort = {
   printRaw: (printerName, bytes, purpose) => invoke<void>("print_raw", { printerName, bytes: Array.from(bytes), purpose }),
 };
+
+// Inicialização com o Windows, bandeja e avisos (Rust). Nenhuma permissão extra para o JavaScript: tudo passa por comandos próprios.
+export const nativeStartup: StartupPort = {
+  setAutostart: (enabled) => invoke<void>("autostart_set", { enabled }),
+  isAutostartEnabled: () => invoke<boolean>("autostart_status"),
+  launchedHidden: () => invoke<boolean>("launched_minimized"),
+  setTrayStatus: (connection, mode) => invoke<void>("set_tray_status", { connection, mode }),
+  notify: (title, body) => invoke<void>("show_notification", { title, body }),
+  showWindow: () => invoke<void>("show_main_window"),
+};
+
+export function exitApp(): Promise<void> {
+  return invoke<void>("exit_app");
+}

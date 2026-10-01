@@ -31,8 +31,20 @@ export interface Snapshot {
   printMode: PrintMode;
   // Fila automática pausada (modo simulação): o agente NÃO faz claim, então nenhum job é consumido.
   queuePaused: boolean;
+  autostart: boolean;
+  keepBackground: boolean;
   preview: string[] | null;
   message: string | null;
+}
+
+// Ponte com o shell nativo para inicialização, bandeja e avisos (tudo opcional no sentido de falhar sem derrubar o agente).
+export interface StartupPort {
+  setAutostart(enabled: boolean): Promise<void>; // entrada "Iniciar com o Windows"
+  isAutostartEnabled(): Promise<boolean>;
+  launchedHidden(): Promise<boolean>; // iniciado pelo autostart (--minimized)
+  setTrayStatus(connection: ConnectionState, mode: PrintMode): Promise<void>; // rótulos do menu da bandeja
+  notify(title: string, body: string): Promise<void>; // toast discreto
+  showWindow(): Promise<void>; // erro crítico: traz a janela
 }
 
 export interface AppDeps {
@@ -41,6 +53,7 @@ export interface AppDeps {
   secrets: SecretStore;
   // Porta nativa de impressão RAW (usada SÓ no modo real).
   rawPort: RawPrinterPort;
+  startup: StartupPort;
   listPrinters(): Promise<WindowsPrinter[]>;
   hostName(): Promise<string>;
   newId(): string;
@@ -95,8 +108,9 @@ export class PrintAgentApp {
     );
     this.connection.subscribe((s) => {
       if (s === "offline") this.log(OFFLINE_MESSAGE);
-      if (s === "online" && this.wasOffline) this.log("Conexão restabelecida");
+      if (s === "online" && this.wasOffline) this.log("Agente restaurado após reconexão.");
       this.wasOffline = s === "offline";
+      this.syncTray();
       this.emit();
     });
   }
@@ -125,6 +139,8 @@ export class PrintAgentApp {
       simulation: this.printMode === "simulation",
       printMode: this.printMode,
       queuePaused: this.printMode !== "real",
+      autostart: this.state?.autostart ?? true,
+      keepBackground: this.state?.keepBackground ?? true,
       preview: this.preview,
       message: this.message,
     };
@@ -148,14 +164,74 @@ export class PrintAgentApp {
       const parsed = parseState(await this.deps.store.load());
       this.state = parsed
         ? { ...parsed, agentId: null, token: null, agentName: null, companyName: null }
-        : { machineId: this.deps.newId(), agentId: null, token: null, agentName: null, companyName: null, computerName: null, printMode: "simulation" as const };
+        : { machineId: this.deps.newId(), agentId: null, token: null, agentName: null, companyName: null, computerName: null, printMode: "simulation" as const, autostart: true, keepBackground: true, trayNoticeShown: false };
       this.message = SECRET_ERROR_MESSAGE;
     }
     await this.refreshPrinters();
     this.phase = isPaired(this.state) ? "paired" : "unpaired";
     this.log(this.printMode === "real" ? "Impressão automática REAL ativada." : "Fila automática pausada — modo simulação.");
     this.emit();
-    if (this.phase === "paired") this.startLoops();
+    if (this.phase === "paired") {
+      if (await this.deps.startup.launchedHidden().catch(() => false)) this.log("Agente iniciado automaticamente com o Windows.");
+      await this.reconcileAutostart();
+      this.startLoops();
+    }
+    // Credencial/cofre com problema: precisa de atenção, então abre a janela mesmo iniciando escondido.
+    if (this.message) void this.deps.startup.showWindow().catch(() => {});
+    this.syncTray();
+  }
+
+  // Mantém a entrada do Windows de acordo com a opção salva (só depois de pareado; antes não mexe).
+  private async reconcileAutostart(): Promise<void> {
+    if (!this.state) return;
+    try {
+      const enabled = await this.deps.startup.isAutostartEnabled();
+      if (enabled !== this.state.autostart) await this.deps.startup.setAutostart(this.state.autostart);
+    } catch (e) {
+      this.log(`Aviso: não foi possível ajustar "Iniciar com o Windows": ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  private syncTray(): void {
+    void this.deps.startup.setTrayStatus(this.connection.state, this.printMode).catch(() => {});
+  }
+
+  // "Iniciar automaticamente com o Windows" (checkbox). Persistido; aplica no sistema na hora.
+  async setAutostart(enabled: boolean): Promise<void> {
+    if (!this.state) return;
+    this.state = { ...this.state, autostart: enabled };
+    await saveState(this.deps.store, this.state);
+    try {
+      await this.deps.startup.setAutostart(enabled);
+    } catch (e) {
+      this.message = `Não foi possível alterar a inicialização com o Windows: ${e instanceof Error ? e.message : String(e)}`;
+    }
+    this.emit();
+  }
+
+  // "Manter ativo em segundo plano" (checkbox). Desligado: o X encerra normalmente (o Rust lê o valor salvo).
+  async setKeepBackground(enabled: boolean): Promise<void> {
+    if (!this.state) return;
+    this.state = { ...this.state, keepBackground: enabled };
+    await saveState(this.deps.store, this.state);
+    this.emit();
+  }
+
+  // A janela foi escondida na bandeja (X): o processo, o heartbeat e a fila seguem. Aviso só na 1ª vez.
+  async onHiddenToTray(): Promise<void> {
+    this.log("Executando em segundo plano.");
+    if (this.state && !this.state.trayNoticeShown) {
+      this.state = { ...this.state, trayNoticeShown: true };
+      await saveState(this.deps.store, this.state);
+      await this.deps.startup.notify("Agente de Impressão", "O Agente de Impressão continuará ativo em segundo plano.").catch(() => {});
+    }
+    this.emit();
+  }
+
+  // "Sair do Agente": para heartbeat e poller (o processo é encerrado por quem chamou).
+  shutdown(): void {
+    this.stop();
+    this.log("Agente encerrado.");
   }
 
   private startLoops(): void {
@@ -176,6 +252,7 @@ export class PrintAgentApp {
       this.claimPoller.stop();
       this.log("Fila automática pausada — modo simulação.");
     }
+    this.syncTray();
     this.emit();
     return true;
   }
@@ -220,8 +297,15 @@ export class PrintAgentApp {
       this.emit();
       return false;
     }
-    this.state = { ...this.state, agentId: res.data.agentId, token: res.data.token, agentName: res.data.agentName, companyName: res.data.companyName, computerName: trimmed };
+    // Depois de pareado, "Iniciar com o Windows" fica LIGADO por padrão (o usuário pode desligar depois).
+    this.state = { ...this.state, agentId: res.data.agentId, token: res.data.token, agentName: res.data.agentName, companyName: res.data.companyName, computerName: trimmed, autostart: true };
     await saveState(this.deps.store, this.state);
+    try {
+      await this.deps.startup.setAutostart(true);
+      this.log("Iniciar com o Windows: ativado.");
+    } catch (e) {
+      this.log(`Aviso: não foi possível ativar "Iniciar com o Windows": ${e instanceof Error ? e.message : String(e)}`);
+    }
     this.connection.reset();
     this.phase = "paired";
     this.log(`Computador conectado: ${res.data.agentName} (${res.data.companyName})`);

@@ -129,8 +129,42 @@ export function physicalPrinterLabel(device: PrintDevice): string {
   return device.windows_printer_name ?? "Não configurada";
 }
 
-export function deviceStatusLabel(device: PrintDevice): string {
-  return device.ready ? "Pronta para imprimir" : "Aguardando Agente de Impressão";
+// Estado da impressora no painel. `ready` (banco) = vinculada a um Agente e a uma impressora do Windows; NÃO diz se o
+// computador está ligado. Online/offline vem do heartbeat do Agente (last_seen_at) e é calculado aqui, na UI.
+//   sem vínculo                -> "Aguardando Agente de Impressão"
+//   vinculada, agente offline  -> "Agente offline"
+//   vinculada, agente online   -> "Pronta para imprimir"
+export function deviceStatusLabel(device: PrintDevice, agents: PrintAgent[] | null = null, now: number = Date.now()): string {
+  if (!device.ready) return "Aguardando Agente de Impressão";
+  if (agents === null) return "Verificando agente…";
+  const agent = agents.find((a) => a.id === device.agent_id);
+  return agent && isAgentOnline(agent, now) ? "Pronta para imprimir" : "Agente offline";
+}
+
+// Vinculada mas com o computador offline: continua aceitando jobs (ficam pendentes até o Agente voltar).
+export function isDeviceAgentOffline(device: PrintDevice, agents: PrintAgent[] | null, now: number = Date.now()): boolean {
+  if (!device.ready || agents === null) return false;
+  const agent = agents.find((a) => a.id === device.agent_id);
+  return !agent || !isAgentOnline(agent, now);
+}
+
+// "Há impressões aguardando o Agente X ficar online." — um aviso por agente offline com jobs pendentes.
+export function offlinePendingNotices(
+  jobs: Array<Pick<PrintJob, "status" | "print_device_id">>,
+  devices: PrintDevice[],
+  agents: PrintAgent[] | null,
+  now: number = Date.now(),
+): string[] {
+  if (agents === null) return [];
+  const names = new Set<string>();
+  for (const job of jobs) {
+    if (job.status !== "pending") continue;
+    const device = devices.find((d) => d.id === job.print_device_id);
+    if (!device || !isDeviceAgentOffline(device, agents, now)) continue;
+    const agent = agents.find((a) => a.id === device.agent_id);
+    if (agent) names.add(agent.name);
+  }
+  return [...names].map((name) => `Há impressões aguardando o Agente ${name} ficar online.`);
 }
 
 const JOB_TYPE_LABEL: Record<JobType, string> = {

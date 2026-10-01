@@ -7,6 +7,8 @@ import { startPrintLive, startUiClock } from "./printingLive";
 import {
   STATUS_LABEL,
   deviceStatusLabel,
+  isDeviceAgentOffline,
+  offlinePendingNotices,
   destinationLabels,
   describeEnqueueFailure,
   isAgentOnline,
@@ -225,7 +227,7 @@ export function PrintingSettings({ source = supabasePrintingSource }: { source?:
                     {device.agent_id && agents?.find((a) => a.id === device.agent_id) ? ` (${agents.find((a) => a.id === device.agent_id)!.name})` : ""}
                   </dd>
                   <dt>Status</dt>
-                  <dd>{deviceStatusLabel(device)}</dd>
+                  <dd>{deviceStatusLabel(device, agents, now)}</dd>
                 </dl>
                 <div className="row-actions">
                   <button
@@ -237,7 +239,9 @@ export function PrintingSettings({ source = supabasePrintingSource }: { source?:
                       void direct(
                         device.id,
                         () => source.testPrint(device.id),
-                        "Teste enviado para a fila. Ele será impresso quando o Agente de impressão estiver conectado.",
+                        isDeviceAgentOffline(device, agents, now)
+                          ? "Teste enviado para a fila. Ele será impresso quando o Agente estiver online."
+                          : "Teste enviado para a fila.",
                       )
                     }
                   >
@@ -333,6 +337,11 @@ export function PrintingSettings({ source = supabasePrintingSource }: { source?:
   } else {
     queueBody = (
       <>
+        {offlinePendingNotices(jobs, devices ?? [], agents, now).map((message) => (
+          <p key={message} className="form-notice" role="status">
+            {message}
+          </p>
+        ))}
         <div className="table-scroll">
           <table className="data-table">
             <thead>

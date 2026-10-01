@@ -27,3 +27,5 @@ button.danger { background: #b3261e; }
 .mode-banner { font-size: 13px; padding: 8px 10px; border: 1px dashed #8886; border-radius: 8px; margin: 0; }
 .mode-banner.real { border: 1px solid #b3261e; color: #b3261e; font-weight: 600; }
 dialog.confirm { max-width: 420px; border: 1px solid #8886; border-radius: 12px; background: Canvas; color: CanvasText; }
+
+label.check { display: flex; align-items: center; gap: 8px; font-size: 14px; opacity: 1; margin: 2px 0; }

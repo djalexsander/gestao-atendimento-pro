@@ -5,6 +5,7 @@ import { PrintAgentApp } from "../src/core/app.ts";
 import type { KeyValueStore, SecretStore } from "../src/core/config.ts";
 import type { Timers } from "../src/core/poller.ts";
 import { RawEscPosPrinterTransport, type RawPrinterPort } from "../src/core/transport.ts";
+import { fakeStartup } from "./helpers.ts";
 
 const CFG = { supabaseUrl: "https://x.supabase.co", anonKey: "k".repeat(30) };
 const flush = async () => {
@@ -105,6 +106,7 @@ function setup(opts: { printMode?: "real" | "simulation" | undefined; jobs?: unk
     store,
     secrets: secrets(),
     rawPort: port,
+    startup: fakeStartup().port,
     listPrinters: async () => [{ name: "POS-80", isDefault: true }],
     hostName: async () => "PC",
     newId: () => "machine-test-0001",

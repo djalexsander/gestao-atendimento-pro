@@ -4,6 +4,7 @@ import { AgentApi, type FetchLike } from "../src/core/api.ts";
 import { PrintAgentApp } from "../src/core/app.ts";
 import { SECRET_ERROR_MESSAGE, type KeyValueStore, type SecretStore } from "../src/core/config.ts";
 import type { Timers } from "../src/core/poller.ts";
+import { fakeStartup } from "./helpers.ts";
 
 const CFG = { supabaseUrl: "https://x.supabase.co", anonKey: "k".repeat(30) };
 const noTimers: Timers = { setTimeout: () => 0, clearTimeout: () => {} };
@@ -67,6 +68,7 @@ const mkApp = (fetchFn: FetchLike, st: KeyValueStore, sec: SecretStore = secrets
     store: st,
     secrets: sec,
     rawPort: { printRaw: async () => {} },
+    startup: fakeStartup().port,
     listPrinters: printers,
     hostName: async () => "CAIXA-01",
     newId: () => "machine-test-0001",
@@ -149,7 +151,7 @@ test("offline não derruba: mostra estado, mantém credencial e reconecta sozinh
   srv.state.offline = false;
   await app.refreshDevices();
   assert.equal(app.snapshot().connection, "online");
-  assert.ok(app.snapshot().log.some((l) => l.text === "Conexão restabelecida"));
+  assert.ok(app.snapshot().log.some((l) => l.text === "Agente restaurado após reconexão."));
   app.stop();
 });
 

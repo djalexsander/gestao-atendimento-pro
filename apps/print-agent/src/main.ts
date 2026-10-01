@@ -7,7 +7,8 @@ import { renderEscPos } from "./core/escpos.ts";
 import { defaultDiagnosticPrinter, isVirtualPrinter, looksLikeLabelPrinter } from "./core/printer-kind.ts";
 import { renderText } from "./core/text-renderer.ts";
 import { RawEscPosPrinterTransport } from "./core/transport.ts";
-import { computerName, listWindowsPrinters, nativeRawPort, nativeSecrets, nativeStore } from "./tauri.ts";
+import { listen } from "@tauri-apps/api/event";
+import { computerName, exitApp, listWindowsPrinters, nativeRawPort, nativeSecrets, nativeStartup, nativeStore } from "./tauri.ts";
 import "./style.css";
 
 const root = document.getElementById("app")!;
@@ -156,9 +157,18 @@ if (!config) {
     store: nativeStore,
     secrets: nativeSecrets,
     rawPort: nativeRawPort,
+    startup: nativeStartup,
     listPrinters: listWindowsPrinters,
     hostName: computerName,
     newId: () => crypto.randomUUID(),
+  });
+
+  // Eventos do shell nativo: X escondeu a janela na bandeja / "Sair do Agente" no menu da bandeja.
+  // O ciclo (heartbeat, claim, impressão) pertence ao processo, não à janela.
+  void listen("hidden-to-tray", () => void app.onHiddenToTray());
+  void listen("quit-requested", async () => {
+    app.shutdown();
+    await exitApp();
   });
 
   // Estado de UI que o render não pode perder (campos digitados, seleções).
@@ -259,6 +269,23 @@ if (!config) {
     return section;
   }
 
+  function startupSection(s: Snapshot): HTMLElement {
+    const check = (id: string, label: string, checked: boolean, onChange: (v: boolean) => void) => {
+      const input = el("input", { id, type: "checkbox" });
+      input.checked = checked;
+      input.addEventListener("change", () => onChange(input.checked));
+      return el("label", { class: "check", for: id }, input, " " + label);
+    };
+    return el(
+      "section",
+      { class: "startup" },
+      el("h2", {}, "Inicialização"),
+      check("opt-autostart", "Iniciar automaticamente com o Windows", s.autostart, (v) => void app.setAutostart(v)),
+      check("opt-background", "Manter ativo em segundo plano", s.keepBackground, (v) => void app.setKeepBackground(v)),
+      el("p", { class: "muted" }, s.keepBackground ? "Fechar a janela (X) esconde o Agente na bandeja do Windows; use o ícone da bandeja → Sair do Agente para encerrar." : "Fechar a janela (X) encerra o Agente."),
+    );
+  }
+
   function render(): void {
     const s = app.snapshot();
     const status = statusText(s);
@@ -292,6 +319,7 @@ if (!config) {
     } else {
       main.append(el("dl", { class: "info" }, el("dt", {}, "Computador"), el("dd", {}, s.computerName || "—"), el("dt", {}, "Agente"), el("dd", {}, s.agentName ?? "—"), el("dt", {}, "Empresa"), el("dd", {}, s.companyName ?? "—")));
       main.append(modeSection(s));
+      main.append(startupSection(s));
       main.append(printersSection(s.printers));
       const devices = el("section", {}, el("h2", {}, "Impressoras do sistema"));
       if (s.devices.length === 0) devices.append(el("p", { class: "muted" }, "Nenhuma impressora cadastrada no sistema (Configurações → Impressão)."));

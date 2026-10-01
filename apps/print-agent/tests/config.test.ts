@@ -63,7 +63,7 @@ test("estado corrompido não derruba: gera novo machine_id sem token", async () 
 });
 
 test("o arquivo state.json NUNCA contém o token (nem de arquivo antigo)", async () => {
-  const state = { machineId: "abcdefgh-1234", agentId: "a1", token: "SEGREDO", agentName: "Caixa", companyName: "ACME", computerName: "PC", printMode: "simulation" as const };
+  const state = { machineId: "abcdefgh-1234", agentId: "a1", token: "SEGREDO", agentName: "Caixa", companyName: "ACME", computerName: "PC", printMode: "simulation" as const, autostart: true, keepBackground: true, trayNoticeShown: false };
   assert.ok(!serializeState(state).includes("SEGREDO"));
   assert.ok(!serializeState(state).includes("token"));
   const legacy = JSON.stringify({ machineId: "abcdefgh-1234", agentId: "a1", token: "SEGREDO-ANTIGO" });
@@ -88,6 +88,12 @@ test("agent_id no arquivo mas SEM token no cofre = não pareado, e o arquivo é 
 test("cofre indisponível: lança SecretStoreError (sem fallback para texto puro)", async () => {
   const store = memoryStore(JSON.stringify({ machineId: "abcdefgh-1234", agentId: "a1" }));
   await assert.rejects(() => loadOrCreateState(store, memorySecrets(null, true), () => "x".repeat(10)), SecretStoreError);
+});
+
+test("parseState tolera BOM no início do arquivo", () => {
+  const raw = "﻿" + JSON.stringify({ machineId: "abcdefgh-1234", agentId: "a1", printMode: "real" });
+  const s = parseState(raw);
+  assert.ok(s && s.agentId === "a1" && s.printMode === "real");
 });
 
 test("parseState: tolerante e consistente", () => {

@@ -15,6 +15,10 @@ export interface StoredState {
   companyName: string | null;
   computerName: string | null;
   printMode: PrintMode;
+  // Inicialização (não são segredos). Padrões: ligados; o Rust também lê keepBackground ao fechar a janela.
+  autostart: boolean; // "Iniciar automaticamente com o Windows"
+  keepBackground: boolean; // "Manter ativo em segundo plano" (X esconde na bandeja)
+  trayNoticeShown: boolean; // o aviso "continuará ativo em segundo plano" já foi mostrado
 }
 
 export interface KeyValueStore {
@@ -50,7 +54,8 @@ export function parseState(raw: string | null): StoredState | null {
   if (!raw) return null;
   let data: unknown;
   try {
-    data = JSON.parse(raw);
+    // tolera BOM (arquivo salvo/editado por ferramentas do Windows)
+    data = JSON.parse(raw.charCodeAt(0) === 0xfeff ? raw.slice(1) : raw);
   } catch {
     return null;
   }
@@ -68,6 +73,10 @@ export function parseState(raw: string | null): StoredState | null {
     computerName: str(o.computerName),
     // Qualquer coisa diferente de "real" (ausente, inválido, arquivo antigo) = simulação.
     printMode: o.printMode === "real" ? "real" : "simulation",
+    // Só `false` explícito desliga (arquivo antigo/ausente = padrão ligado).
+    autostart: o.autostart !== false,
+    keepBackground: o.keepBackground !== false,
+    trayNoticeShown: o.trayNoticeShown === true,
   };
 }
 
@@ -80,6 +89,9 @@ export function serializeState(state: StoredState): string {
     companyName: state.companyName,
     computerName: state.computerName,
     printMode: state.printMode,
+    autostart: state.autostart,
+    keepBackground: state.keepBackground,
+    trayNoticeShown: state.trayNoticeShown,
   });
 }
 
@@ -105,7 +117,7 @@ export async function loadOrCreateState(store: KeyValueStore, secrets: SecretSto
     await store.save(serializeState(unpaired));
     return unpaired;
   }
-  const fresh: StoredState = { machineId: newId(), agentId: null, token: null, agentName: null, companyName: null, computerName: null, printMode: "simulation" };
+  const fresh: StoredState = { machineId: newId(), agentId: null, token: null, agentName: null, companyName: null, computerName: null, printMode: "simulation", autostart: true, keepBackground: true, trayNoticeShown: false };
   await store.save(serializeState(fresh));
   return fresh;
 }
