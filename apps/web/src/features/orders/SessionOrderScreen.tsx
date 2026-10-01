@@ -5,6 +5,8 @@ import { useAuth } from "../../app/useAuth";
 import { supabaseCashSource, type CashSource } from "../cash/cashApi";
 import { CheckoutDialog, OpenCashDialog } from "../cash/CashDialogs";
 import { Modal } from "../employees/Modal";
+import { supabaseDocumentsSource, type DocumentsSource } from "../printing/documentsApi";
+import { PrintDocumentButton } from "../printing/PrintDocumentButton";
 import { formatOpenedFull } from "../operations/panel";
 import { createCoalescedRunner } from "./coalesce";
 import { CancelItemDialog } from "./CancelItemDialog";
@@ -23,11 +25,13 @@ export function SessionOrderScreen({
   variant,
   source = supabaseOrdersSource,
   cashSource = supabaseCashSource,
+  documentsSource = supabaseDocumentsSource,
 }: {
   sessionId: string;
   variant: "attendant" | "cashier";
   source?: OrdersSource;
   cashSource?: CashSource;
+  documentsSource?: DocumentsSource;
 }) {
   const navigate = useNavigate();
   const backPath = OPERATIONAL_PATH[variant === "attendant" ? "atendimento" : "caixa"];
@@ -300,6 +304,15 @@ export function SessionOrderScreen({
             </div>
           </dl>
         )}
+        {header && canOrder && (
+          // Conta / pré-conta (manual; F8 contextual). Só com itens válidos e sem diálogo de fechamento aberto.
+          <PrintDocumentButton
+            label="Imprimir conta"
+            successMessage="Conta enviada para impressão."
+            enabled={sessionTotal(orders) > 0 && checkoutStage === "none" && !cancelTarget}
+            request={() => documentsSource.customerBill(sessionId)}
+          />
+        )}
         {canCheckout && header && canOrder && (
           <button className="btn-primary btn-auto" type="button" disabled={checkoutChecking} onClick={() => void startCheckout()}>
             Fechar conta
@@ -333,6 +346,13 @@ export function SessionOrderScreen({
       {checkoutStage === "done" && (
         <Modal title="Conta fechada" onClose={() => navigate(backPath)}>
           <p className="modal-text">Pagamento registrado e conta fechada com sucesso. A comanda/mesa está livre.</p>
+          <PrintDocumentButton
+            label="Imprimir comprovante"
+            successMessage="Comprovante enviado para impressão."
+            request={() => documentsSource.paymentReceipt(sessionId)}
+            allowInDialog
+            className="btn-secondary"
+          />
           <div className="modal-actions">
             <button className="btn-primary btn-auto" type="button" autoFocus onClick={() => navigate(backPath)}>
               Voltar para Comandas / Mesas

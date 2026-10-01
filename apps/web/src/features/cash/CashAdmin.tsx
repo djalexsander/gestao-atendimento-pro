@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { supabaseDocumentsSource } from "../printing/documentsApi";
+import { PrintDocumentButton } from "../printing/PrintDocumentButton";
 import { useAuth } from "../../app/useAuth";
 import { formatReais } from "../../lib/money";
 import {
@@ -69,6 +71,14 @@ function CashDetail({
   return (
     <section className="cash-detail cash-detail-panel" aria-label="Detalhe do caixa">
       <h3>Detalhe do caixa</h3>
+      {cash.status === "closed" && (
+        // Fechamento de caixa (manual; F8 contextual): só caixa FECHADO. O servidor valida papel e dono do caixa.
+        <PrintDocumentButton
+          label="Imprimir fechamento"
+          successMessage="Fechamento enviado para impressão."
+          request={() => supabaseDocumentsSource.cashClosing(cash.id)}
+        />
+      )}
       {onCloseCash && (
         <button className="btn-danger" type="button" disabled={loading} onClick={onCloseCash}>
           Fechar caixa do operador

@@ -4,6 +4,8 @@ import { formatReais } from "../../lib/money";
 import { supabaseCashSource, type CashSource } from "./cashApi";
 import { CashMovementDialog, CloseCashDialog, OpenCashDialog } from "./CashDialogs";
 import type { CashMovementRow } from "./cashLogic";
+import { supabaseDocumentsSource, type DocumentsSource } from "../printing/documentsApi";
+import { PrintDocumentButton } from "../printing/PrintDocumentButton";
 import { notifyCashChanged, useMyOpenCash } from "./useMyOpenCash";
 
 const dateTime = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" });
@@ -20,7 +22,13 @@ export function isFromPreviousDay(openedAtIso: string, now: Date = new Date()): 
 // saldo inicial e oferece "Fechar caixa" (resumo). Um caixa aberto é sempre retomado (o banco
 // só admite um por operador). Só owner/admin/cashier veem; attendant não. O servidor é a
 // autoridade (open/close_cash_session). Comandas abertas não impedem o fechamento do caixa.
-export function CashControl({ source = supabaseCashSource }: { source?: CashSource }) {
+export function CashControl({
+  source = supabaseCashSource,
+  documentsSource = supabaseDocumentsSource,
+}: {
+  source?: CashSource;
+  documentsSource?: DocumentsSource;
+}) {
   const { activeMembership, profile } = useAuth();
   const companyId = activeMembership?.companyId ?? null;
   const role = activeMembership?.role ?? null;
@@ -30,6 +38,8 @@ export function CashControl({ source = supabaseCashSource }: { source?: CashSour
   const [movements, setMovements] = useState<CashMovementRow[]>([]);
   const [dialog, setDialog] = useState<"open" | "close" | "supply" | "withdrawal" | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  // Caixa que ESTE operador acabou de fechar: oferece imprimir o fechamento (manual; F8).
+  const [closedCashId, setClosedCashId] = useState<string | null>(null);
 
   // Carrega os movimentos do caixa (prévia de esperado/disponível) e abre o modal.
   async function startDialog(kind: "close" | "supply" | "withdrawal") {
@@ -79,6 +89,14 @@ export function CashControl({ source = supabaseCashSource }: { source?: CashSour
           {notice}
         </span>
       )}
+      {!cash && closedCashId && (
+        <PrintDocumentButton
+          label="Imprimir fechamento"
+          successMessage="Fechamento enviado para impressão."
+          enabled={dialog === null}
+          request={() => documentsSource.cashClosing(closedCashId)}
+        />
+      )}
 
       {dialog === "open" && (
         <OpenCashDialog
@@ -87,6 +105,7 @@ export function CashControl({ source = supabaseCashSource }: { source?: CashSour
           onOpened={() => {
             setDialog(null);
             setNotice(null);
+            setClosedCashId(null);
             notifyCashChanged();
           }}
           onClose={() => setDialog(null)}
@@ -116,6 +135,7 @@ export function CashControl({ source = supabaseCashSource }: { source?: CashSour
           onClosed={() => {
             setDialog(null);
             setNotice("Caixa fechado com sucesso.");
+            setClosedCashId(cash.id);
             notifyCashChanged();
           }}
           onClose={() => setDialog(null)}

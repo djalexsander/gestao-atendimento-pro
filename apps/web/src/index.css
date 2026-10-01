@@ -2452,3 +2452,144 @@ button {
     grid-template-columns: 1fr;
   }
 }
+
+/* Configurações → Impressão: cards dinâmicos de impressoras e fila. */
+.print-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 24px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  color: var(--text-muted);
+}
+
+.print-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 320px), 1fr));
+  gap: 12px;
+}
+
+.print-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.print-card h3 {
+  margin: 0;
+  font-size: 16px;
+  text-transform: uppercase;
+}
+
+.print-card-meta {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.print-details {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.print-details dt {
+  color: var(--text-muted);
+}
+
+.print-details dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.print-items {
+  margin: 0 0 12px;
+  padding-left: 20px;
+  font-size: 14px;
+}
+
+.print-destinations {
+  margin: 0 0 16px;
+  padding: 0;
+  border: 0;
+}
+
+.print-destinations legend {
+  padding: 0;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+.print-destinations .checkbox-row {
+  margin-bottom: 8px;
+}
+
+.print-status-error {
+  color: var(--danger);
+  background: var(--danger-bg);
+}
+
+/* Documentos manuais (botão Imprimir + F8) e avisos de falha de impressão. */
+.print-doc {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.print-doc p {
+  margin: 0;
+}
+
+/* Em celular/tablet (sem teclado físico) a dica de atalho some; o botão continua. */
+@media (hover: none), (pointer: coarse) {
+  .print-key-hint {
+    display: none;
+  }
+}
+
+.print-failures {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.print-failures li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 14px;
+}
+
+.modal .print-doc {
+  display: flex;
+  margin-bottom: 12px;
+}
+
+.pairing-code {
+  margin: 4px 0 8px;
+  font-size: 36px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+@media (max-width: 360px) {
+  .pairing-code {
+    font-size: 28px;
+    letter-spacing: 0.06em;
+  }
+}

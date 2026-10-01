@@ -33,6 +33,7 @@ import {
   OperationalServiceOrderPage,
   OperationalServicePage,
 } from "./pages/OperationalPages";
+import { PrintingSettingsPage } from "./pages/PrintingSettingsPage";
 import { ProductCategoriesPage } from "./pages/ProductCategoriesPage";
 import { ProductionSectorsPage } from "./pages/ProductionSectorsPage";
 import { ReportsRoutePage } from "./pages/ReportsRoutePage";
@@ -162,7 +163,8 @@ function App() {
         <Route path="operacional/pedidos" element={<ModulePlaceholderPage title="Pedidos" />} />
         <Route path="operacional/caixa" element={<ModulePlaceholderPage title="Caixa / Balcão" />} />
 
-        <Route path="configuracoes/impressoras" element={<ModulePlaceholderPage title="Impressoras" />} />
+        <Route path="configuracoes/impressoras" element={<Navigate to="/app/configuracoes/impressao" replace />} />
+        <Route path="configuracoes/impressao" element={<PrintingSettingsPage />} />
         <Route path="configuracoes/sistema" element={<ModulePlaceholderPage title="Sistema / Preferências" />} />
       </Route>
       <Route
