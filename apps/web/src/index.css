@@ -989,6 +989,204 @@ button {
 }
 
 /* ---------------------------------------------------------------------------
+   Operacional: Comandas / Mesas abertas (painel em tempo real)
+   --------------------------------------------------------------------------- */
+.oa-counters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+}
+
+.oa-counters > div {
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.oa-counters dt {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.oa-counters dd {
+  margin: 2px 0 0;
+  color: var(--text-h);
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.oa-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 14px;
+}
+
+.oa-sort select {
+  min-height: 40px;
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.oa-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.oa-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-left-width: 6px;
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.oa-card.oa-table {
+  border-left-color: var(--accent);
+}
+
+.oa-card.oa-command {
+  border-left-color: var(--text-muted);
+}
+
+/* Destaque discreto pelo tempo aberto (não é SLA): só a borda e o texto do tempo mudam. */
+.oa-card.oa-age-warn {
+  border-color: var(--warning);
+}
+
+.oa-card.oa-age-late {
+  border-color: var(--warning);
+  background: var(--warning-bg);
+}
+
+.oa-age-warn .oa-elapsed,
+.oa-age-late .oa-elapsed {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.oa-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 8px;
+}
+
+.oa-kind {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.oa-kind-table {
+  background: var(--accent);
+  color: #fff;
+}
+
+.oa-title {
+  color: var(--text-h);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.1;
+  overflow-wrap: anywhere;
+}
+
+.oa-sub {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.oa-meta {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  font-size: 14px;
+}
+
+.oa-meta > div {
+  display: grid;
+  grid-template-columns: 76px 1fr;
+  gap: 6px;
+}
+
+.oa-meta dt {
+  color: var(--text-muted);
+}
+
+.oa-meta dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.oa-time {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 2px 8px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.oa-foot {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.oa-items {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.oa-total {
+  color: var(--text-h);
+  font-size: 22px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.oa-open {
+  width: 100%;
+  min-height: 44px;
+}
+
+@media (max-width: 640px) {
+  .oa-counters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .oa-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .oa-sort {
+    margin-left: 0;
+  }
+}
+
+/* ---------------------------------------------------------------------------
    Administrativo: configuração de Comandas / Mesas
    --------------------------------------------------------------------------- */
 .sp-admin {

@@ -28,6 +28,7 @@ import { ModulePlaceholderPage } from "./pages/ModulePlaceholderPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
 import {
   OperationalCashierOrderPage,
+  OperationalOpenAttendancesPage,
   OperationalProductionPage,
   OperationalCashierPage,
   OperationalServiceOrderPage,
@@ -106,6 +107,14 @@ function App() {
         }
       />
       <Route
+        path="/operacional/atendimentos-abertos"
+        element={
+          <OperationalRoute area="abertos">
+            <OperationalOpenAttendancesPage />
+          </OperationalRoute>
+        }
+      />
+      <Route
         path="/operacional/producao"
         element={
           <OperationalRoute area="producao">
@@ -161,7 +170,7 @@ function App() {
         <Route path="cadastros/estoque" element={<StockPage />} />
         <Route path="cadastros/clientes" element={<ModulePlaceholderPage title="Clientes" />} />
 
-        <Route path="operacional/comandas-abertas" element={<ModulePlaceholderPage title="Comandas / Mesas abertas" />} />
+        <Route path="operacional/comandas-abertas" element={<Navigate to="/operacional/atendimentos-abertos" replace />} />
         <Route path="operacional/pedidos" element={<ModulePlaceholderPage title="Pedidos" />} />
         <Route path="operacional/caixa" element={<ModulePlaceholderPage title="Caixa / Balcão" />} />
 

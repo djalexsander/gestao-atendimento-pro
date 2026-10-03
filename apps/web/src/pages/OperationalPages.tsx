@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { canOpenOperationalArea, homePathForRole, OPERATIONAL_PATH } from "../app/accessRules";
 import { useAuth } from "../app/useAuth";
 import { supabaseCashSource } from "../features/cash/cashApi";
 import { CashControl } from "../features/cash/CashControl";
@@ -7,6 +8,8 @@ import { useMyOpenCash } from "../features/cash/useMyOpenCash";
 import { Modal } from "../features/employees/Modal";
 import { ROLE_LABEL } from "../features/employees/roles";
 import type { ServicePanelSource } from "../features/operations/api";
+import type { OpenSessionsSource } from "../features/operations/openSessionsApi";
+import { OpenAttendancesBoard } from "../features/operations/OpenAttendancesBoard";
 import { ServicePointsPanel } from "../features/operations/ServicePointsPanel";
 import { ProductionBoard } from "../features/production/ProductionBoard";
 import type { ProductionSource } from "../features/production/productionApi";
@@ -22,6 +25,10 @@ function OperationalShell({ title, children }: { title: string; children: ReactN
   const { activeMembership, user, profile, signOut } = useAuth();
   const navigate = useNavigate();
   const isCashier = activeMembership?.role === "cashier";
+  const role = activeMembership?.role ?? null;
+  const onOpenBoard = useLocation().pathname === OPERATIONAL_PATH.abertos;
+  const canSeeOpenBoard = role !== null && canOpenOperationalArea(role, "abertos");
+  const isAdminRole = role === "owner" || role === "admin";
   const { cash: myCash } = useMyOpenCash(isCashier);
   const [logoutBlocked, setLogoutBlocked] = useState<"open-cash" | "unverified" | null>(null);
 
@@ -72,7 +79,17 @@ function OperationalShell({ title, children }: { title: string; children: ReactN
           <span style={{ color: "var(--text-muted)", fontSize: 14 }}>{activeMembership?.company.name}</span>
         </div>
         <div className="app-user">
-          {(activeMembership?.role === "owner" || activeMembership?.role === "admin") && (
+          {canSeeOpenBoard && !onOpenBoard && (
+            <Link to={OPERATIONAL_PATH.abertos} className="btn-secondary btn-small" style={{ textDecoration: "none" }}>
+              Atendimentos abertos
+            </Link>
+          )}
+          {onOpenBoard && role && !isAdminRole && (
+            <Link to={homePathForRole(role)} className="btn-secondary btn-small" style={{ textDecoration: "none" }}>
+              Voltar
+            </Link>
+          )}
+          {isAdminRole && (
             <Link to="/app" className="btn-secondary btn-small" style={{ textDecoration: "none" }}>
               Voltar ao Administrativo
             </Link>
@@ -164,6 +181,23 @@ export function OperationalCashierOrderPage({ source }: { source?: OrdersSource 
   return (
     <OperationalShell title="Caixa / Balcão">
       {sessionId && <SessionOrderScreen sessionId={sessionId} variant="cashier" source={source} />}
+    </OperationalShell>
+  );
+}
+
+// Comandas / Mesas abertas: painel em tempo real de tudo o que está aberto (owner, admin, cashier,
+// attendant). `source` só existe para exercitar a tela com dados simulados.
+export function OperationalOpenAttendancesPage({ source }: { source?: OpenSessionsSource }) {
+  const { activeMembership } = useAuth();
+  const role = activeMembership?.role ?? null;
+  // "Abrir atendimento" do estado vazio leva ao painel de Comandas / Mesas da área do papel.
+  const emptyAction = {
+    label: "Abrir atendimento",
+    path: role === "attendant" ? OPERATIONAL_PATH.atendimento : OPERATIONAL_PATH.caixa,
+  };
+  return (
+    <OperationalShell title="Comandas / Mesas abertas">
+      <OpenAttendancesBoard source={source} emptyAction={emptyAction} />
     </OperationalShell>
   );
 }
