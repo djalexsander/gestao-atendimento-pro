@@ -78,6 +78,8 @@ export interface LiveDeps {
     agents(): Promise<unknown>;
     queue(): Promise<unknown>;
     failures(): Promise<unknown>;
+    // Opcional: se informado, "queue" recarrega só a ATENÇÃO da fila e "history" a cabeça do histórico do período.
+    history?(): Promise<unknown>;
   };
   // A fila só é recarregada se já foi aberta/carregada.
   isQueueActive(): boolean;
@@ -95,11 +97,16 @@ export function startPrintLive(deps: LiveDeps): () => void {
     agents: createLiveRunner(deps.reload.agents, ms, timers),
     queue: createLiveRunner(deps.reload.queue, ms, timers),
     failures: createLiveRunner(deps.reload.failures, ms, timers),
+    history: createLiveRunner(deps.reload.history ?? (async () => undefined), ms, timers),
   };
+  const hasHistory = deps.reload.history !== undefined;
 
   const unsubscribe = deps.subscribe?.(deps.companyId, (table) => {
     if (table === "print_jobs") {
-      if (deps.isQueueActive()) runners.queue.trigger();
+      if (deps.isQueueActive()) {
+        runners.queue.trigger();
+        if (hasHistory) runners.history.trigger();
+      }
     } else if (table === "print_devices") runners.config.trigger();
     else if (table === "print_agents") runners.agents.trigger();
     else runners.failures.trigger();
@@ -112,7 +119,10 @@ export function startPrintLive(deps: LiveDeps): () => void {
     runners.config.trigger();
     runners.agents.trigger();
     runners.failures.trigger();
-    if (deps.isQueueActive()) runners.queue.trigger();
+    if (deps.isQueueActive()) {
+      runners.queue.trigger();
+      if (hasHistory) runners.history.trigger();
+    }
   };
   target?.addEventListener("visibilitychange", onVisible);
 

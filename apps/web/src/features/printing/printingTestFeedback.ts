@@ -84,6 +84,8 @@ export function createTestFeedback(onChange: (feedback: TestFeedback | null) => 
       else if (job.status === "error") finish({ kind: "error", text: TEST_FEEDBACK_MSG.error }, null);
       else finish({ kind: "ok", text: TEST_FEEDBACK_MSG.cancelled }, TEST_CANCELLED_CLEAR_MS);
     },
+    // Id do job de teste acompanhado agora (null quando não há/terminou): a tela confere o status dele fora do período exibido.
+    trackedJobId: (): string | null => (tracking ? jobId : null),
     // Nova ação do usuário / fechar.
     clear() {
       cancelTimer();

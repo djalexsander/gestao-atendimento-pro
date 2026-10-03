@@ -2,6 +2,17 @@ import type { RealtimeClientLike } from "../../lib/productsRealtime";
 import { supabase } from "../../lib/supabaseClient";
 import { subscribeToPrintChanges, type PrintTable } from "./printingRealtime";
 import {
+  ATTENTION_LIMIT,
+  buildAttention,
+  nextCursor,
+  rangeBoundsUtc,
+  unresolvedErrors,
+  type AttentionResult,
+  type HistoryResult,
+  type QueueCursor,
+  type QueueRange,
+} from "./printingQueueLogic";
+import {
   describePrintError,
   type DeviceInput,
   type DocumentRoute,
@@ -18,7 +29,33 @@ const LOAD_ERROR = "Não foi possível carregar a configuração de impressão a
 const SAVE_ERROR = "Não foi possível salvar agora. Tente novamente.";
 const QUEUE_ERROR = "Não foi possível carregar a fila de impressão agora. Tente novamente.";
 
-export const QUEUE_LIMIT = 100;
+// Colunas LEVES da lista (sem o payload inteiro: só 3 campos dele via JSON path). O payload completo e os
+// carimbos de tempo só vêm sob demanda, em loadJobDetails.
+const JOB_LIST_COLUMNS =
+  "id, print_device_id, job_type, status, attempts, error_message, reprint_of_id, created_at, " +
+  "printer_name:payload->printer->>name, point_label:payload->service_point->>label, operator_name:payload->operator->>name";
+
+type LightRow = Omit<PrintJob, "payload"> & { printer_name: string | null; point_label: string | null; operator_name: string | null };
+
+function toLightJob(row: LightRow): PrintJob {
+  const { printer_name, point_label, operator_name, ...rest } = row;
+  return {
+    ...rest,
+    payload: {
+      printer: printer_name ? { name: printer_name } : undefined,
+      service_point: point_label ? { label: point_label } : undefined,
+      operator: operator_name ? { name: operator_name } : undefined,
+    },
+  };
+}
+
+export interface JobDetails {
+  job: PrintJob; // com o payload completo
+  claimed_at: string | null;
+  printed_at: string | null;
+  printer_name: string | null; // impressora lógica atual
+  windows_printer_name: string | null; // vínculo ATUAL com a impressora do Windows
+}
 
 // Fonte de dados da tela. Recebida por parâmetro (a real, abaixo, é o padrão) para exercitar a
 // tela com dados simulados. Leituras vão direto às tabelas (RLS: só owner/admin); toda escrita
@@ -26,7 +63,17 @@ export const QUEUE_LIMIT = 100;
 // impressoras do Windows nem imprime: isso é do Agente (etapa futura).
 export interface PrintingSource {
   loadConfig(companyId: string): Promise<{ data: { devices: PrintDevice[]; sectors: PrintSector[] } | null; error: string | null }>;
-  loadQueue(companyId: string): Promise<{ data: PrintJob[] | null; error: string | null }>;
+  // Fila reorganizada: Atenção (pending/claimed/erros em aberto, qualquer data) + Histórico do período (cursor).
+  loadAttention(companyId: string): Promise<{ data: AttentionResult | null; error: string | null }>;
+  loadHistory(
+    companyId: string,
+    range: QueueRange,
+    cursor: QueueCursor | null,
+    limit: number,
+  ): Promise<{ data: HistoryResult | null; error: string | null }>;
+  loadJobDetails(jobId: string): Promise<{ data: JobDetails | null; error: string | null }>;
+  // Status de UM job (acompanhar o teste de impressão mesmo fora do período exibido).
+  loadJobStatus(jobId: string): Promise<{ data: PrintJob | null; error: string | null }>;
   createDevice(companyId: string, input: DeviceInput): Promise<{ error: string | null }>;
   updateDevice(deviceId: string, input: DeviceInput): Promise<{ error: string | null }>;
   archiveDevice(deviceId: string): Promise<{ error: string | null }>;
@@ -91,18 +138,96 @@ export const supabasePrintingSource: PrintingSource = {
     };
   },
 
-  async loadQueue(companyId) {
-    const { data, error } = await supabase
-      .from("print_jobs")
-      .select("id, print_device_id, job_type, status, attempts, error_message, reprint_of_id, created_at, payload")
-      .eq("company_id", companyId)
-      .order("created_at", { ascending: false })
-      .limit(QUEUE_LIMIT);
-    if (error) {
-      console.error("Falha ao carregar a fila de impressão:", error.code);
+  async loadAttention(companyId) {
+    const [open, errors] = await Promise.all([
+      supabase
+        .from("print_jobs")
+        .select(JOB_LIST_COLUMNS)
+        .eq("company_id", companyId)
+        .in("status", ["pending", "claimed"])
+        .order("created_at", { ascending: true })
+        .limit(ATTENTION_LIMIT + 1),
+      supabase
+        .from("print_jobs")
+        .select(JOB_LIST_COLUMNS)
+        .eq("company_id", companyId)
+        .eq("status", "error")
+        .order("created_at", { ascending: false })
+        .limit(ATTENTION_LIMIT + 1),
+    ]);
+    if (open.error || errors.error) {
+      console.error("Falha ao carregar a atenção da fila:", open.error?.code ?? errors.error?.code);
       return { data: null, error: QUEUE_ERROR };
     }
-    return { data: (data ?? []) as PrintJob[], error: null };
+    const errorJobs = ((errors.data ?? []) as unknown as LightRow[]).map(toLightJob);
+    // Erro com reimpressão IMPRESSA já foi resolvido: sai da Atenção (continua no histórico).
+    let printedReprintOf: string[] = [];
+    if (errorJobs.length > 0) {
+      const reprints = await supabase
+        .from("print_jobs")
+        .select("reprint_of_id")
+        .eq("company_id", companyId)
+        .eq("status", "printed")
+        .in("reprint_of_id", errorJobs.map((j) => j.id));
+      if (reprints.error) {
+        console.error("Falha ao conferir reimpressões:", reprints.error.code);
+        return { data: null, error: QUEUE_ERROR };
+      }
+      printedReprintOf = (reprints.data ?? []).map((r) => (r as { reprint_of_id: string }).reprint_of_id);
+    }
+    const openJobs = ((open.data ?? []) as unknown as LightRow[]).map(toLightJob);
+    return { data: buildAttention(openJobs, unresolvedErrors(errorJobs, printedReprintOf)), error: null };
+  },
+
+  async loadHistory(companyId, range, cursor, limit) {
+    const { startIso, endIso } = rangeBoundsUtc(range);
+    let query = supabase
+      .from("print_jobs")
+      .select(JOB_LIST_COLUMNS)
+      .eq("company_id", companyId)
+      .in("status", ["printed", "cancelled", "error"])
+      .gte("created_at", startIso)
+      .lt("created_at", endIso)
+      .order("created_at", { ascending: false })
+      .order("id", { ascending: false })
+      .limit(limit + 1);
+    if (cursor) {
+      // keyset: estritamente mais antigo que (created_at, id) do último item já carregado
+      query = query.or(`created_at.lt.${cursor.created_at},and(created_at.eq.${cursor.created_at},id.lt.${cursor.id})`);
+    }
+    const { data, error } = await query;
+    if (error) {
+      console.error("Falha ao carregar o histórico da fila:", error.code);
+      return { data: null, error: QUEUE_ERROR };
+    }
+    const rows = ((data ?? []) as unknown as LightRow[]).map(toLightJob);
+    const page = rows.slice(0, limit);
+    return { data: { jobs: page, nextCursor: rows.length > limit ? nextCursor(page) : null }, error: null };
+  },
+
+  async loadJobDetails(jobId) {
+    const { data, error } = await supabase
+      .from("print_jobs")
+      .select("id, company_id, print_device_id, job_type, status, attempts, error_message, reprint_of_id, created_at, claimed_at, printed_at, payload")
+      .eq("id", jobId)
+      .maybeSingle();
+    if (error || !data) {
+      if (error) console.error("Falha ao carregar o detalhe da impressão:", error.code);
+      return { data: null, error: QUEUE_ERROR };
+    }
+    const row = data as unknown as PrintJob & { claimed_at: string | null; printed_at: string | null };
+    const device = await supabase.from("print_devices").select("name, windows_printer_name").eq("id", row.print_device_id).maybeSingle();
+    const dev = (device.data ?? null) as { name: string; windows_printer_name: string | null } | null;
+    return {
+      data: { job: row, claimed_at: row.claimed_at, printed_at: row.printed_at, printer_name: dev?.name ?? null, windows_printer_name: dev?.windows_printer_name ?? null },
+      error: null,
+    };
+  },
+
+  async loadJobStatus(jobId) {
+    const { data, error } = await supabase.from("print_jobs").select(JOB_LIST_COLUMNS).eq("id", jobId).maybeSingle();
+    if (error) return { data: null, error: QUEUE_ERROR };
+    return { data: data ? toLightJob(data as unknown as LightRow) : null, error: null };
   },
 
   createDevice: (companyId, input) =>

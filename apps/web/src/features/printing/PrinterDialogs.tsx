@@ -1,4 +1,5 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
+import type { JobDetails } from "./printingApi";
 import { Modal } from "../employees/Modal";
 import {
   DOCUMENT_ROUTES,
@@ -231,19 +232,62 @@ function formatMoney(value: number): string {
   return value.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
 }
 
-export function JobDetailsDialog({ job, onClose }: { job: PrintJob; onClose: () => void }) {
+export function JobDetailsDialog({
+  job: listJob,
+  loadDetails,
+  onClose,
+}: {
+  job: PrintJob;
+  loadDetails: () => Promise<{ data: JobDetails | null; error: string | null }>;
+  onClose: () => void;
+}) {
+  // A lista traz só o resumo; o payload completo e os carimbos de tempo vêm sob demanda, ao abrir.
+  const [details, setDetails] = useState<JobDetails | null>(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    void loadDetails().then((result) => {
+      if (cancelled) return;
+      if (result.data) setDetails(result.data);
+      else setFailed(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listJob.id]);
+  const job = details?.job ?? listJob;
   const p = job.payload;
   return (
     <Modal title="Detalhes da impressão" onClose={onClose}>
+      {failed && <div className="form-error">Não foi possível carregar todos os detalhes agora.</div>}
       <dl className="print-details">
+        <dt>Código</dt>
+        <dd className="mono">{job.id}</dd>
         <dt>Tipo</dt>
         <dd>{jobTypeLabel(job)}</dd>
         <dt>Impressora</dt>
-        <dd>{jobPrinterName(job)}</dd>
+        <dd>{details?.printer_name ?? jobPrinterName(job)}</dd>
+        {details && (
+          <>
+            <dt>Impressora do Windows</dt>
+            <dd>{details.windows_printer_name ?? "Sem vínculo"}</dd>
+          </>
+        )}
         <dt>Status</dt>
         <dd>{STATUS_LABEL[job.status]}</dd>
         <dt>Criado em</dt>
         <dd>{formatDateTime(job.created_at)}</dd>
+        {details && (
+          <>
+            <dt>Enviado ao Agente</dt>
+            <dd>{formatDateTime(details.claimed_at ?? undefined)}</dd>
+            <dt>Impresso em</dt>
+            <dd>{formatDateTime(details.printed_at ?? undefined)}</dd>
+          </>
+        )}
+        <dt>Tentativas</dt>
+        <dd>{job.attempts}</dd>
         {(job.job_type === "production_order" || job.job_type === "production_cancellation" || job.job_type === "customer_bill" || job.job_type === "payment_receipt") && (
           <>
             <dt>Comanda/Mesa</dt>

@@ -2,22 +2,19 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "../../app/useAuth";
 import { ConfirmDialog, ManageAgentDialog, PairingCodeDialog } from "./AgentDialogs";
 import { JobDetailsDialog, PrinterDialog, RemovePrinterDialog, formatDateTime } from "./PrinterDialogs";
-import { QUEUE_LIMIT, supabasePrintingSource, type PrintingSource } from "./printingApi";
+import { PrintQueue } from "./PrintQueue";
+import { supabasePrintingSource, type PrintingSource } from "./printingApi";
+import { createQueueController, type QueueState } from "./printingQueueLogic";
 import { startPrintLive, startUiClock } from "./printingLive";
 import { createTestFeedback, type TestFeedback } from "./printingTestFeedback";
 import {
-  STATUS_LABEL,
   deviceStatusLabel,
   isDeviceAgentOffline,
-  offlinePendingNotices,
   destinationLabels,
   describeEnqueueFailure,
   isAgentOnline,
   lastContactLabel,
   documentLabels,
-  jobOrderLabel,
-  jobPrinterName,
-  jobTypeLabel,
   physicalPrinterLabel,
   type PrintAgent,
   type PrintDevice,
@@ -50,12 +47,14 @@ export function PrintingSettings({ source = supabasePrintingSource }: { source?:
   const [tab, setTab] = useState<Tab>("printers");
   const [devices, setDevices] = useState<PrintDevice[] | null>(null);
   const [sectors, setSectors] = useState<PrintSector[]>([]);
-  const [jobs, setJobs] = useState<PrintJob[] | null>(null);
+  // Fila: Atenção + Histórico do período, geridos pelo controlador (printingQueueLogic.ts).
+  const [queue, setQueue] = useState<QueueState | null>(null);
+  const [queueStarted, setQueueStarted] = useState(false);
+  const queueRef = useRef<ReturnType<typeof createQueueController> | null>(null);
   const [agents, setAgents] = useState<PrintAgent[] | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [failures, setFailures] = useState<PrintEnqueueFailure[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [queueError, setQueueError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -91,16 +90,36 @@ export function PrintingSettings({ source = supabasePrintingSource }: { source?:
     setNow(Date.now());
   }, [companyId, source]);
 
-  const reloadQueue = useCallback(async () => {
-    if (!companyId) return;
-    const result = await source.loadQueue(companyId);
-    if (result.error || !result.data) {
-      setQueueError(result.error ?? "Não foi possível carregar a fila de impressão.");
-      return;
+  // Controlador da fila (um por empresa): descarta respostas antigas ao trocar de período e some junto com a tela.
+  useEffect(() => {
+    if (!canManage || !companyId) return;
+    const controller = createQueueController({ source, companyId, onChange: setQueue });
+    queueRef.current = controller;
+    return () => {
+      controller.dispose();
+      queueRef.current = null;
+      setQueue(null);
+      setQueueStarted(false);
+    };
+  }, [canManage, companyId, source]);
+
+  // Abre a fila (Atenção + Hoje) na primeira vez; depois, "Atualizar" = Atenção + primeira página do período.
+  const startQueue = useCallback(() => {
+    const controller = queueRef.current;
+    if (!controller) return;
+    if (!queueStarted) {
+      setQueueStarted(true);
+      void controller.init();
+    } else {
+      void controller.refresh();
     }
-    setQueueError(null);
-    setJobs(result.data);
-  }, [companyId, source]);
+  }, [queueStarted]);
+  const reloadAttention = useCallback(async () => {
+    await queueRef.current?.reloadAttention();
+  }, []);
+  const reloadHistoryHead = useCallback(async () => {
+    await queueRef.current?.reloadHistoryHead();
+  }, []);
 
   useEffect(() => {
     if (canManage) {
@@ -111,22 +130,22 @@ export function PrintingSettings({ source = supabasePrintingSource }: { source?:
   }, [canManage, reloadConfig, reloadFailures, reloadAgents]);
 
   useEffect(() => {
-    if (canManage && tab === "queue") void reloadQueue();
-  }, [canManage, tab, reloadQueue]);
+    if (canManage && tab === "queue" && !queueStarted) startQueue();
+  }, [canManage, tab, queueStarted, startQueue]);
 
   // TEMPO REAL: Realtime (fila, impressoras, agentes, avisos) -> reload coalescido; ao voltar a ficar visível,
   // um reload. Sem polling de banco. O "Atualizar" da fila continua como fallback manual.
   const queueActiveRef = useRef(false);
-  queueActiveRef.current = tab === "queue" || jobs !== null;
+  queueActiveRef.current = tab === "queue" || queueStarted;
   useEffect(() => {
     if (!canManage || !companyId) return;
     return startPrintLive({
       companyId,
       subscribe: source.subscribeToChanges,
-      reload: { config: reloadConfig, agents: reloadAgents, queue: reloadQueue, failures: reloadFailures },
+      reload: { config: reloadConfig, agents: reloadAgents, queue: reloadAttention, history: reloadHistoryHead, failures: reloadFailures },
       isQueueActive: () => queueActiveRef.current,
     });
-  }, [canManage, companyId, source, reloadConfig, reloadAgents, reloadQueue, reloadFailures]);
+  }, [canManage, companyId, source, reloadConfig, reloadAgents, reloadAttention, reloadHistoryHead, reloadFailures]);
 
   // Online/Offline depende do TEMPO (sem heartbeat não chega evento): relógio local que só recalcula, sem consultar o servidor.
   useEffect(() => {
@@ -155,8 +174,18 @@ export function PrintingSettings({ source = supabasePrintingSource }: { source?:
   const testDevice = testDeviceId ? (devices ?? []).find((d) => d.id === testDeviceId) : undefined;
   const testAgentOffline = testDevice ? isDeviceAgentOffline(testDevice, agents, now) : false;
   useEffect(() => {
-    testFeedbackRef.current?.evaluate(jobs, testAgentOffline);
-  }, [jobs, testAgentOffline]);
+    const feedback = testFeedbackRef.current;
+    if (!feedback || !queue || queue.attention === null) return;
+    const known = [...queue.attention, ...(queue.history ?? [])];
+    feedback.evaluate(known, testAgentOffline);
+    // O job do teste pode estar fora do período exibido (ex.: olhando "Ontem"): confere o status dele direto.
+    const id = feedback.trackedJobId();
+    if (id && !known.some((j) => j.id === id)) {
+      void source.loadJobStatus(id).then((result) => {
+        if (result.data) feedback.evaluate([result.data], testAgentOffline);
+      });
+    }
+  }, [queue, testAgentOffline, source]);
 
   if (!canManage) {
     return <p className="form-notice">Somente donos(as) e administradores(as) podem configurar a impressão.</p>;
@@ -171,7 +200,7 @@ export function PrintingSettings({ source = supabasePrintingSource }: { source?:
     setNotice(successNotice);
     void reloadConfig();
     void reloadAgents();
-    if (jobs !== null) void reloadQueue();
+    if (queueStarted) startQueue();
     return null;
   }
 
@@ -187,7 +216,7 @@ export function PrintingSettings({ source = supabasePrintingSource }: { source?:
       return;
     }
     setNotice(successNotice);
-    void reloadQueue();
+    startQueue();
   }
 
   async function resolveFailure(id: string) {
@@ -215,7 +244,7 @@ export function PrintingSettings({ source = supabasePrintingSource }: { source?:
     }
     setTestDeviceId(device.id);
     testFeedbackRef.current?.track({ jobId: result.jobId ?? null, deviceId: device.id, agentOffline: isDeviceAgentOffline(device, agents, now) });
-    void reloadQueue();
+    startQueue();
   }
 
   function open(next: OpenDialog) {
@@ -225,8 +254,6 @@ export function PrintingSettings({ source = supabasePrintingSource }: { source?:
     setDialog(next);
   }
 
-  const readyIds = new Set((devices ?? []).filter((d) => d.ready).map((d) => d.id));
-  const activeIds = new Set((devices ?? []).map((d) => d.id));
 
   let printersBody;
   if (devices === null) {
@@ -360,86 +387,21 @@ export function PrintingSettings({ source = supabasePrintingSource }: { source?:
     );
   }
 
-  let queueBody;
-  if (jobs === null) {
-    queueBody = queueError ? (
-      <div className="op-state">
-        <button className="btn-secondary" type="button" onClick={() => void reloadQueue()}>
-          Tentar de novo
-        </button>
-      </div>
-    ) : (
-      <p className="op-state">Carregando fila de impressão…</p>
-    );
-  } else if (jobs.length === 0) {
-    queueBody = <p className="op-state">Nenhuma impressão na fila.</p>;
-  } else {
-    queueBody = (
-      <>
-        {offlinePendingNotices(jobs, devices ?? [], agents, now).map((message) => (
-          <p key={message} className="form-notice" role="status">
-            {message}
-          </p>
-        ))}
-        <div className="table-scroll">
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>Data/hora</th>
-                <th>Impressora</th>
-                <th>Tipo</th>
-                <th>Pedido/Comanda</th>
-                <th>Status</th>
-                <th>Tentativas</th>
-                <th>Erro</th>
-                <th>Ações</th>
-              </tr>
-            </thead>
-            <tbody>
-              {jobs.map((job) => (
-                <tr key={job.id}>
-                  <td className="mono">{formatDateTime(job.created_at)}</td>
-                  <td>{jobPrinterName(job)}</td>
-                  <td>{jobTypeLabel(job)}</td>
-                  <td>{jobOrderLabel(job)}</td>
-                  <td>
-                    <span className={`status-badge ${job.status === "error" ? "print-status-error" : job.status === "printed" ? "status-active" : "status-inactive"}`}>
-                      {STATUS_LABEL[job.status]}
-                    </span>
-                  </td>
-                  <td>{job.attempts}</td>
-                  <td>{job.error_message ?? "—"}</td>
-                  <td>
-                    <div className="row-actions">
-                      <button className="btn-secondary btn-small" type="button" onClick={() => open({ kind: "details", job })}>
-                        Detalhes
-                      </button>
-                      <button
-                        className="btn-secondary btn-small"
-                        type="button"
-                        disabled={busyId === job.id || !readyIds.has(job.print_device_id)}
-                        title={
-                          readyIds.has(job.print_device_id)
-                            ? undefined
-                            : activeIds.has(job.print_device_id)
-                              ? "A impressora ainda não está conectada ao Agente de Impressão."
-                              : "A impressora desta impressão foi removida."
-                        }
-                        onClick={() => void direct(job.id, () => source.reprint(job.id), "Reimpressão enviada para a fila.")}
-                      >
-                        {busyId === job.id ? "Enviando…" : "Reimprimir"}
-                      </button>
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-        {jobs.length >= QUEUE_LIMIT && <p className="field-hint">Mostrando as {QUEUE_LIMIT} impressões mais recentes.</p>}
-      </>
-    );
-  }
+  const queueBody = (
+    <PrintQueue
+      state={queue}
+      devices={devices ?? []}
+      agents={agents}
+      now={now}
+      busyId={busyId}
+      onFilter={(filter) => void queueRef.current?.setFilter(filter)}
+      onCustom={(from, to) => void queueRef.current?.setCustom(from, to)}
+      onRefresh={startQueue}
+      onLoadMore={() => void queueRef.current?.loadMore()}
+      onDetails={(job) => open({ kind: "details", job })}
+      onReprint={(job) => void direct(job.id, () => source.reprint(job.id), "Reimpressão enviada para a fila.")}
+    />
+  );
 
   return (
     <div className="sp-admin">
@@ -453,11 +415,6 @@ export function PrintingSettings({ source = supabasePrintingSource }: { source?:
         <button className="op-chip" type="button" role="tab" aria-selected={tab === "queue"} aria-pressed={tab === "queue"} onClick={() => setTab("queue")}>
           Fila de impressão
         </button>
-        {tab === "queue" && (
-          <button className="btn-secondary btn-small" type="button" onClick={() => void reloadQueue()}>
-            Atualizar
-          </button>
-        )}
       </div>
 
       {failures.length > 0 && (
@@ -487,7 +444,6 @@ export function PrintingSettings({ source = supabasePrintingSource }: { source?:
         </div>
       )}
       {loadError && tab === "printers" && <div className="form-error">{loadError}</div>}
-      {queueError && tab === "queue" && <div className="form-error">{queueError}</div>}
       {actionError && <div className="form-error">{actionError}</div>}
       {notice && <div className="form-notice">{notice}</div>}
       {testFeedback && (
@@ -554,7 +510,9 @@ export function PrintingSettings({ source = supabasePrintingSource }: { source?:
           onClose={() => setDialog(null)}
         />
       )}
-      {dialog?.kind === "details" && <JobDetailsDialog job={dialog.job} onClose={() => setDialog(null)} />}
+      {dialog?.kind === "details" && (
+        <JobDetailsDialog job={dialog.job} loadDetails={() => source.loadJobDetails(dialog.job.id)} onClose={() => setDialog(null)} />
+      )}
     </div>
   );
 }
