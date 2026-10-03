@@ -19,7 +19,7 @@ test("transforma o JSON do claim no modelo interno", () => {
   assert.equal(job.type, "production_order");
   assert.equal(job.paperWidth, 58);
   assert.equal(job.windowsPrinter, "EPSON TM-T20");
-  assert.deepEqual(job.items, [{ quantity: 2, productName: "Espeto", notes: "ao ponto", unitPrice: null, total: null }]);
+  assert.deepEqual(job.items, [{ quantity: 2, productName: "Espeto", notes: "ao ponto", modifiers: [], unitPrice: null, total: null }]);
   assert.equal(describeJob(job), "Pedido CMD005");
 });
 

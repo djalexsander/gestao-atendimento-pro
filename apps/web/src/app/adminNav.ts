@@ -48,6 +48,7 @@ export const ADMIN_NAV: NavEntry[] = [
     items: [
       { type: "item", label: "Produtos", path: "/app/cadastros/produtos", status: "ready" },
       { type: "item", label: "Categorias", path: "/app/cadastros/categorias", status: "ready" },
+      { type: "item", label: "Adicionais / opções", path: "/app/cadastros/adicionais", status: "ready" },
       { type: "item", label: "Setores de produção", path: "/app/cadastros/setores", status: "ready" },
       { type: "item", label: "Estoque", path: "/app/cadastros/estoque", status: "ready" },
       { type: "item", label: "Clientes", path: "/app/cadastros/clientes", status: "placeholder" },

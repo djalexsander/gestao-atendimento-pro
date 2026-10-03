@@ -1,5 +1,6 @@
 import { formatOpenedFull } from "../operations/panel";
 import { formatReais } from "../../lib/money";
+import { ModifierLines } from "../modifiers/ModifierDialog";
 import {
   activeQuantity,
   canCancelItem,
@@ -80,6 +81,7 @@ export function OrderHistory({
                       )}
                       <span className="order-history-item-price">{formatReais(item.unitPrice * active)}</span>
                     </span>
+                    <ModifierLines modifiers={item.modifiers} />
                     {item.cancelledQuantity > 0 && !fullyCancelled && (
                       <span className="order-history-item-cancel-summary">
                         {item.cancelledQuantity} {item.cancelledQuantity === 1 ? "cancelada" : "canceladas"} · {active}{" "}

@@ -19,10 +19,18 @@ const JOB_TYPES: readonly string[] = [
   "cash_closing",
 ];
 
+// Adicional/opção escolhida no item (snapshot do servidor). priceDelta só vem na CONTA; produção não leva preço.
+export interface JobModifier {
+  name: string;
+  type: "add" | "remove";
+  priceDelta: number | null;
+}
+
 export interface JobItem {
   quantity: number;
   productName: string;
   notes: string | null;
+  modifiers: JobModifier[];
   unitPrice: number | null;
   total: number | null;
 }
@@ -64,6 +72,12 @@ export function toJobModel(raw: unknown): JobModel | null {
           quantity: num(e.quantity) ?? 0,
           productName: text(e.product_name) ?? "?",
           notes: text(e.notes),
+          modifiers: Array.isArray(e.modifiers)
+            ? e.modifiers.map((m): JobModifier => {
+                const mm = asRecord(m);
+                return { name: text(mm.name) ?? "?", type: mm.type === "remove" ? "remove" : "add", priceDelta: num(mm.price_delta) };
+              })
+            : [],
           unitPrice: num(e.unit_price),
           total: num(e.total),
         };

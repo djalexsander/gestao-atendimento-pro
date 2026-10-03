@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
 import { BarcodeField } from "../../components/BarcodeField";
 import { ProductStockPanel } from "../stock/ProductStockPanel";
+import { ProductModifiersSection } from "../modifiers/ModifiersAdmin";
 import { Modal } from "../employees/Modal";
 import type { AdminCategory } from "./categoriesLogic";
 import { ProductImageError, processProductImage, type ProcessedImage } from "./productImage";
@@ -620,6 +621,7 @@ export function EditProductDialog({
           }
         />
         <ErrorBox message={genError} />
+        <ProductModifiersSection productId={product.id} />
         <ProductStockPanel
           productId={product.id}
           productName={product.name}

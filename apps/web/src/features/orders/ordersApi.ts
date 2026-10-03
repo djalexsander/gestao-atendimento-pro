@@ -1,6 +1,8 @@
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { subscribeToProductChanges, type RealtimeClientLike } from "../../lib/productsRealtime";
 import { supabase } from "../../lib/supabaseClient";
+import { subscribeToModifierChanges } from "../../lib/modifiersRealtime";
+import { buildProductModifiers } from "../modifiers/modifiersLogic";
 import { createBroadcastGate, type BroadcastGate } from "./broadcastGate";
 import {
   describeOrderError,
@@ -57,6 +59,8 @@ export interface OrdersSource {
   // Avisa (sem dados) que um produto da empresa mudou (estoque/disponibilidade): a tela recarrega o
   // catálogo. Só UX — submit_service_order continua validando o saldo real. Opcional (fontes simuladas).
   subscribeToProducts?(companyId: string, onChange: () => void): () => void;
+  // Idem para grupos/opções/vínculos de adicionais (admin mexeu -> o catálogo aberto recarrega). Opcional.
+  subscribeToModifiers?(companyId: string, onChange: () => void): () => void;
 }
 
 async function loadProfileNames(userIds: string[]): Promise<Map<string, string>> {
@@ -100,6 +104,10 @@ function notifyOrderSubmitted(sessionId: string) {
 export const supabaseOrdersSource: OrdersSource = {
   subscribeToProducts(companyId, onChange) {
     return subscribeToProductChanges(supabase as unknown as RealtimeClientLike, companyId, "catalog-products", onChange);
+  },
+
+  subscribeToModifiers(companyId, onChange) {
+    return subscribeToModifierChanges(supabase as unknown as RealtimeClientLike, companyId, "catalog-modifiers", onChange);
   },
 
   async loadSessionHeader(sessionId) {
@@ -170,13 +178,33 @@ export const supabaseOrdersSource: OrdersSource = {
       return { data: null, error: CATALOG_ERROR };
     }
 
+    // Adicionais/opções: falha aqui não derruba o catálogo (o servidor valida min/max no envio de qualquer jeito).
+    const [groupsRes, optionsRes, linksRes] = await Promise.all([
+      supabase
+        .from("product_modifier_groups")
+        .select("id, name, selection_type, min_selection, max_selection, sort_order, is_active")
+        .eq("company_id", companyId)
+        .eq("is_active", true),
+      supabase
+        .from("product_modifier_options")
+        .select("id, group_id, name, modifier_type, price_delta, sort_order, is_active")
+        .eq("company_id", companyId)
+        .eq("is_active", true),
+      supabase.from("product_modifier_group_products").select("group_id, product_id").eq("company_id", companyId),
+    ]);
+    if (groupsRes.error || optionsRes.error || linksRes.error) {
+      console.error("Falha ao carregar adicionais:", groupsRes.error?.code ?? optionsRes.error?.code ?? linksRes.error?.code);
+    }
+
     const categories = (categoriesRes.data ?? []).map((c) => ({ id: c.id, name: c.name, sortOrder: c.sort_order })) as CatalogCategory[];
     // Categoria ativa é responsabilidade nossa aqui (não só da RLS): owner/admin, que também
     // acessam esta tela no futuro, enxergam produto de categoria inativa via RLS — o catálogo
     // operacional nunca deve mostrá-lo, então filtramos pelo conjunto de categorias ativas.
     const activeCategoryIds = new Set(categories.map((c) => c.id));
-    const products = (productsRes.data ?? [])
-      .filter((p) => activeCategoryIds.has(p.category_id))
+    const visibleProducts = (productsRes.data ?? []).filter((p) => activeCategoryIds.has(p.category_id));
+    // Falha ao carregar adicionais NÃO vira "sem adicionais": o produto fica marcado e a tela não o adiciona direto.
+    const modifiersByProduct = buildProductModifiers(visibleProducts.map((p) => p.id), groupsRes, optionsRes, linksRes);
+    const products = visibleProducts
       .map((p) => ({
         id: p.id,
         categoryId: p.category_id,
@@ -190,6 +218,8 @@ export const supabaseOrdersSource: OrdersSource = {
         stockControl: p.stock_control,
         stockQuantity: p.stock_quantity,
         minimumStockQuantity: p.minimum_stock_quantity,
+        modifierGroups: modifiersByProduct.get(p.id)?.groups ?? [],
+        modifiersFailed: modifiersByProduct.get(p.id)?.failed ?? true,
       })) as CatalogProduct[];
 
     return { data: { categories, products }, error: null };
@@ -215,7 +245,8 @@ export const supabaseOrdersSource: OrdersSource = {
       .from("service_orders")
       .select(
         "id, origin, status, submitted_at, created_by, " +
-          "items:service_order_items(id, product_id, product_name_snapshot, quantity, unit_price, notes, production_status, cancelled_quantity, sector:production_sectors(name))",
+          "items:service_order_items(id, product_id, product_name_snapshot, quantity, unit_price, modifiers_unit_total, notes, production_status, cancelled_quantity, sector:production_sectors(name), " +
+          "modifiers:service_order_item_modifiers(group_name, option_name, modifier_type, price_delta, position))",
       )
       .eq("service_session_id", sessionId)
       .order("submitted_at", { ascending: false });
@@ -230,6 +261,8 @@ export const supabaseOrdersSource: OrdersSource = {
       product_name_snapshot: string;
       quantity: number;
       unit_price: number;
+      modifiers_unit_total: number;
+      modifiers: Array<{ group_name: string; option_name: string; modifier_type: "add" | "remove"; price_delta: number; position: number }> | null;
       notes: string | null;
       production_status: SubmittedOrder["items"][number]["productionStatus"];
       cancelled_quantity: number;
@@ -280,6 +313,10 @@ export const supabaseOrdersSource: OrdersSource = {
         productNameSnapshot: item.product_name_snapshot,
         quantity: item.quantity,
         unitPrice: Number(item.unit_price),
+        modifiersUnitTotal: Number(item.modifiers_unit_total ?? 0),
+        modifiers: [...(item.modifiers ?? [])]
+          .sort((a, b) => a.position - b.position)
+          .map((m) => ({ groupName: m.group_name, name: m.option_name, type: m.modifier_type, priceDelta: Number(m.price_delta) })),
         notes: item.notes,
         sectorName: one(item.sector)?.name ?? null,
         productionStatus: item.production_status,

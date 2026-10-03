@@ -2,6 +2,11 @@ import { big, bold, center, cut, divider, feed, row, text, type Block, type Code
 import { CODE_PAGE_LABEL } from "./document.ts";
 import type { JobItem, JobModel } from "./model.ts";
 
+// Modificadores logo abaixo do item (um por linha, recuados; nunca com preço no ticket de produção).
+function modifierBlocks(item: JobItem): Block[] {
+  return item.modifiers.map((m) => bold(`   ${m.name.toUpperCase()}`));
+}
+
 // REGRAS DE NEGÓCIO do papel: payload (snapshot do servidor) -> PrintDocument. Nenhum comando de
 // impressora e nenhuma largura de papel aqui; isso é dos renderers.
 
@@ -75,6 +80,7 @@ function productionOrder(job: JobModel): Block[] {
     if (titled && groups.length > 1) blocks.push(bold(`[ ${(group.sector ?? "SEM SETOR").toUpperCase()} ]`));
     for (const item of group.items) {
       blocks.push(big(`${item.quantity}x ${item.productName.toUpperCase()}`));
+      blocks.push(...modifierBlocks(item));
       if (item.notes) blocks.push(bold(`>> OBS: ${item.notes.toUpperCase()}`));
       blocks.push(feed(1));
     }
@@ -91,7 +97,7 @@ function productionCancellation(job: JobModel): Block[] {
   const blocks: Block[] = [...reprintBanner(job), divider("*"), big("CANCELAMENTO", { align: "center" }), divider("*"), feed(1)];
   if (job.pointLabel) blocks.push(bold(job.pointLabel.toUpperCase()));
   blocks.push(feed(1));
-  for (const item of job.items) blocks.push(big(`${item.quantity}x ${item.productName.toUpperCase()}`));
+  for (const item of job.items) blocks.push(big(`${item.quantity}x ${item.productName.toUpperCase()}`), ...modifierBlocks(item));
   blocks.push(feed(1), bold("Motivo:"), text((str(pl.reason) || "—").toUpperCase()), feed(1));
   blocks.push(bold("Cancelado por:"), text(str(rec(pl.cancelled_by).name) || "—"), text(hhmm(pl.cancelled_at)), feed(1));
   blocks.push(divider("*"), feed(1), cut());
@@ -122,7 +128,22 @@ function footer(job: JobModel): Block[] {
 function customerBill(job: JobModel): Block[] {
   const blocks = [...sessionHeader(job, "CONTA / PRÉ-CONTA"), divider(), row("QTD  PRODUTO", "VALOR", { bold: true })];
   for (const item of job.items) {
-    blocks.push(row(`${String(item.quantity).padEnd(4)} ${item.productName.toUpperCase()}`, amount(item.total ?? 0), { indent: 5 }));
+    const priced = item.modifiers.some((m) => (m.priceDelta ?? 0) > 0);
+    const label = `${String(item.quantity).padEnd(4)} ${item.productName.toUpperCase()}`;
+    if (priced) {
+      // Linha do produto pelo preço BASE; cada adicional pago com seu valor (x quantidade); depois o total do item.
+      const itemTotal = item.total ?? 0;
+      const extras = item.modifiers.reduce((s, m) => s + (m.priceDelta ?? 0), 0) * item.quantity;
+      blocks.push(row(label, amount(itemTotal - extras), { indent: 5 }));
+      for (const m of item.modifiers) {
+        const delta = (m.priceDelta ?? 0) * item.quantity;
+        blocks.push(delta > 0 ? row(`     ${m.name}`, amount(delta), { indent: 7 }) : text(`     ${m.name}`));
+      }
+      blocks.push(row("     Total do item", amount(itemTotal), { indent: 7, bold: true }));
+    } else {
+      blocks.push(row(label, amount(item.total ?? 0), { indent: 5 }));
+      for (const m of item.modifiers) blocks.push(text(`     ${m.name}`));
+    }
     if (item.notes) blocks.push(text(`     Obs: ${item.notes}`));
   }
   blocks.push(divider(), row("TOTAL", amount(num(job.payload.total)), { bold: true }));

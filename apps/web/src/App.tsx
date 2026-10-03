@@ -35,6 +35,7 @@ import {
 } from "./pages/OperationalPages";
 import { PrintingSettingsPage } from "./pages/PrintingSettingsPage";
 import { ProductCategoriesPage } from "./pages/ProductCategoriesPage";
+import { ProductModifiersPage } from "./pages/ProductModifiersPage";
 import { ProductionSectorsPage } from "./pages/ProductionSectorsPage";
 import { ReportsRoutePage } from "./pages/ReportsRoutePage";
 import { StockPage } from "./pages/StockPage";
@@ -155,6 +156,7 @@ function App() {
 
         <Route path="cadastros/produtos" element={<ProductsPage />} />
         <Route path="cadastros/categorias" element={<ProductCategoriesPage />} />
+        <Route path="cadastros/adicionais" element={<ProductModifiersPage />} />
         <Route path="cadastros/setores" element={<ProductionSectorsPage />} />
         <Route path="cadastros/estoque" element={<StockPage />} />
         <Route path="cadastros/clientes" element={<ModulePlaceholderPage title="Clientes" />} />

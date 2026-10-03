@@ -157,3 +157,53 @@ test("teste do servidor e teste de diagnóstico", () => {
     assert.ok(diag.includes(s), `faltou ${s}`);
   }
 });
+
+test("modificadores: produção lista cada um abaixo do item, sem preço; observação continua separada", () => {
+  const j = job("production_order", {
+    ...order.payload,
+    items: [
+      {
+        quantity: 2,
+        product_name: "X-Salada",
+        notes: "cortar ao meio",
+        modifiers: [
+          { name: "+ Bacon", type: "add", group: "Adicionais" },
+          { name: "+ Queijo", type: "add", group: "Adicionais" },
+          { name: "Sem cebola", type: "remove", group: "Retirar" },
+        ],
+        sector: { name: "Cozinha" },
+      },
+    ],
+  });
+  const out = text80(j);
+  const i = out.findIndex((l) => l.includes("2x X-SALADA"));
+  assert.ok(i >= 0);
+  assert.deepEqual(out.slice(i + 1, i + 5).map((l) => l.trim()).filter(Boolean), ["+ BACON", "+ QUEIJO", "SEM CEBOLA", ">> OBS: CORTAR AO MEIO"]);
+  assert.ok(!/R\$|\d+,\d\d/.test(out.join("\n")), "sem preço no ticket de produção");
+});
+
+test("modificadores: conta mostra preço base, adicionais pagos e total do item; grátis só o nome", () => {
+  const j = job("customer_bill", {
+    company: COMPANY,
+    service_point: { label: "Comanda CMD005" },
+    items: [
+      { quantity: 2, product_name: "X-Salada", total: 56, unit_price: 28, modifiers: [{ name: "+ Bacon", type: "add", price_delta: 5 }, { name: "+ Queijo", type: "add", price_delta: 3 }, { name: "Sem cebola", type: "remove", price_delta: 0 }] },
+      { quantity: 1, product_name: "Coca", total: 8, unit_price: 8, modifiers: [{ name: "Limão e gelo", type: "add", price_delta: 0 }] },
+    ],
+    total: 64,
+  });
+  const joined = text80(j).join("\n");
+  assert.match(joined, /X-SALADA\s+40,00/);
+  assert.match(joined, /\+ Bacon\s+10,00/);
+  assert.match(joined, /\+ Queijo\s+6,00/);
+  assert.match(joined, /Sem cebola/);
+  assert.match(joined, /Total do item\s+56,00/);
+  assert.match(joined, /COCA\s+8,00/);
+  assert.ok(joined.includes("Limão e gelo"));
+  assert.match(joined, /TOTAL\s+64,00/);
+});
+
+test("modificadores: cancelamento repete os modificadores do item", () => {
+  const j = job("production_cancellation", { service_point: { label: "Comanda CMD005" }, reason: "x", items: [{ quantity: 1, product_name: "X-Salada", modifiers: [{ name: "+ Bacon", type: "add" }] }] });
+  assert.ok(text80(j).join("\n").includes("+ BACON"));
+});

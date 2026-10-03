@@ -4,6 +4,7 @@ import { ConfirmDialog, ManageAgentDialog, PairingCodeDialog } from "./AgentDial
 import { JobDetailsDialog, PrinterDialog, RemovePrinterDialog, formatDateTime } from "./PrinterDialogs";
 import { QUEUE_LIMIT, supabasePrintingSource, type PrintingSource } from "./printingApi";
 import { startPrintLive, startUiClock } from "./printingLive";
+import { createTestFeedback, type TestFeedback } from "./printingTestFeedback";
 import {
   STATUS_LABEL,
   deviceStatusLabel,
@@ -59,6 +60,10 @@ export function PrintingSettings({ source = supabasePrintingSource }: { source?:
   const [actionError, setActionError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [dialog, setDialog] = useState<OpenDialog | null>(null);
+  // Banner do "Testar impressão": local, mas acompanha o job de teste (ver printingTestFeedback.ts).
+  const [testFeedback, setTestFeedback] = useState<TestFeedback | null>(null);
+  const [testDeviceId, setTestDeviceId] = useState<string | null>(null);
+  const testFeedbackRef = useRef<ReturnType<typeof createTestFeedback> | null>(null);
 
   const reloadConfig = useCallback(async () => {
     if (!companyId) return;
@@ -129,6 +134,30 @@ export function PrintingSettings({ source = supabasePrintingSource }: { source?:
     return startUiClock(() => setNow(Date.now()));
   }, [canManage]);
 
+  // Troca de empresa / unmount: descarta job acompanhado, mensagem e timers.
+  useEffect(() => {
+    const controller = createTestFeedback(setTestFeedback, {
+      setTimeout: (fn, ms) => setTimeout(fn, ms),
+      clearTimeout: (h) => clearTimeout(h as ReturnType<typeof setTimeout>),
+      setInterval: (fn, ms) => setInterval(fn, ms),
+      clearInterval: (h) => clearInterval(h as ReturnType<typeof setInterval>),
+    });
+    testFeedbackRef.current = controller;
+    return () => {
+      controller.dispose();
+      testFeedbackRef.current = null;
+      setTestFeedback(null);
+      setTestDeviceId(null);
+    };
+  }, [companyId]);
+
+  // Reavalia o banner sempre que a fila recarrega (Realtime, Atualizar, visibilidade) ou o Agente muda de Online/Offline.
+  const testDevice = testDeviceId ? (devices ?? []).find((d) => d.id === testDeviceId) : undefined;
+  const testAgentOffline = testDevice ? isDeviceAgentOffline(testDevice, agents, now) : false;
+  useEffect(() => {
+    testFeedbackRef.current?.evaluate(jobs, testAgentOffline);
+  }, [jobs, testAgentOffline]);
+
   if (!canManage) {
     return <p className="form-notice">Somente donos(as) e administradores(as) podem configurar a impressão.</p>;
   }
@@ -172,8 +201,26 @@ export function PrintingSettings({ source = supabasePrintingSource }: { source?:
     void reloadFailures();
   }
 
+  // Testar impressão: o banner segue o job criado (pending → claimed → printed/error/cancelled).
+  async function testPrint(device: PrintDevice) {
+    setBusyId(device.id);
+    setNotice(null);
+    setActionError(null);
+    testFeedbackRef.current?.clear();
+    const result = await source.testPrint(device.id);
+    setBusyId(null);
+    if (result.error) {
+      setActionError(result.error);
+      return;
+    }
+    setTestDeviceId(device.id);
+    testFeedbackRef.current?.track({ jobId: result.jobId ?? null, deviceId: device.id, agentOffline: isDeviceAgentOffline(device, agents, now) });
+    void reloadQueue();
+  }
+
   function open(next: OpenDialog) {
     setNotice(null);
+    testFeedbackRef.current?.clear();
     setActionError(null);
     setDialog(next);
   }
@@ -235,15 +282,7 @@ export function PrintingSettings({ source = supabasePrintingSource }: { source?:
                     type="button"
                     disabled={busyId === device.id || !device.ready}
                     aria-describedby={device.ready ? undefined : `print-hint-${device.id}`}
-                    onClick={() =>
-                      void direct(
-                        device.id,
-                        () => source.testPrint(device.id),
-                        isDeviceAgentOffline(device, agents, now)
-                          ? "Teste enviado para a fila. Ele será impresso quando o Agente estiver online."
-                          : "Teste enviado para a fila.",
-                      )
-                    }
+                    onClick={() => void testPrint(device)}
                   >
                     {busyId === device.id ? "Enviando…" : "Testar impressão"}
                   </button>
@@ -451,6 +490,11 @@ export function PrintingSettings({ source = supabasePrintingSource }: { source?:
       {queueError && tab === "queue" && <div className="form-error">{queueError}</div>}
       {actionError && <div className="form-error">{actionError}</div>}
       {notice && <div className="form-notice">{notice}</div>}
+      {testFeedback && (
+        <div className={testFeedback.kind === "error" ? "form-error" : "form-notice"} role={testFeedback.kind === "error" ? "alert" : "status"}>
+          {testFeedback.text}
+        </div>
+      )}
 
       {tab === "printers" ? printersBody : tab === "agents" ? agentsBody : queueBody}
 

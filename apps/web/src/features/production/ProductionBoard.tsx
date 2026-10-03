@@ -80,6 +80,15 @@ function OrderCard({
               <span className="kds-name">{item.name}</span>
               {showSector && <span className="kds-sector">{item.sectorName ?? "Sem setor"}</span>}
             </div>
+            {item.modifiers.length > 0 && (
+              <ul className="kds-mods">
+                {item.modifiers.map((m, i) => (
+                  <li key={`${m.name}-${i}`} className={m.type === "remove" ? "kds-mod kds-mod-remove" : "kds-mod"}>
+                    {m.name}
+                  </li>
+                ))}
+              </ul>
+            )}
             {item.notes && <p className="kds-notes">Obs.: {item.notes}</p>}
             {status === "ready" ? (
               item.readyAt && <p className="kds-card-meta">Pronto às {hhmm(item.readyAt)}</p>
@@ -393,6 +402,15 @@ function HistoryView({
                           <span className="kds-name">{item.name}</span>
                           {item.sectorName && <span className="kds-sector">{item.sectorName}</span>}
                         </div>
+                        {item.modifiers.length > 0 && (
+                          <ul className="kds-mods">
+                            {item.modifiers.map((m, i) => (
+                              <li key={`${m.name}-${i}`} className={m.type === "remove" ? "kds-mod kds-mod-remove" : "kds-mod"}>
+                                {m.name}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
                         {item.notes && <p className="kds-notes">Obs.: {item.notes}</p>}
                         <p className="kds-card-meta">
                           Pronto às {hhmm(item.readyAt)} · Tempo de produção: {item.minutes === null ? "—" : formatDuration(item.minutes)}

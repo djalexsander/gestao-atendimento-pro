@@ -16,12 +16,26 @@ export const PRODUCTION_COLUMNS: Array<{ status: ProductionStatus; title: string
   { status: "ready", title: "Prontos" },
 ];
 
+// Adicional/opção do item (sem preço: a produção não vê valores).
+export interface ProductionModifier {
+  name: string;
+  type: "add" | "remove";
+}
+export interface RawModifier {
+  name: string;
+  type: "add" | "remove";
+}
+export function toModifiers(raw: RawModifier[] | null | undefined): ProductionModifier[] {
+  return (raw ?? []).map((m) => ({ name: m.name, type: m.type === "remove" ? "remove" : "add" }));
+}
+
 export interface ProductionItem {
   id: string;
   orderId: string;
   quantity: number;
   name: string;
   notes: string | null;
+  modifiers: ProductionModifier[];
   sectorId: string | null;
   sectorName: string | null;
   status: ProductionStatus;
@@ -43,6 +57,7 @@ export interface RawProductionItem {
   quantity: number;
   name: string;
   notes: string | null;
+  modifiers?: RawModifier[] | null;
   sector_id: string | null;
   sector_name: string | null;
   status: ProductionStatus;
@@ -64,6 +79,7 @@ export function toProductionItem(raw: RawProductionItem): ProductionItem {
     quantity: raw.quantity,
     name: raw.name,
     notes: raw.notes,
+    modifiers: toModifiers(raw.modifiers),
     sectorId: raw.sector_id,
     sectorName: raw.sector_name,
     status: raw.status,
@@ -245,6 +261,7 @@ export interface HistoryItem {
   quantity: number;
   name: string;
   notes: string | null;
+  modifiers: ProductionModifier[];
   sectorName: string | null;
   submittedAt: string;
   readyAt: string;
@@ -262,6 +279,7 @@ export interface RawHistoryItem {
   quantity: number;
   name: string;
   notes: string | null;
+  modifiers?: RawModifier[] | null;
   sector_name: string | null;
   submitted_at: string;
   ready_at: string;
@@ -278,6 +296,7 @@ export function toHistoryItem(raw: RawHistoryItem): HistoryItem {
     quantity: raw.quantity,
     name: raw.name,
     notes: raw.notes,
+    modifiers: toModifiers(raw.modifiers),
     sectorName: raw.sector_name,
     submittedAt: raw.submitted_at,
     readyAt: raw.ready_at,

@@ -30,7 +30,7 @@ export interface PrintingSource {
   createDevice(companyId: string, input: DeviceInput): Promise<{ error: string | null }>;
   updateDevice(deviceId: string, input: DeviceInput): Promise<{ error: string | null }>;
   archiveDevice(deviceId: string): Promise<{ error: string | null }>;
-  testPrint(deviceId: string): Promise<{ error: string | null }>;
+  testPrint(deviceId: string): Promise<{ error: string | null; jobId?: string | null }>;
   reprint(jobId: string): Promise<{ error: string | null }>;
   loadFailures(companyId: string): Promise<{ data: PrintEnqueueFailure[] | null; error: string | null }>;
   resolveFailure(failureId: string): Promise<{ error: string | null }>;
@@ -168,6 +168,16 @@ export const supabasePrintingSource: PrintingSource = {
   subscribeToChanges: (companyId, onChange) => subscribeToPrintChanges(supabase as unknown as RealtimeClientLike, companyId, onChange),
   resolveFailure: (failureId) => rpc("resolve_print_enqueue_failure", { p_failure_id: failureId }),
   archiveDevice: (deviceId) => rpc("archive_print_device", { p_device_id: deviceId }),
-  testPrint: (deviceId) => rpc("enqueue_test_print", { p_device_id: deviceId }),
+  // A RPC devolve a linha de print_jobs criada: o id permite à tela acompanhar exatamente este teste.
+  async testPrint(deviceId) {
+    const { data, error } = await supabase.rpc("enqueue_test_print", { p_device_id: deviceId });
+    if (error) {
+      console.error("Falha em enqueue_test_print:", error.code);
+      return { error: describePrintError(error, SAVE_ERROR) };
+    }
+    const row = Array.isArray(data) ? data[0] : data;
+    const id = row && typeof row === "object" && typeof (row as { id?: unknown }).id === "string" ? (row as { id: string }).id : null;
+    return { error: null, jobId: id };
+  },
   reprint: (jobId) => rpc("reprint_print_job", { p_job_id: jobId }),
 };

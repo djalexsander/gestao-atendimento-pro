@@ -14,7 +14,8 @@ import { Catalog } from "./Catalog";
 import { CartBar, CartPanel } from "./Cart";
 import { OrderHistory } from "./OrderHistory";
 import { supabaseOrdersSource, type OrdersSource, type SessionHeader } from "./ordersApi";
-import { addToCart, changeCartQuantity, removeCartItem, sessionTotal, setCartItemNotes, type CartItem, type CatalogCategory, type CatalogProduct, type SubmittedOrder, type SubmittedOrderItem } from "./ordersLogic";
+import { ModifierDialog, type ModifierChoice } from "../modifiers/ModifierDialog";
+import { MODIFIERS_LOAD_ERROR, addToCart, decideAdd, changeCartQuantity, removeCartItem, sessionTotal, setCartItemNotes, updateCartLine, type CartItem, type CatalogCategory, type CatalogProduct, type SubmittedOrder, type SubmittedOrderItem } from "./ordersLogic";
 
 // Tela real de atendimento (substitui o modal provisório): catálogo visual, cesta local e envio
 // via submit_service_order. O MESMO componente serve Atendimento e Caixa — só troca o `variant`
@@ -89,12 +90,19 @@ export function SessionOrderScreen({
       setCategories(result.data.categories);
       setProducts(result.data.products);
     }
+    return result.data?.products ?? null;
   }, [source, companyId]);
   const requestCatalogReload = useMemo(() => createCoalescedRunner(reloadCatalog), [reloadCatalog]);
 
   useEffect(() => {
     if (!companyId || !source.subscribeToProducts) return;
     return source.subscribeToProducts(companyId, requestCatalogReload);
+  }, [source, companyId, requestCatalogReload]);
+
+  // Admin mexeu em grupos/opções/vínculos de adicionais: recarrega o catálogo (reload coalescido, sem polling).
+  useEffect(() => {
+    if (!companyId || !source.subscribeToModifiers) return;
+    return source.subscribeToModifiers(companyId, requestCatalogReload);
   }, [source, companyId, requestCatalogReload]);
 
   // Broadcast, postgres_changes e foco podem chegar quase juntos: uma busca por vez, sem atraso
@@ -185,8 +193,48 @@ export function SessionOrderScreen({
     setCart(updater);
   }
 
+  // Produto COM opções abre o diálogo visual (mesmo se tudo for opcional); sem opções entra direto na cesta.
+  const [pick, setPick] = useState<{ product: CatalogProduct; line: CartItem | null } | null>(null);
+
+  // Falha ao carregar as opções do produto: não adiciona; mostra o aviso com "Tentar novamente".
+  const [optionsError, setOptionsError] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState(false);
+
   function handleAdd(product: CatalogProduct) {
+    const decision = decideAdd(product);
+    if (decision === "blocked") {
+      setOptionsError(MODIFIERS_LOAD_ERROR);
+      return;
+    }
+    setOptionsError(null);
+    if (decision === "dialog") {
+      setPick({ product, line: null });
+      return;
+    }
     mutateCart((current) => addToCart(current, product));
+  }
+
+  async function retryOptions() {
+    setRetrying(true);
+    const fresh = await reloadCatalog();
+    setRetrying(false);
+    // Recarregou e nenhum produto segue marcado como falho: libera. Senão mantém o aviso.
+    if (fresh && fresh.every((p) => !p.modifiersFailed)) setOptionsError(null);
+  }
+
+  function confirmPick(choice: ModifierChoice) {
+    if (!pick) return;
+    const { product, line } = pick;
+    setPick(null);
+    if (line) mutateCart((current) => updateCartLine(current, line.lineId, choice));
+    else mutateCart((current) => addToCart(current, product, choice));
+  }
+
+  // Editar linha da cesta (antes de enviar): só quando o produto ainda tem opções disponíveis.
+  function editHandler(item: CartItem): (() => void) | null {
+    const product = products.find((p) => p.id === item.productId);
+    if (!product || product.modifierGroups.length === 0) return null;
+    return () => setPick({ product, line: item });
   }
 
   async function handleSubmit() {
@@ -229,6 +277,14 @@ export function SessionOrderScreen({
   } else {
     content = (
       <>
+        {optionsError && (
+          <div className="form-error" role="alert">
+            {optionsError}{" "}
+            <button className="btn-secondary btn-small" type="button" disabled={retrying} onClick={() => void retryOptions()}>
+              {retrying ? "Carregando…" : "Tentar novamente"}
+            </button>
+          </div>
+        )}
         <div className="order-body">
           <Catalog categories={categories} products={products} imageUrls={imageUrls} variant={variant} onAdd={handleAdd} />
           <CartPanel
@@ -243,6 +299,7 @@ export function SessionOrderScreen({
             onDecrement={(id) => mutateCart((c) => changeCartQuantity(c, id, -1))}
             onRemove={(id) => mutateCart((c) => removeCartItem(c, id))}
             onNotesChange={(id, notes) => mutateCart((c) => setCartItemNotes(c, id, notes))}
+            onEdit={editHandler}
             onSubmit={() => void handleSubmit()}
           />
         </div>
@@ -264,6 +321,18 @@ export function SessionOrderScreen({
           />
         )}
         <CartBar cart={cart} onOpen={() => setCartOpen(true)} />
+        {pick && (
+          <ModifierDialog
+            key={pick.line?.lineId ?? pick.product.id}
+            productName={pick.product.name}
+            basePrice={pick.product.salePrice}
+            groups={pick.product.modifierGroups}
+            mode={pick.line ? "edit" : "add"}
+            initial={pick.line ? { optionIds: pick.line.modifiers.map((m) => m.optionId), notes: pick.line.notes, quantity: pick.line.quantity } : undefined}
+            onConfirm={confirmPick}
+            onClose={() => setPick(null)}
+          />
+        )}
       </>
     );
   }

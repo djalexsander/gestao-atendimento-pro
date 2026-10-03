@@ -1,5 +1,6 @@
 import { formatReais } from "../../lib/money";
-import { cartItemCount, cartTotal, NOTES_MAX_LENGTH, type CartItem } from "./ordersLogic";
+import { ModifierLines } from "../modifiers/ModifierDialog";
+import { cartItemCount, cartItemUnitPrice, cartTotal, NOTES_MAX_LENGTH, type CartItem } from "./ordersLogic";
 
 // Barra fixa do celular (escondida no desktop via CSS — ver .cart-bar em index.css): toca para
 // abrir o painel da cesta como bottom sheet. Só aparece com pelo menos 1 item.
@@ -23,6 +24,7 @@ function CartItemRow({
   onDecrement,
   onRemove,
   onNotesChange,
+  onEdit,
 }: {
   item: CartItem;
   imageUrl: string | null;
@@ -30,6 +32,7 @@ function CartItemRow({
   onDecrement: () => void;
   onRemove: () => void;
   onNotesChange: (notes: string) => void;
+  onEdit: (() => void) | null;
 }) {
   return (
     <li className="cart-item">
@@ -40,8 +43,9 @@ function CartItemRow({
           <div className="cart-item-thumb cart-item-thumb-placeholder" aria-hidden="true" />
         )}
         <span className="cart-item-name">{item.name}</span>
-        <span className="cart-item-price">{formatReais(item.price * item.quantity)}</span>
+        <span className="cart-item-price">{formatReais(cartItemUnitPrice(item) * item.quantity)}</span>
       </div>
+      <ModifierLines modifiers={item.modifiers} />
       <div className="cart-item-controls">
         <div className="cart-qty">
           <button type="button" className="cart-qty-btn" aria-label={`Diminuir quantidade de ${item.name}`} onClick={onDecrement}>
@@ -52,6 +56,11 @@ function CartItemRow({
             +
           </button>
         </div>
+        {onEdit && (
+          <button type="button" className="btn-secondary btn-small" onClick={onEdit}>
+            Editar
+          </button>
+        )}
         <button type="button" className="btn-secondary btn-small btn-danger-text" onClick={onRemove}>
           Remover
         </button>
@@ -84,6 +93,7 @@ export function CartPanel({
   onDecrement,
   onRemove,
   onNotesChange,
+  onEdit,
   onSubmit,
 }: {
   cart: CartItem[];
@@ -93,10 +103,12 @@ export function CartPanel({
   error: string | null;
   notice: string | null;
   onClose: () => void;
-  onIncrement: (productId: string) => void;
-  onDecrement: (productId: string) => void;
-  onRemove: (productId: string) => void;
-  onNotesChange: (productId: string, notes: string) => void;
+  onIncrement: (lineId: string) => void;
+  onDecrement: (lineId: string) => void;
+  onRemove: (lineId: string) => void;
+  onNotesChange: (lineId: string, notes: string) => void;
+  // null = a linha não tem opções para editar (quantidade/observação ficam na própria linha)
+  onEdit: (item: CartItem) => (() => void) | null;
   onSubmit: () => void;
 }) {
   const total = cartTotal(cart);
@@ -122,13 +134,14 @@ export function CartPanel({
             <ul className="cart-list">
               {cart.map((item) => (
                 <CartItemRow
-                  key={item.productId}
+                  key={item.lineId}
                   item={item}
                   imageUrl={item.imagePath ? (imageUrls.get(item.imagePath) ?? null) : null}
-                  onIncrement={() => onIncrement(item.productId)}
-                  onDecrement={() => onDecrement(item.productId)}
-                  onRemove={() => onRemove(item.productId)}
-                  onNotesChange={(notes) => onNotesChange(item.productId, notes)}
+                  onIncrement={() => onIncrement(item.lineId)}
+                  onDecrement={() => onDecrement(item.lineId)}
+                  onRemove={() => onRemove(item.lineId)}
+                  onNotesChange={(notes) => onNotesChange(item.lineId, notes)}
+                  onEdit={onEdit(item)}
                 />
               ))}
             </ul>
