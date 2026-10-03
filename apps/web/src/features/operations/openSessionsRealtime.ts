@@ -10,7 +10,13 @@ function rtLog(message: string) {
   console.info(`[realtime] ${message}`);
 }
 
-export function subscribeToOpenAttendanceChanges(client: RealtimeClientLike, companyId: string, onChange: () => void): () => void {
+// `tag` só dá nome ao channel/log (cada tela abre o seu): a tela de Pedidos usa a mesma assinatura.
+export function subscribeToOpenAttendanceChanges(
+  client: RealtimeClientLike,
+  companyId: string,
+  onChange: () => void,
+  tag = "open-attendances",
+): () => void {
   let disposed = false;
   let channel: RealtimeChannelLike | null = null;
 
@@ -19,22 +25,22 @@ export function subscribeToOpenAttendanceChanges(client: RealtimeClientLike, com
       const { data } = await client.auth.getSession();
       if (!data.session) throw new Error("sem sessão");
       await client.realtime.setAuth();
-      rtLog("open-attendances auth ready");
+      rtLog(`${tag} auth ready`);
     } catch {
-      rtLog("open-attendances auth failed (foco/visibilidade seguem como fallback)");
+      rtLog(`${tag} auth failed (foco/visibilidade seguem como fallback)`);
       return;
     }
     if (disposed) return;
 
-    let ch = client.channel(`open-attendances:${companyId}:${Math.random().toString(36).slice(2)}`);
+    let ch = client.channel(`${tag}:${companyId}:${Math.random().toString(36).slice(2)}`);
     for (const table of OPEN_ATTENDANCE_TABLES) {
       ch = ch.on("postgres_changes", { event: "*", schema: "public", table, filter: `company_id=eq.${companyId}` }, () => {
-        rtLog(`open-attendances ${table} change received`);
+        rtLog(`${tag} ${table} change received`);
         onChange();
       });
     }
     channel = ch;
-    ch.subscribe((status) => rtLog(`open-attendances ${status}`));
+    ch.subscribe((status) => rtLog(`${tag} ${status}`));
   })();
 
   return () => {

@@ -10,6 +10,8 @@ import { ROLE_LABEL } from "../features/employees/roles";
 import type { ServicePanelSource } from "../features/operations/api";
 import type { OpenSessionsSource } from "../features/operations/openSessionsApi";
 import { OpenAttendancesBoard } from "../features/operations/OpenAttendancesBoard";
+import { OrdersBoard } from "../features/ordersBoard/OrdersBoard";
+import type { OrdersBoardApi } from "../features/ordersBoard/ordersBoardApi";
 import { ServicePointsPanel } from "../features/operations/ServicePointsPanel";
 import { ProductionBoard } from "../features/production/ProductionBoard";
 import type { ProductionSource } from "../features/production/productionApi";
@@ -26,7 +28,9 @@ function OperationalShell({ title, children }: { title: string; children: ReactN
   const navigate = useNavigate();
   const isCashier = activeMembership?.role === "cashier";
   const role = activeMembership?.role ?? null;
-  const onOpenBoard = useLocation().pathname === OPERATIONAL_PATH.abertos;
+  const pathname = useLocation().pathname;
+  const onOpenBoard = pathname === OPERATIONAL_PATH.abertos;
+  const onOrdersBoard = pathname === OPERATIONAL_PATH.pedidos;
   const canSeeOpenBoard = role !== null && canOpenOperationalArea(role, "abertos");
   const isAdminRole = role === "owner" || role === "admin";
   const { cash: myCash } = useMyOpenCash(isCashier);
@@ -84,7 +88,12 @@ function OperationalShell({ title, children }: { title: string; children: ReactN
               Atendimentos abertos
             </Link>
           )}
-          {onOpenBoard && role && !isAdminRole && (
+          {canSeeOpenBoard && !onOrdersBoard && (
+            <Link to={OPERATIONAL_PATH.pedidos} className="btn-secondary btn-small" style={{ textDecoration: "none" }}>
+              Pedidos
+            </Link>
+          )}
+          {(onOpenBoard || onOrdersBoard) && role && !isAdminRole && (
             <Link to={homePathForRole(role)} className="btn-secondary btn-small" style={{ textDecoration: "none" }}>
               Voltar
             </Link>
@@ -198,6 +207,16 @@ export function OperationalOpenAttendancesPage({ source }: { source?: OpenSessio
   return (
     <OperationalShell title="Comandas / Mesas abertas">
       <OpenAttendancesBoard source={source} emptyAction={emptyAction} />
+    </OperationalShell>
+  );
+}
+
+// Pedidos: histórico operacional (consulta) dos pedidos enviados, por período. `source` só existe para
+// exercitar a tela com dados simulados.
+export function OperationalOrdersPage({ source }: { source?: OrdersBoardApi }) {
+  return (
+    <OperationalShell title="Pedidos">
+      <OrdersBoard source={source} />
     </OperationalShell>
   );
 }

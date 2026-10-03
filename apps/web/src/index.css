@@ -1187,6 +1187,277 @@ button {
 }
 
 /* ---------------------------------------------------------------------------
+   Operacional: Pedidos (histórico operacional)
+   --------------------------------------------------------------------------- */
+.ob-counters {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
+.ob-select {
+  margin-left: 0;
+}
+
+.ob-day {
+  margin: 8px 0;
+  color: var(--text-muted);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.ob-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.ob-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-left-width: 6px;
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.ob-card.ob-pending {
+  border-left-color: var(--text-muted);
+}
+.ob-card.ob-preparing {
+  border-left-color: var(--warning);
+}
+.ob-card.ob-ready {
+  border-left-color: var(--success);
+}
+.ob-card.ob-partial {
+  border-left-color: var(--warning);
+  border-style: dashed;
+  border-left-style: solid;
+}
+.ob-card.ob-cancelled {
+  border-left-color: var(--danger);
+  opacity: 0.75;
+}
+.ob-card.ob-cancelled .ob-total,
+.ob-card.ob-cancelled .ob-title {
+  text-decoration: line-through;
+}
+
+.ob-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+}
+
+.ob-time {
+  color: var(--text-h);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.ob-code {
+  color: var(--text-muted);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+}
+
+.ob-status,
+.ob-prod {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--border);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.ob-status-pending {
+  color: var(--text-muted);
+}
+.ob-status-preparing,
+.ob-status-partial {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+.ob-status-ready {
+  background: var(--success-bg);
+  color: var(--success);
+}
+.ob-status-cancelled {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+
+.ob-main {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.ob-kind {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.ob-kind-table {
+  background: var(--accent);
+  color: #fff;
+}
+
+.ob-title {
+  min-width: 0;
+  flex: 1;
+  color: var(--text-h);
+  font-size: 20px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.ob-total {
+  color: var(--text-h);
+  font-size: 20px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.ob-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 12px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.ob-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  font-size: 14px;
+}
+.ob-count {
+  font-weight: 600;
+}
+.ob-names {
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.ob-sectors,
+.ob-detail-state {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.ob-chip {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.ob-details {
+  width: 100%;
+  min-height: 44px;
+  margin-top: 4px;
+}
+
+.ob-detail-items {
+  display: grid;
+  gap: 10px;
+  margin: 12px 0;
+  padding: 0;
+  list-style: none;
+}
+.ob-detail-item {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.ob-detail-cancelled .ob-detail-name {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+.ob-detail-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.ob-detail-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.ob-detail-price {
+  font-variant-numeric: tabular-nums;
+}
+.ob-note {
+  margin-top: 2px;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+.ob-detail-state {
+  margin-top: 6px;
+}
+.ob-prod-ready {
+  background: var(--success-bg);
+  color: var(--success);
+}
+.ob-prod-preparing {
+  background: var(--warning-bg);
+  color: var(--warning);
+}
+.ob-prod-cancelled {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+.ob-cancel-sum,
+.ob-cancel-line {
+  color: var(--danger);
+  font-size: 13px;
+}
+
+/* Pedidos: os chips de período quebram de linha (nenhum fica escondido atrás de rolagem). */
+.ob-board .pq-chips {
+  flex-wrap: wrap;
+  overflow: visible;
+}
+
+@media (max-width: 640px) {
+  .ob-counters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ob-counters > div:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .ob-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .ob-select {
+    flex: 1 1 100%;
+  }
+
+  .ob-select select {
+    flex: 1;
+  }
+}
+
+/* ---------------------------------------------------------------------------
    Administrativo: configuração de Comandas / Mesas
    --------------------------------------------------------------------------- */
 .sp-admin {
