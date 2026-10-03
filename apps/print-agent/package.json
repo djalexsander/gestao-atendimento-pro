@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node --test tests/*.test.ts",
     "audit:secrets": "node scripts/check-no-service-role.mjs",
+    "build:installer": "tauri build --bundles nsis",
     "tauri": "tauri"
   },
   "dependencies": {

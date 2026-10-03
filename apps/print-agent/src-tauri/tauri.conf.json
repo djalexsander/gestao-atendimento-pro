@@ -2,6 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Gestão Atendimento Pro - Agente de Impressão",
   "version": "0.1.0",
+  "mainBinaryName": "print-agent",
   "identifier": "br.com.gestaoatendimentopro.printagent",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -27,8 +28,18 @@
     }
   },
   "bundle": {
-    "active": false,
-    "targets": "all",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"]
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "ALEXPROAPPS",
+    "shortDescription": "Agente de impressão do Gestão Atendimento Pro",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["PortugueseBR"],
+        "displayLanguageSelector": false,
+        "startMenuFolder": "Gestão Atendimento Pro"
+      }
+    }
   }
 }
