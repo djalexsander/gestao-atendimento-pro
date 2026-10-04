@@ -36,7 +36,7 @@ export const ADMIN_NAV: NavEntry[] = [
     items: [
       { type: "item", label: "Visão financeira", path: "/app/financeiro/visao", status: "ready" },
       { type: "item", label: "Caixa", path: "/app/financeiro/caixa", status: "ready" },
-      { type: "item", label: "Contas a receber", path: "/app/financeiro/contas-a-receber", status: "placeholder" },
+      { type: "item", label: "Contas a receber", path: "/app/financeiro/contas-a-receber", status: "ready" },
       { type: "item", label: "Contas a pagar", path: "/app/financeiro/contas-a-pagar", status: "placeholder" },
       { type: "item", label: "Relatórios", path: "/app/financeiro/relatorios", status: "ready" },
     ],

@@ -41,6 +41,7 @@ import { ProductModifiersPage } from "./pages/ProductModifiersPage";
 import { ProductionSectorsPage } from "./pages/ProductionSectorsPage";
 import { ReportsRoutePage } from "./pages/ReportsRoutePage";
 import { FinancialOverview } from "./features/financial/FinancialOverview";
+import { ReceivablesPage } from "./features/receivables/ReceivablesPage";
 import { StockPage } from "./pages/StockPage";
 import { ProductsPage } from "./pages/ProductsPage";
 import { ServiceModeSettingsPage } from "./pages/ServiceModeSettingsPage";
@@ -169,7 +170,7 @@ function App() {
             todos com a MESMA página reutilizável — nada de lógica de negócio aqui. */}
         <Route path="financeiro/visao" element={<FinancialOverview />} />
         <Route path="financeiro/caixa" element={<CashAdmin />} />
-        <Route path="financeiro/contas-a-receber" element={<ModulePlaceholderPage title="Contas a receber" />} />
+        <Route path="financeiro/contas-a-receber" element={<ReceivablesPage />} />
         <Route path="financeiro/contas-a-pagar" element={<ModulePlaceholderPage title="Contas a pagar" />} />
         <Route path="financeiro/relatorios" element={<ReportsRoutePage />} />
 

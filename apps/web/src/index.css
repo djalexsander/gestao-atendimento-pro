@@ -3676,3 +3676,267 @@ button {
     flex-wrap: wrap;
   }
 }
+
+/* Financeiro → Contas a receber */
+.rec-header-actions {
+  display: flex;
+  gap: 8px;
+}
+.rec-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--surface);
+  font-size: 14px;
+}
+.btn-link {
+  border: 0;
+  background: none;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: 13px;
+}
+.rec-kpi-danger dd,
+.rec-kpi-danger .fin-delta {
+  color: var(--danger);
+}
+.rec-kpi-warn dd {
+  color: #b7791f;
+}
+.rec-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+.rec-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 12px;
+}
+.rec-filter-row .field {
+  margin-bottom: 0;
+  min-width: 150px;
+}
+.rec-search {
+  flex: 1 1 260px;
+}
+.rec-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+.rec-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-left-width: 4px;
+  border-radius: 10px;
+  background: var(--surface);
+}
+.rec-item-overdue {
+  border-left-color: var(--danger);
+}
+.rec-item-due_today {
+  border-left-color: #b7791f;
+}
+.rec-item-paid {
+  border-left-color: #1a7f37;
+}
+.rec-item-cancelled {
+  opacity: 0.65;
+}
+.rec-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.rec-customer {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.rec-desc,
+.rec-due {
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.rec-late {
+  color: var(--danger);
+}
+.rec-money {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  text-align: right;
+  white-space: nowrap;
+}
+.rec-amount {
+  font-size: 18px;
+  font-weight: 700;
+}
+.rec-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+.rec-actions button {
+  min-height: 36px;
+  padding: 6px 12px;
+}
+.rec-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.rec-badge {
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.rec-badge-overdue {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+.rec-badge-due_today {
+  border-color: #b7791f;
+  color: #b7791f;
+}
+.rec-badge-paid {
+  border-color: #1a7f37;
+  color: #1a7f37;
+}
+.rec-badge-partial {
+  color: var(--text-muted);
+}
+.rec-form-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.rec-detail-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.rec-detail-desc {
+  margin: 4px 0 8px;
+  font-size: 14px;
+}
+.rec-detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 12px;
+  margin: 0 0 8px;
+  font-size: 13px;
+}
+.rec-detail-grid dt {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.rec-detail-grid dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.rec-detail-notes {
+  margin: 0 0 8px;
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--bg);
+  font-size: 13px;
+}
+.rec-detail h4 {
+  margin: 12px 0 6px;
+  font-size: 13px;
+}
+.rec-history {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 13px;
+}
+.rec-history li {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.rec-detail-actions {
+  flex-wrap: wrap;
+}
+.modal:has(.rec-detail) {
+  max-width: 520px;
+}
+@media (max-width: 900px) {
+  .rec-item {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .rec-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+}
+@media (max-width: 640px) {
+  .rec-item {
+    grid-template-columns: 1fr;
+  }
+  .rec-money {
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    text-align: left;
+    white-space: normal;
+  }
+  .rec-actions button {
+    flex: 1 1 auto;
+    min-height: 42px;
+  }
+  .rec-header-actions {
+    flex-wrap: wrap;
+  }
+  .rec-filter-row .field {
+    flex: 1 1 140px;
+  }
+  .rec-form-row,
+  .rec-detail-grid {
+    grid-template-columns: 1fr;
+  }
+  /* formulários e detalhes viram folha na base da tela */
+  .modal:has(.rec-form),
+  .modal:has(.rec-detail) {
+    width: 100%;
+    max-width: 100%;
+    margin: auto 0 0;
+    max-height: 92svh;
+    border-radius: 14px 14px 0 0;
+  }
+}
