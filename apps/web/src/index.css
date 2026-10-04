@@ -3418,3 +3418,261 @@ button {
   word-break: break-all;
   font-size: 12px;
 }
+
+/* Financeiro → Visão financeira */
+.fin-page {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.fin-content {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  transition: opacity 0.15s;
+}
+.fin-loading {
+  opacity: 0.55;
+}
+.fin-kpis {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin: 8px 0 0;
+}
+.fin-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.fin-kpi-strong {
+  border-width: 2px;
+}
+.fin-kpi dt {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.fin-kpi dd {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+.fin-delta {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.fin-delta-up {
+  color: #1a7f37;
+}
+.fin-delta-down {
+  color: var(--danger);
+}
+.fin-delta-vs {
+  color: var(--text-muted);
+}
+.fin-empty {
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  color: var(--text-muted);
+  text-align: center;
+}
+.fin-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.fin-card {
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.fin-card h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+.fin-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 14px;
+}
+.fin-lines-sub {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.fin-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.fin-line > span:last-child {
+  text-align: right;
+  white-space: nowrap;
+}
+.fin-line-strong {
+  font-weight: 700;
+}
+.fin-methods {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 14px;
+}
+.fin-method-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.fin-method-zero {
+  opacity: 0.55;
+}
+.fin-method-track {
+  height: 6px;
+  margin-top: 4px;
+  border-radius: 3px;
+  background: var(--border);
+}
+.fin-method-fill {
+  height: 100%;
+  border-radius: 3px;
+  background: var(--accent);
+}
+.fin-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 150px;
+  padding-bottom: 18px;
+}
+.fin-bar-col {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  height: 100%;
+}
+.fin-bar-track {
+  display: flex;
+  align-items: flex-end;
+  height: 100%;
+}
+.fin-bar {
+  width: 100%;
+  border-radius: 3px 3px 0 0;
+  background: var(--accent);
+}
+.fin-bar-label {
+  position: absolute;
+  bottom: -18px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 10px;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+.fin-top {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding-left: 20px;
+  font-size: 14px;
+}
+.fin-top li::marker {
+  color: var(--text-muted);
+}
+.fin-top li {
+  padding-left: 4px;
+}
+.fin-top li > * {
+  margin-right: 10px;
+}
+.fin-open-cash {
+  margin-top: 8px;
+  padding: 12px 14px;
+  border: 2px solid var(--accent);
+  border-radius: 10px;
+  background: var(--surface);
+}
+.fin-open-cash-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+.fin-open-cash-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font-size: 14px;
+}
+.fin-open-cash-list li {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 12px;
+}
+.fin-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+.fin-error p {
+  margin: 0;
+}
+.fin-skeleton-block {
+  min-height: 70px;
+  border-color: transparent;
+  background: linear-gradient(90deg, var(--border), transparent, var(--border));
+  background-size: 200% 100%;
+  animation: fin-shimmer 1.4s linear infinite;
+}
+.fin-skeleton-tall {
+  min-height: 180px;
+}
+.fin-skeleton .fin-grid {
+  margin-top: 16px;
+}
+@keyframes fin-shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+@media (max-width: 900px) {
+  .fin-grid {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 640px) {
+  .fin-kpis {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+  .fin-kpi dd {
+    font-size: 18px;
+  }
+  .fin-open-cash-head {
+    flex-wrap: wrap;
+  }
+}
