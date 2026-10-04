@@ -38,3 +38,13 @@ verify_jwt = true
 # Gestão de funcionários. JWT obrigatório na borda; o handler valida o token de
 # novo e todas as escritas passam por RPCs chamadas com o JWT do próprio ator.
 verify_jwt = true
+
+[functions.push-test]
+# Notificação de teste para UM aparelho do próprio usuário. JWT obrigatório na borda; o handler valida o token
+# de novo e o usuário vem do JWT (nunca do corpo).
+verify_jwt = true
+
+[functions.push-dispatch]
+# Chamada SÓ pelo banco (pg_net) com o segredo compartilhado no header x-internal-secret (>= 32 caracteres,
+# comparação em tempo constante); não há JWT de usuário nessa chamada.
+verify_jwt = false

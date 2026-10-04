@@ -5,7 +5,9 @@ import { staffEmail } from "../lib/staffAuth";
 import { supabase } from "../lib/supabaseClient";
 import type { CompanyMembership, ProfileRow } from "../lib/types";
 import type { Session } from "@supabase/supabase-js";
+import { pushClient } from "../features/notifications/pushBrowser";
 import { AuthContext, type AuthContextValue } from "./authContext";
+import { clearReturnPath } from "./returnTo";
 
 const ACTIVE_COMPANY_KEY = "orca-facil:active-company-id";
 
@@ -205,6 +207,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function signOut() {
+    // Melhor esforço (máx. 2 s, nunca bloqueia nem falha o logout): desativa este aparelho para notificações. Se
+    // não der, o servidor continua protegido: vínculo inativo/sem sessão não recebe push.
+    await pushClient.deactivateForLogout();
+    clearReturnPath();
     await supabase.auth.signOut();
     setPreferredCompanyId(null);
     persistActiveCompanyId(null);

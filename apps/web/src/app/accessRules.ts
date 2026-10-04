@@ -126,3 +126,36 @@ export function decide(route: GuardedRoute, s: AuthSnapshot): Decision {
       return s.role !== null && canOpenOperationalArea(s.role, route) ? RENDER : redirect(landing);
   }
 }
+
+// --- Destino pretendido (deep link de push com a sessão fora do ar) ---------------------------------
+// Quem abre uma rota protegida sem sessão vai ao login; depois de entrar, volta para ONDE QUERIA ir, desde que
+// a rota seja interna, conhecida e permitida ao papel. Sem isso, cai na página inicial do papel (landingPath).
+
+const OPERATIONAL_SEGMENT_AREA: Record<string, OperationalArea> = {
+  atendimento: "atendimento",
+  caixa: "caixa",
+  producao: "producao",
+  "atendimentos-abertos": "abertos",
+  pedidos: "pedidos",
+};
+
+function pathOnly(path: string): string {
+  return path.split(/[?#]/)[0];
+}
+
+// Rota que vale lembrar: interna (começa com "/", nunca "//"), sob /app ou numa área operacional conhecida.
+export function rememberablePath(path: string): string | null {
+  if (typeof path !== "string" || !path.startsWith("/") || path.startsWith("//") || path.includes("\\") || path.length > 500) return null;
+  const p = pathOnly(path);
+  if (p === "/app" || p.startsWith("/app/")) return path;
+  if (p.startsWith("/operacional/") && OPERATIONAL_SEGMENT_AREA[p.split("/")[2]]) return path;
+  return null;
+}
+
+// A rota lembrada pode ser aberta por este papel? (mesmas regras dos guards)
+export function pathAllowedForRole(role: CompanyRole | null, path: string): boolean {
+  if (!role || rememberablePath(path) === null) return false;
+  const p = pathOnly(path);
+  if (p === "/app" || p.startsWith("/app/")) return role === "owner" || role === "admin";
+  return canOpenOperationalArea(role, OPERATIONAL_SEGMENT_AREA[p.split("/")[2]]);
+}

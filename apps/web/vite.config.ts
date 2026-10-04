@@ -35,6 +35,9 @@ export default defineConfig({
         skipWaiting: true,
         clientsClaim: true,
         runtimeCaching: [],
+        // handlers de push/notificationclick (public/push-sw.js) dentro do service worker gerado: importScripts é
+        // a forma de estender o generateSW sem trocar de estratégia
+        importScripts: ['push-sw.js'],
       },
     }),
   ],

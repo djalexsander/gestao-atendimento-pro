@@ -1,3 +1,4 @@
+import { NotificationsButton } from "../features/notifications/NotificationEntryPoints";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { canOpenOperationalArea, homePathForRole, OPERATIONAL_PATH } from "../app/accessRules";
@@ -103,6 +104,7 @@ function OperationalShell({ title, children }: { title: string; children: ReactN
               Voltar ao Administrativo
             </Link>
           )}
+          <NotificationsButton />
           {/* Nome do funcionário; o e-mail técnico do Auth nunca aparece. */}
           <span>{profile?.full_name}</span>
           {activeMembership && <span className="role-badge">{ROLE_LABEL[activeMembership.role]}</span>}

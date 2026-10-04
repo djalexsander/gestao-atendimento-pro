@@ -1,8 +1,9 @@
-import type { ReactNode } from "react";
-import { Navigate } from "react-router-dom";
+import { useEffect, type ReactNode } from "react";
+import { Navigate, useLocation } from "react-router-dom";
 import { isManagedAccount } from "../lib/managedAccount";
-import { decide, type AuthSnapshot, type GuardedRoute, type OperationalArea } from "./accessRules";
+import { decide, pathAllowedForRole, type AuthSnapshot, type GuardedRoute, type OperationalArea } from "./accessRules";
 import { FullPageLoader } from "./FullPageLoader";
+import { clearReturnPath, peekReturnPath, saveReturnPath } from "./returnTo";
 import { useAuth } from "./useAuth";
 
 // Os guards só APLICAM as decisões de accessRules.ts (que ficam testáveis à parte):
@@ -20,9 +21,29 @@ function useAuthSnapshot(): AuthSnapshot {
 }
 
 function Guard({ route, children }: { route: GuardedRoute; children?: ReactNode }) {
-  const decision = decide(route, useAuthSnapshot());
+  const snapshot = useAuthSnapshot();
+  const decision = decide(route, snapshot);
+  const location = useLocation();
+  const here = location.pathname + location.search;
+
+  // Destino pretendido (ex.: toque numa notificação com a sessão fora do ar): lembra a rota ao mandar a pessoa
+  // para o login e limpa quando ela chega lá. Só rotas internas conhecidas (ver returnTo.ts / accessRules.ts).
+  const signedOutRedirect = decision.action === "redirect" && !snapshot.hasSession;
+  const arrived = decision.action === "render" && route !== "guest";
+  useEffect(() => {
+    if (signedOutRedirect) saveReturnPath(here);
+    else if (arrived && peekReturnPath() === here) clearReturnPath();
+  }, [signedOutRedirect, arrived, here]);
+
   if (decision.action === "wait") return <FullPageLoader />;
-  if (decision.action === "redirect") return <Navigate to={decision.to} replace />;
+  if (decision.action === "redirect") {
+    // Já logada, a caminho da página inicial (login/raiz): volta ao destino lembrado, se o papel puder abri-lo.
+    if (snapshot.hasSession && (route === "guest" || route === "root")) {
+      const back = peekReturnPath();
+      if (back && pathAllowedForRole(snapshot.role, back)) return <Navigate to={back} replace />;
+    }
+    return <Navigate to={decision.to} replace />;
+  }
   return <>{children}</>;
 }
 

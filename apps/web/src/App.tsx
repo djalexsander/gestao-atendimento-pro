@@ -43,6 +43,7 @@ import { ReportsRoutePage } from "./pages/ReportsRoutePage";
 import { FinancialOverview } from "./features/financial/FinancialOverview";
 import { ReceivablesPage } from "./features/receivables/ReceivablesPage";
 import { PayablesPage } from "./features/payables/PayablesPage";
+import { NotificationSettingsPage, PushNavigationListener } from "./features/notifications/NotificationEntryPoints";
 import { StockPage } from "./pages/StockPage";
 import { ProductsPage } from "./pages/ProductsPage";
 import { ServiceModeSettingsPage } from "./pages/ServiceModeSettingsPage";
@@ -52,6 +53,8 @@ import { TeamPage } from "./pages/TeamPage";
 
 function App() {
   return (
+    <>
+    <PushNavigationListener />
     <Routes>
       <Route path="/" element={<RootRedirect />} />
       <Route
@@ -164,6 +167,7 @@ function App() {
         <Route path="configuracoes/empresa" element={<CompanySettingsPage />} />
         <Route path="configuracoes/codigo-acesso" element={<AccessCodeSettingsPage />} />
         <Route path="configuracoes/modo-atendimento" element={<ServiceModeSettingsPage />} />
+        <Route path="configuracoes/notificacoes" element={<NotificationSettingsPage />} />
         <Route path="equipe" element={<TeamPage />} />
         <Route path="comandas" element={<ServicePointsAdminPage />} />
 
@@ -208,6 +212,7 @@ function App() {
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </>
   );
 }
 

@@ -3944,3 +3944,79 @@ button {
     border-radius: 14px 14px 0 0;
   }
 }
+
+/* Notificações push (Configurações → Notificações e modal das telas operacionais) */
+.push-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.push-status-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.push-status-head h3 {
+  margin: 0;
+}
+.push-hint {
+  margin: 8px 0 4px;
+  font-size: 14px;
+}
+.push-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 12px 0 8px;
+}
+.push-actions button {
+  min-height: 44px;
+}
+.push-devices {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.push-device {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+}
+.push-device:last-child {
+  padding-bottom: 0;
+  border-bottom: 0;
+}
+.push-device-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.push-sector-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 4px;
+}
+.push-sector-list .checkbox-row {
+  margin: 0;
+  min-height: 36px;
+}
+.modal:has(.push-settings) {
+  max-width: 520px;
+}
+@media (max-width: 640px) {
+  .modal:has(.push-settings) {
+    width: 100%;
+    max-width: 100%;
+    margin: auto 0 0;
+    max-height: 92svh;
+    border-radius: 14px 14px 0 0;
+  }
+}
