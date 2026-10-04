@@ -40,13 +40,24 @@ async function getRegistration(): Promise<RegistrationLike> {
   return registration as unknown as RegistrationLike;
 }
 
+export const SESSION_EXPIRED_TEXT = "Sua sessão expirou ou foi encerrada em outro aparelho. Saia e entre novamente.";
+
 async function invokeTest(deviceId: string): Promise<{ ok: boolean; error: string | null }> {
+  // O JWT guardado no navegador pode continuar "válido" (assinatura/validade) depois que a SESSÃO foi encerrada em
+  // outro aparelho; a Edge valida a sessão no Auth. Conferir antes dá a mensagem certa (e o supabase-js limpa a
+  // sessão morta) em vez de um erro genérico.
+  const { error: sessionError } = await supabase.auth.getUser();
+  if (sessionError) {
+    console.error("push-test: sessão inválida no Auth:", (sessionError as { code?: string }).code ?? sessionError.name);
+    return { ok: false, error: SESSION_EXPIRED_TEXT };
+  }
   const { error } = await supabase.functions.invoke("push-test", { body: { device_id: deviceId } });
   if (!error) return { ok: true, error: null };
   // Erros HTTP da função trazem uma mensagem amigável no corpo ({ error }); nunca texto técnico.
   const context = (error as { context?: Response }).context;
   if (context && typeof context.json === "function") {
-    const body = (await context.json().catch(() => null)) as { error?: string } | null;
+    const body = (await context.json().catch(() => null)) as { error?: string; reason?: string } | null;
+    if (body?.reason) console.error("push-test: recusado pela função:", body.reason);
     if (body?.error) return { ok: false, error: body.error };
   }
   return { ok: false, error: "Não foi possível enviar a notificação de teste." };

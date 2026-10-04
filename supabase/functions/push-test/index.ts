@@ -17,13 +17,19 @@ const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
 
 Deno.serve((req: Request) =>
   handlePushTest(req, {
-    getUserId: async (jwt) => {
+    getUser: async (jwt) => {
       const client = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
         global: { headers: { Authorization: `Bearer ${jwt}` } },
         auth: { persistSession: false, autoRefreshToken: false },
       });
       const { data, error } = await client.auth.getUser(jwt);
-      return error || !data.user ? null : data.user.id;
+      if (error || !data.user) {
+        // só código/status do Auth no log e na resposta (nunca o token)
+        const code = (error as { code?: string } | null)?.code ?? "auth_error";
+        console.error("push-test: getUser falhou", { status: (error as { status?: number } | null)?.status ?? null, code });
+        return { userId: null, reason: code };
+      }
+      return { userId: data.user.id };
     },
     loadTarget: async (userId, deviceId) => {
       const { data, error } = await admin.rpc("push_test_target", { p_user_id: userId, p_device_id: deviceId });

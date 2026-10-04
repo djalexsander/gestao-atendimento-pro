@@ -10,9 +10,15 @@
 //   * 404/410 desativam o aparelho; outras falhas somam failure_count (5 seguidas desativam) — push_record_outcome.
 import { type PushMessage, type PushTarget, type SendResult, type SendOptions } from "../_shared/push-core.ts";
 
+// Resultado da validação do JWT: o id do usuário, ou null com um motivo curto e seguro (código do Auth; nunca o token).
+export interface AuthResult {
+  userId: string | null;
+  reason?: string;
+}
+
 export interface TestHandlerDeps {
-  // Valida o JWT e devolve o id do usuário (ou null).
-  getUserId(jwt: string): Promise<string | null>;
+  // Valida o JWT NO SERVIDOR DE AUTH (a sessão precisa existir) e devolve o id do usuário.
+  getUser(jwt: string): Promise<AuthResult>;
   // service_role: alvo do teste (credenciais) para ESTE usuário e aparelho; null se não for dele/ativo/vínculo ativo.
   loadTarget(userId: string, deviceId: string): Promise<(PushTarget & { subscriptionId: string; url: string }) | null>;
   send(target: PushTarget, message: PushMessage, options: SendOptions): Promise<SendResult>;
@@ -35,6 +41,10 @@ function json(body: Record<string, unknown>, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
 }
 
+// O gateway (verify_jwt) só confere a assinatura do token; já o Auth confere se a SESSÃO ainda existe. Uma sessão
+// encerrada em outro aparelho (logout/novo login) deixa o JWT "válido" por até 1 h para o resto do app, mas não aqui.
+export const SESSION_MESSAGE = "Sua sessão expirou ou foi encerrada em outro aparelho. Saia e entre novamente.";
+
 export const TEST_TITLE = "Gestão Atendimento Pro";
 export const TEST_BODY = "Notificações ativadas com sucesso.";
 
@@ -44,9 +54,10 @@ export async function handlePushTest(req: Request, deps: TestHandlerDeps): Promi
 
   const authorization = req.headers.get("Authorization") ?? "";
   const jwt = authorization.replace(/^Bearer\s+/i, "").trim();
-  if (!jwt) return json({ error: "Sessão inválida." }, 401);
-  const userId = await deps.getUserId(jwt).catch(() => null);
-  if (!userId) return json({ error: "Sessão inválida." }, 401);
+  if (!jwt) return json({ error: SESSION_MESSAGE, reason: "no_token" }, 401);
+  const auth = await deps.getUser(jwt).catch((): AuthResult => ({ userId: null, reason: "auth_exception" }));
+  if (!auth.userId) return json({ error: SESSION_MESSAGE, reason: auth.reason ?? "invalid_session" }, 401);
+  const userId = auth.userId;
 
   let body: unknown;
   try {
