@@ -42,6 +42,7 @@ import { ProductionSectorsPage } from "./pages/ProductionSectorsPage";
 import { ReportsRoutePage } from "./pages/ReportsRoutePage";
 import { FinancialOverview } from "./features/financial/FinancialOverview";
 import { ReceivablesPage } from "./features/receivables/ReceivablesPage";
+import { PayablesPage } from "./features/payables/PayablesPage";
 import { StockPage } from "./pages/StockPage";
 import { ProductsPage } from "./pages/ProductsPage";
 import { ServiceModeSettingsPage } from "./pages/ServiceModeSettingsPage";
@@ -171,7 +172,7 @@ function App() {
         <Route path="financeiro/visao" element={<FinancialOverview />} />
         <Route path="financeiro/caixa" element={<CashAdmin />} />
         <Route path="financeiro/contas-a-receber" element={<ReceivablesPage />} />
-        <Route path="financeiro/contas-a-pagar" element={<ModulePlaceholderPage title="Contas a pagar" />} />
+        <Route path="financeiro/contas-a-pagar" element={<PayablesPage />} />
         <Route path="financeiro/relatorios" element={<ReportsRoutePage />} />
 
         <Route path="cadastros/produtos" element={<ProductsPage />} />

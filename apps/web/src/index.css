@@ -3920,6 +3920,10 @@ button {
     flex: 1 1 auto;
     min-height: 42px;
   }
+  .rec-detail-actions button,
+  .rec-form .modal-actions button {
+    min-height: 44px;
+  }
   .rec-header-actions {
     flex-wrap: wrap;
   }
