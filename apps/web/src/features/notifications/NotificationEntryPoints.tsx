@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
+import { useAuth } from "../../app/useAuth";
 import { Modal } from "../employees/Modal";
 import { NotificationSettings } from "./NotificationSettings";
+import { pushClient } from "./pushBrowser";
 import { parsePushNavigateMessage } from "./pushLogic";
 
 // Página administrativa: Configurações → Notificações (/app/configuracoes/notificacoes).
@@ -52,5 +54,20 @@ export function PushNavigationListener() {
     navigator.serviceWorker.addEventListener("message", onMessage);
     return () => navigator.serviceWorker.removeEventListener("message", onMessage);
   }, [navigate]);
+  return null;
+}
+
+// Depois do login (ou da troca de usuário no mesmo aparelho): se a permissão já foi concedida e a assinatura física
+// existe, reassocia SOZINHA ao usuário/empresa atuais, sem pedir permissão e sem clique. Respeita o opt-out manual
+// ("Desativar neste aparelho"). Uma vez por usuário/empresa a cada carregamento; falha silenciosa (a tela de
+// Notificações mostra o estado e permite tentar de novo).
+export function PushAutoRegister() {
+  const { user, activeMembership } = useAuth();
+  const userId = user?.id ?? null;
+  const companyId = activeMembership?.companyId ?? null;
+  useEffect(() => {
+    if (!userId || !companyId) return;
+    void pushClient.autoRegister(companyId, userId);
+  }, [userId, companyId]);
   return null;
 }

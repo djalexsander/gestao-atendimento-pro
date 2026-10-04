@@ -11,11 +11,12 @@ import {
   roleNotificationSummary,
   sectorSummary,
   STATE_LABEL,
-  toggleSector,
   UNSUPPORTED_TEXT,
   unsupportedReason,
   type PushDevice,
   type PushState,
+  type SectorDraft,
+  type SectorOption,
 } from "./pushLogic";
 import { readPushEnv } from "./pushBrowser";
 import { usePushNotifications } from "./usePushNotifications";
@@ -39,13 +40,46 @@ function statusHint(state: PushState): string {
   }
 }
 
-function DeviceRow({ device, isProduction, sectors, onToggleSector, onAll, busy }: {
+// Editor de setores do aparelho ATUAL (production). As marcações editam um rascunho; só "Salvar configurações" grava.
+function SectorEditor({ draft, sectors, dirty, canSave, saving, onAll, onToggle, onSave }: {
+  draft: SectorDraft;
+  sectors: SectorOption[];
+  dirty: boolean;
+  canSave: boolean;
+  saving: boolean;
+  onAll: () => void;
+  onToggle: (sectorId: string) => void;
+  onSave: () => void;
+}) {
+  return (
+    <div className="push-sector-editor">
+      <div className="push-sector-list" role="group" aria-label="Setores acompanhados neste aparelho">
+        <label className="checkbox-row">
+          <input type="checkbox" checked={draft.all} disabled={saving} onChange={onAll} />
+          Todos os setores
+        </label>
+        {sectors.map((s) => (
+          <label key={s.id} className="checkbox-row">
+            <input type="checkbox" checked={isSectorChecked(draft, s.id)} disabled={saving} onChange={() => onToggle(s.id)} />
+            {s.name}
+          </label>
+        ))}
+      </div>
+      <div className="push-save-row">
+        {dirty && <span className="push-unsaved" role="status">Alterações não salvas</span>}
+        <button className="btn-primary btn-auto" type="button" disabled={!canSave} onClick={onSave}>
+          {saving ? "Salvar configurações..." : "Salvar configurações"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function DeviceRow({ device, isProduction, sectors, editor }: {
   device: PushDevice;
   isProduction: boolean;
-  sectors: Array<{ id: string; name: string }>;
-  onToggleSector: (sectorId: string) => void;
-  onAll: () => void;
-  busy: boolean;
+  sectors: SectorOption[];
+  editor: React.ReactNode;
 }) {
   return (
     <li className="push-device">
@@ -59,21 +93,8 @@ function DeviceRow({ device, isProduction, sectors, onToggleSector, onAll, busy 
       </small>
       {isProduction && (
         <div className="push-sectors">
-          <small className="muted">Setores: {sectorSummary(device.sectorIds, sectors)}</small>
-          {device.isCurrent && device.isActive && sectors.length > 0 && (
-            <div className="push-sector-list" role="group" aria-label="Setores acompanhados neste aparelho">
-              <label className="checkbox-row">
-                <input type="checkbox" checked={device.sectorIds === null} disabled={busy} onChange={onAll} />
-                Todos os setores
-              </label>
-              {sectors.map((s) => (
-                <label key={s.id} className="checkbox-row">
-                  <input type="checkbox" checked={isSectorChecked(device.sectorIds, s.id)} disabled={busy} onChange={() => onToggleSector(s.id)} />
-                  {s.name}
-                </label>
-              ))}
-            </div>
-          )}
+          <small className="muted">Setores salvos: {sectorSummary(device.sectorIds, sectors)}</small>
+          {editor}
         </div>
       )}
     </li>
@@ -82,12 +103,14 @@ function DeviceRow({ device, isProduction, sectors, onToggleSector, onAll, busy 
 
 // Painel de notificações do aparelho. Mesmo componente na página administrativa (/app/configuracoes/notificacoes)
 // e no modal das telas operacionais. A permissão do navegador SÓ é pedida no clique de "Ativar notificações".
+// Três ações distintas: Ativar (associa), Desativar neste aparelho (opt-out) e Salvar configurações (só os setores
+// deste aparelho, gravados no servidor).
 export function NotificationSettings({ client }: { client?: PushClient }) {
-  const { activeMembership } = useAuth();
+  const { activeMembership, user } = useAuth();
   const companyId = activeMembership?.companyId ?? null;
   const role = activeMembership?.role ?? null;
   const isProduction = role === "production";
-  const push = usePushNotifications(companyId, isProduction, client);
+  const push = usePushNotifications(companyId, user?.id ?? null, isProduction, client);
   const { state, current } = push;
 
   if (push.loading) return <p className="op-state">Carregando…</p>;
@@ -100,6 +123,7 @@ export function NotificationSettings({ client }: { client?: PushClient }) {
           <span className={`rec-badge ${state === "subscribed" ? "rec-badge-paid" : state === "denied" ? "rec-badge-overdue" : ""}`}>{STATE_LABEL[state]}</span>
         </div>
         <p className="push-hint">{statusHint(state)}</p>
+        {push.optedOut && state === "not-subscribed" && <p className="field-hint">Você desativou as notificações neste aparelho. Toque em Ativar notificações para voltar a receber.</p>}
         <p className="field-hint">{roleNotificationSummary(role)}</p>
 
         {push.error && <div className="form-error">{push.error}</div>}
@@ -113,10 +137,10 @@ export function NotificationSettings({ client }: { client?: PushClient }) {
           )}
           {state === "subscribed" && (
             <>
-              <button className="btn-primary btn-auto" type="button" disabled={push.busy || !current} onClick={() => void push.sendTest()}>
+              <button className="btn-primary btn-auto" type="button" disabled={push.busy || push.saving || !current} onClick={() => void push.sendTest()}>
                 {push.busy ? "Enviando…" : "Enviar notificação de teste"}
               </button>
-              <button className="btn-secondary btn-auto" type="button" disabled={push.busy} onClick={() => void push.disable()}>
+              <button className="btn-secondary btn-auto" type="button" disabled={push.busy || push.saving} onClick={() => void push.disable()}>
                 Desativar neste aparelho
               </button>
             </>
@@ -137,9 +161,20 @@ export function NotificationSettings({ client }: { client?: PushClient }) {
                 device={d}
                 isProduction={isProduction}
                 sectors={push.sectors}
-                busy={push.busy}
-                onAll={() => void push.saveSectors(d.id, null)}
-                onToggleSector={(sectorId) => void push.saveSectors(d.id, toggleSector(d.sectorIds, sectorId, push.sectors))}
+                editor={
+                  d.isCurrent && d.isActive && push.sectors.length > 0 ? (
+                    <SectorEditor
+                      draft={push.draft}
+                      sectors={push.sectors}
+                      dirty={push.dirty}
+                      canSave={push.canSave}
+                      saving={push.saving}
+                      onAll={push.toggleAllSectors}
+                      onToggle={push.toggleSector}
+                      onSave={() => void push.saveConfig()}
+                    />
+                  ) : null
+                }
               />
             ))}
           </ul>

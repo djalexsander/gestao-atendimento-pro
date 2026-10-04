@@ -176,18 +176,71 @@ export function sectorSummary(sectorIds: string[] | null, sectors: SectorOption[
   return names.length > 0 ? names.join(", ") : "Setores removidos";
 }
 
-// Alterna um setor na seleção. null = todos; ao marcar o último que falta, volta a "todos"; nunca fica vazio
-// (o servidor recusa array vazio).
-export function toggleSector(current: string[] | null, sectorId: string, allSectors: SectorOption[]): string[] | null {
-  const all = allSectors.map((s) => s.id);
-  const base = current ?? all;
-  const next = base.includes(sectorId) ? base.filter((id) => id !== sectorId) : [...base, sectorId];
-  if (next.length === 0) return base; // não permite esvaziar
-  return next.length === all.length && all.every((id) => next.includes(id)) ? null : next;
+// --- Rascunho de setores (o painel só salva no botão "Salvar configurações") --------------------------------------
+// Valor PERSISTIDO: null = todos os setores; lista = só esses. Na tela, "Todos os setores" pode aparecer marcado com
+// todos os setores individuais marcados, mas o valor salvo continua null. Lista vazia nunca é salva.
+
+export interface SectorDraft {
+  all: boolean; // "Todos os setores" marcado
+  ids: string[]; // setores individuais marcados
 }
 
-export function isSectorChecked(current: string[] | null, sectorId: string): boolean {
-  return current === null || current.includes(sectorId);
+const allIds = (sectors: SectorOption[]) => sectors.map((s) => s.id);
+
+// Valor salvo no servidor -> rascunho inicial da tela.
+export function draftFromSaved(saved: string[] | null, sectors: SectorOption[]): SectorDraft {
+  if (saved === null) return { all: true, ids: allIds(sectors) };
+  const known = allIds(sectors);
+  const ids = saved.filter((id) => known.includes(id));
+  return { all: false, ids };
+}
+
+// Rascunho -> valor a persistir (null = todos).
+export function draftToValue(draft: SectorDraft, sectors: SectorOption[]): string[] | null {
+  const all = allIds(sectors);
+  if (draft.all) return null;
+  const ids = draft.ids.filter((id) => all.includes(id));
+  return all.length > 0 && all.every((id) => ids.includes(id)) ? null : ids;
+}
+
+export function isDraftEmpty(draft: SectorDraft): boolean {
+  return !draft.all && draft.ids.length === 0;
+}
+
+// Valor salvo normalizado do mesmo jeito (ids que já não existem somem; todos os setores = null).
+function normalizeSaved(saved: string[] | null, sectors: SectorOption[]): string[] | null {
+  if (saved === null) return null;
+  return draftToValue({ all: false, ids: saved }, sectors);
+}
+
+const sameValue = (a: string[] | null, b: string[] | null) =>
+  a === null || b === null ? a === b : a.length === b.length && [...a].sort().join() === [...b].sort().join();
+
+// Há diferença entre o que está na tela e o que está salvo no servidor?
+export function isSectorsDirty(draft: SectorDraft, saved: string[] | null, sectors: SectorOption[]): boolean {
+  return !sameValue(draftToValue(draft, sectors), normalizeSaved(saved, sectors));
+}
+
+// Pode salvar? (nunca uma seleção vazia)
+export function canSaveDraft(draft: SectorDraft): boolean {
+  return !isDraftEmpty(draft);
+}
+
+// Marca/desmarca "Todos os setores". Desmarcar mantém os individuais marcados para o usuário afinar.
+export function toggleAllInDraft(draft: SectorDraft, sectors: SectorOption[]): SectorDraft {
+  return draft.all ? { all: false, ids: allIds(sectors) } : { all: true, ids: allIds(sectors) };
+}
+
+// Marca/desmarca um setor. Mexer num setor individual sai do modo "Todos". Nunca esvazia a seleção.
+export function toggleSectorInDraft(draft: SectorDraft, sectorId: string, sectors: SectorOption[]): SectorDraft {
+  const base = draft.all ? allIds(sectors) : draft.ids;
+  const next = base.includes(sectorId) ? base.filter((id) => id !== sectorId) : [...base, sectorId];
+  if (next.length === 0) return { all: false, ids: base }; // não deixa esvaziar
+  return { all: false, ids: next };
+}
+
+export function isSectorChecked(draft: SectorDraft, sectorId: string): boolean {
+  return draft.all || draft.ids.includes(sectorId);
 }
 
 // O que cada papel recebe na v1 (texto da tela).

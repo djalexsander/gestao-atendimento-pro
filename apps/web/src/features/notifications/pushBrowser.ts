@@ -68,8 +68,34 @@ async function listSectors(companyId: string): Promise<SectorOption[]> {
   return (data ?? []) as SectorOption[];
 }
 
+// localStorage com try/catch (modo privado ou armazenamento bloqueado: segue sem lembrar nada).
+const storage = {
+  get: (key: string): string | null => {
+    try {
+      return localStorage.getItem(key);
+    } catch {
+      return null;
+    }
+  },
+  set: (key: string, value: string): void => {
+    try {
+      localStorage.setItem(key, value);
+    } catch {
+      /* ignore */
+    }
+  },
+  remove: (key: string): void => {
+    try {
+      localStorage.removeItem(key);
+    } catch {
+      /* ignore */
+    }
+  },
+};
+
 export const pushClient = createPushClient({
   getEnv: readPushEnv,
+  storage,
   getRegistration,
   requestPermission: () => Notification.requestPermission(),
   rpc: async (name, args) => {

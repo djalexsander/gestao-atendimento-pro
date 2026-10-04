@@ -43,7 +43,7 @@ import { ReportsRoutePage } from "./pages/ReportsRoutePage";
 import { FinancialOverview } from "./features/financial/FinancialOverview";
 import { ReceivablesPage } from "./features/receivables/ReceivablesPage";
 import { PayablesPage } from "./features/payables/PayablesPage";
-import { NotificationSettingsPage, PushNavigationListener } from "./features/notifications/NotificationEntryPoints";
+import { NotificationSettingsPage, PushAutoRegister, PushNavigationListener } from "./features/notifications/NotificationEntryPoints";
 import { StockPage } from "./pages/StockPage";
 import { ProductsPage } from "./pages/ProductsPage";
 import { ServiceModeSettingsPage } from "./pages/ServiceModeSettingsPage";
@@ -55,6 +55,7 @@ function App() {
   return (
     <>
     <PushNavigationListener />
+    <PushAutoRegister />
     <Routes>
       <Route path="/" element={<RootRedirect />} />
       <Route

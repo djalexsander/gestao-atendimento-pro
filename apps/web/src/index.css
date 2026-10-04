@@ -4020,3 +4020,18 @@ button {
     border-radius: 14px 14px 0 0;
   }
 }
+.push-save-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 8px;
+}
+.push-save-row button {
+  min-height: 44px;
+}
+.push-unsaved {
+  font-size: 13px;
+  font-weight: 600;
+  color: #b7791f;
+}
