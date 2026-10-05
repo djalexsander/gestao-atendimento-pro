@@ -88,7 +88,7 @@ export function CompanyInvoices({
       {loading ? (
         <p>Carregando faturas…</p>
       ) : (
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+<div className="mst-scroll" style={{ marginBottom: 16 }}><table style={{ width: "100%", borderCollapse: "collapse" }}>
           <thead>
             <tr style={{ textAlign: "left", borderBottom: "1px solid var(--border)" }}>
               <th style={cell}>Tipo</th>
@@ -120,7 +120,7 @@ export function CompanyInvoices({
               </tr>
             )}
           </tbody>
-        </table>
+</table></div>
       )}
     </div>
   );

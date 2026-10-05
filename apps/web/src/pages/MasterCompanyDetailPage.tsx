@@ -13,6 +13,9 @@ import { CompanyInvoices } from "../features/master/CompanyInvoices";
 import { BillingStatus } from "../features/master/BillingStatus";
 import { SubscriptionTimeline } from "../features/master/SubscriptionTimeline";
 import { TrialPanel } from "../features/master/TrialPanel";
+import { CompanyDataCard } from "../features/master/CompanyDataCard";
+import { CompanySummary } from "../features/master/CompanySummary";
+import { isCommercialModule, totalBreakdown } from "../features/master/masterLogic";
 import { formatCents } from "../lib/money";
 import { EVENT_LABEL, MANUAL_STATUSES, STATUS_LABEL } from "../lib/subscriptionLabels";
 import type { CatalogModule, CatalogPlan, CompanyDetail, CompanyTrial, SubscriptionStatus } from "../lib/types";
@@ -68,16 +71,19 @@ export function MasterCompanyDetailPage() {
       <p>
         <Link to="/master/empresas">← Empresas</Link>
       </p>
-      <h2>{detail.company.name}</h2>
+      <div className="mst-head">
+        <h2>{detail.company.name}</h2>
+      </div>
+      <p className="mst-sub">Empresa criada em {fmtDate(detail.company.created_at)}. Slug: {detail.company.slug}</p>
 
-      <h3 style={{ fontSize: 18 }}>Dados da empresa</h3>
-      <p style={{ color: "var(--text-muted)" }}>
-        Documento: {detail.company.document ?? "—"} · Slug: {detail.company.slug} · Criada em{" "}
-        {fmtDate(detail.company.created_at)}
-      </p>
+      <CompanySummary key={`sum-${loadedVersion}`} detail={detail} />
+
+      <div className="mst-grid-2">
+        <CompanyDataCard company={detail.company} memberCount={detail.members.length} onChanged={() => setReloadKey((k) => k + 1)} />
+      </div>
 
       <h3 style={{ fontSize: 18 }}>Membros ({detail.members.length})</h3>
-      <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 24 }}>
+<div className="mst-scroll" style={{ marginBottom: 16 }}><table style={{ width: "100%", borderCollapse: "collapse", marginBottom: 24 }}>
         <tbody>
           {detail.members.map((m) => (
             <tr key={m.user_id} style={{ borderBottom: "1px solid var(--border)" }}>
@@ -87,7 +93,7 @@ export function MasterCompanyDetailPage() {
             </tr>
           ))}
         </tbody>
-      </table>
+</table></div>
 
       <TrialPanel
         key={`trial-${loadedVersion}`}
@@ -168,7 +174,7 @@ function SubscribeForm({
   const [planId, setPlanId] = useState(activePlans[0]?.id ?? "");
   const [extraIds, setExtraIds] = useState<string[]>([]);
   const selectedPlan = activePlans.find((p) => p.id === planId);
-  const extraCandidates = modules.filter((m) => m.isActive && !selectedPlan?.moduleIds.includes(m.id));
+  const extraCandidates = modules.filter((m) => isCommercialModule(m.code) && m.isActive && !selectedPlan?.moduleIds.includes(m.id));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -230,6 +236,10 @@ function SubscribeForm({
               ))}
             </div>
           )}
+          <TotalBox
+            baseCents={selectedPlan?.monthlyPriceCents ?? 0}
+            modules={extraCandidates.filter((m) => extraIds.includes(m.id)).map((m) => ({ name: m.name, priceCents: m.monthlyPriceCents }))}
+          />
           <p style={{ color: "var(--text-muted)", fontSize: 13 }}>
             Ao contratar, a assinatura nasce <strong>aguardando pagamento inicial</strong> e é criada na hora a
             cobrança inicial integral (plano + adicionais, sem prorrata), com vencimento hoje. O dia de vencimento das
@@ -270,7 +280,7 @@ function SubscriptionPanel({
   const includedIds = sub.included_modules.map((m) => m.id);
   const currentExtraIds = sub.extra_modules.map((e) => e.module_id);
   const candidates = modules.filter(
-    (m) => !includedIds.includes(m.id) && (m.isActive || currentExtraIds.includes(m.id)),
+    (m) => !includedIds.includes(m.id) && isCommercialModule(m.code) && (m.isActive || currentExtraIds.includes(m.id)),
   );
   // O registro reservado do período grátis não vira assinatura (o backend recusa a troca para ele).
   const switchablePlans = plans.filter((p) => p.isActive && p.id !== sub.plan.id && p.code !== reservedPlanCode);
@@ -322,28 +332,36 @@ function SubscriptionPanel({
       <h4>Módulos incluídos no plano contratado</h4>
       <p>{sub.included_modules.length ? sub.included_modules.map((m) => m.name).join(", ") : "—"}</p>
 
-      <h4>Módulos adicionais</h4>
+      <h4>Módulos opcionais</h4>
       {candidates.length === 0 && <p style={{ color: "var(--text-muted)" }}>Nenhum módulo disponível.</p>}
-      {candidates.map((m) => {
-        const contracted = sub.extra_modules.find((e) => e.module_id === m.id);
-        return (
-          <label key={m.id} style={{ display: "flex", gap: 8, marginBottom: 4 }}>
-            <input
-              type="checkbox"
-              disabled={locked}
-              checked={extraIds.includes(m.id)}
-              onChange={(e) =>
-                setExtraIds(e.target.checked ? [...extraIds, m.id] : extraIds.filter((x) => x !== m.id))
-              }
-            />
-            {m.name} —{" "}
-            {contracted
-              ? `contratado por ${formatCents(contracted.price_cents_snapshot)}`
-              : formatCents(m.monthlyPriceCents)}
-            {!m.isActive && " (inativo)"}
-          </label>
-        );
-      })}
+      <div className="mst-mod-list">
+        {candidates.map((m) => {
+          const contracted = sub.extra_modules.find((e) => e.module_id === m.id);
+          const on = extraIds.includes(m.id);
+          return (
+            <label key={m.id} className={`mst-mod${on ? " mst-mod-on" : ""}`}>
+              <input
+                type="checkbox"
+                disabled={locked}
+                checked={on}
+                onChange={(e) => setExtraIds(e.target.checked ? [...extraIds, m.id] : extraIds.filter((x) => x !== m.id))}
+              />
+              <span>
+                {m.name}
+                {!m.isActive && " (inativo)"}
+                <small>{on ? "Ativo" : "Desativado"} — desativar não apaga os dados do módulo</small>
+              </span>
+              <span className="mst-mod-price">{contracted ? formatCents(contracted.price_cents_snapshot) : formatCents(m.monthlyPriceCents)}</span>
+            </label>
+          );
+        })}
+      </div>
+      <TotalBox
+        baseCents={sub.plan.price_cents_snapshot}
+        modules={candidates
+          .filter((m) => extraIds.includes(m.id))
+          .map((m) => ({ name: m.name, priceCents: sub.extra_modules.find((e) => e.module_id === m.id)?.price_cents_snapshot ?? m.monthlyPriceCents }))}
+      />
       <button
         className="btn-secondary"
         type="button"
@@ -351,7 +369,7 @@ function SubscriptionPanel({
         style={{ margin: "8px 0 16px" }}
         onClick={() => run(() => setSubscriptionModules(sub.id, extraIds))}
       >
-        Salvar módulos adicionais
+        Salvar módulos
       </button>
 
       {sub.status !== "canceled" && (
@@ -472,6 +490,25 @@ function SubscriptionPanel({
           </li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+// Conta ao vivo "Plano Base + módulos = total" (o banco recalcula e congela no contrato ao salvar).
+function TotalBox({ baseCents, modules }: { baseCents: number; modules: Array<{ name: string; priceCents: number }> }) {
+  const { lines, totalCents } = totalBreakdown(baseCents, modules);
+  return (
+    <div className="mst-sum" aria-label="Total mensal">
+      {lines.map((l) => (
+        <div key={l.label}>
+          <span>{l.label}</span>
+          <span>{formatCents(l.cents)}</span>
+        </div>
+      ))}
+      <div className="mst-total">
+        <span>Total mensal</span>
+        <span>{formatCents(totalCents)}</span>
+      </div>
     </div>
   );
 }

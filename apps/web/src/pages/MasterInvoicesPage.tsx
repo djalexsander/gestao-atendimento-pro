@@ -1,12 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { InvoiceStatusBadge, Kpi } from "../features/master/MasterBits";
 import { listInvoices } from "../features/master/invoiceApi";
-import { fmtCompetence, fmtDateOnly, monthToCompetence } from "../lib/dates";
+import { filterInvoices } from "../features/master/masterLogic";
+import { fmtCompetence, fmtDateOnly, fmtDateTimeSP, monthToCompetence } from "../lib/dates";
 import { formatCents } from "../lib/money";
 import { INVOICE_KIND_LABEL, INVOICE_STATUS_LABEL } from "../lib/subscriptionLabels";
 import type { InvoiceRow, InvoiceStatus } from "../lib/types";
 
-const cell = { padding: "8px 4px" } as const;
 const STATUSES = Object.keys(INVOICE_STATUS_LABEL) as InvoiceStatus[];
 
 export function MasterInvoicesPage() {
@@ -15,6 +16,9 @@ export function MasterInvoicesPage() {
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<InvoiceStatus | "">("");
   const [month, setMonth] = useState("");
+  const [company, setCompany] = useState("");
+  const [dueFrom, setDueFrom] = useState("");
+  const [dueTo, setDueTo] = useState("");
 
   useEffect(() => {
     let cancelled = false;
@@ -30,10 +34,23 @@ export function MasterInvoicesPage() {
     };
   }, [status, month]);
 
+  const rows = useMemo(() => filterInvoices(invoices, { company, dueFrom, dueTo }), [invoices, company, dueFrom, dueTo]);
+  const openCents = rows.filter((i) => i.status === "open" || i.status === "overdue").reduce((a, i) => a + i.amount_cents, 0);
+  const overdueCount = rows.filter((i) => i.days_overdue).length;
+  const paidCents = rows.filter((i) => i.status === "paid").reduce((a, i) => a + i.amount_cents, 0);
+
   return (
     <div>
-      <h2>Faturas</h2>
-      <div style={{ display: "flex", gap: 12, flexWrap: "wrap", marginBottom: 12 }}>
+      <div className="mst-head">
+        <h2>Faturas</h2>
+      </div>
+      <p className="mst-sub">As faturas são geradas no ciclo de cobrança ou manualmente na página da empresa; a baixa é manual. Abra uma fatura para ver itens, histórico e dar baixa.</p>
+
+      <div className="mst-toolbar">
+        <div>
+          <label htmlFor="inv-company">Empresa</label>
+          <input id="inv-company" value={company} onChange={(e) => setCompany(e.target.value)} placeholder="Nome da empresa" />
+        </div>
         <div>
           <label htmlFor="inv-status">Status</label>
           <select id="inv-status" value={status} onChange={(e) => setStatus(e.target.value as InvoiceStatus | "")}>
@@ -49,47 +66,66 @@ export function MasterInvoicesPage() {
           <label htmlFor="inv-month">Competência</label>
           <input id="inv-month" type="month" value={month} onChange={(e) => setMonth(e.target.value)} />
         </div>
+        <div>
+          <label htmlFor="inv-from">Vencimento de</label>
+          <input id="inv-from" type="date" value={dueFrom} onChange={(e) => setDueFrom(e.target.value)} />
+        </div>
+        <div>
+          <label htmlFor="inv-to">até</label>
+          <input id="inv-to" type="date" value={dueTo} onChange={(e) => setDueTo(e.target.value)} />
+        </div>
       </div>
+
+      <dl className="mst-kpis">
+        <Kpi label="Faturas listadas" value={rows.length} />
+        <Kpi label="A receber (aberto + vencido)" value={formatCents(openCents)} />
+        <Kpi label="Com atraso" value={overdueCount} />
+        <Kpi label="Pagas (listadas)" value={formatCents(paidCents)} />
+      </dl>
 
       {error && <div className="form-error">{error}</div>}
       {loading ? (
         <p>Carregando faturas…</p>
       ) : (
-        <table style={{ width: "100%", borderCollapse: "collapse" }}>
-          <thead>
-            <tr style={{ textAlign: "left", borderBottom: "1px solid var(--border)" }}>
-              <th style={cell}>Empresa</th>
-              <th style={cell}>Tipo</th>
-              <th style={cell}>Competência</th>
-              <th style={cell}>Vencimento</th>
-              <th style={cell}>Valor</th>
-              <th style={cell}>Status</th>
-              <th style={cell}>Atraso</th>
-            </tr>
-          </thead>
-          <tbody>
-            {invoices.map((i) => (
-              <tr key={i.id} style={{ borderBottom: "1px solid var(--border)" }}>
-                <td style={cell}>
-                  <Link to={`/master/faturas/${i.id}`}>{i.company_name}</Link>
-                </td>
-                <td style={cell}>{INVOICE_KIND_LABEL[i.kind]}</td>
-                <td style={cell}>{fmtCompetence(i.competence)}</td>
-                <td style={cell}>{fmtDateOnly(i.due_date)}</td>
-                <td style={cell}>{formatCents(i.amount_cents)}</td>
-                <td style={cell}>{INVOICE_STATUS_LABEL[i.status]}</td>
-                <td style={cell}>{i.days_overdue ? `${i.days_overdue} dia(s)` : "—"}</td>
-              </tr>
-            ))}
-            {invoices.length === 0 && (
+        <div className="mst-scroll">
+          <table className="mst-table">
+            <thead>
               <tr>
-                <td style={cell} colSpan={7}>
-                  Nenhuma fatura encontrada. As faturas são geradas manualmente na página da empresa.
-                </td>
+                <th>Empresa</th>
+                <th>Tipo</th>
+                <th>Competência</th>
+                <th>Vencimento</th>
+                <th className="mst-num">Valor</th>
+                <th>Status</th>
+                <th className="mst-num">Dias de atraso</th>
+                <th>Pagamento</th>
               </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {rows.map((i) => (
+                <tr key={i.id}>
+                  <td>
+                    <Link to={`/master/faturas/${i.id}`}>{i.company_name}</Link>
+                  </td>
+                  <td>{INVOICE_KIND_LABEL[i.kind]}</td>
+                  <td>{fmtCompetence(i.competence)}</td>
+                  <td>{fmtDateOnly(i.due_date)}</td>
+                  <td className="mst-num">{formatCents(i.amount_cents)}</td>
+                  <td>
+                    <InvoiceStatusBadge status={i.status} />
+                  </td>
+                  <td className="mst-num">{i.days_overdue ? i.days_overdue : "—"}</td>
+                  <td>{i.paid_at ? fmtDateTimeSP(i.paid_at) : "—"}</td>
+                </tr>
+              ))}
+              {rows.length === 0 && (
+                <tr>
+                  <td colSpan={8}>Nenhuma fatura encontrada para os filtros.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

@@ -1,24 +1,26 @@
 import { useEffect, useState } from "react";
-import { fetchMasterCompanies, fetchMasterOverview } from "../features/master/api";
-import type { MasterCompanyRow, MasterOverview } from "../lib/types";
+import { Link, useNavigate } from "react-router-dom";
+import { getCommercialOverview, listCompaniesSummary, type CommercialOverview, type CompanySummaryRow } from "../features/master/commercialApi";
+import { CompanyStatusBadge, Kpi } from "../features/master/MasterBits";
+import { fmtDocument } from "../features/master/masterLogic";
+import { fmtDateOnly } from "../lib/dates";
+import { formatCents } from "../lib/money";
 
 export function MasterOverviewPage() {
-  const [overview, setOverview] = useState<MasterOverview | null>(null);
-  const [companies, setCompanies] = useState<MasterCompanyRow[]>([]);
+  const navigate = useNavigate();
+  const [overview, setOverview] = useState<CommercialOverview | null>(null);
+  const [companies, setCompanies] = useState<CompanySummaryRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const [overviewResult, companiesResult] = await Promise.all([
-        fetchMasterOverview(),
-        fetchMasterCompanies(),
-      ]);
+      const [o, c] = await Promise.all([getCommercialOverview(), listCompaniesSummary()]);
       if (cancelled) return;
-      setOverview(overviewResult.data);
-      setCompanies(companiesResult.data);
-      setError(overviewResult.error ?? companiesResult.error ?? null);
+      setOverview(o.data);
+      setCompanies(c.data);
+      setError(o.error ?? c.error);
       setLoading(false);
     })();
     return () => {
@@ -27,64 +29,62 @@ export function MasterOverviewPage() {
   }, []);
 
   if (loading) return <p>Carregando painel master…</p>;
-  if (error) return <div className="form-error">{error}</div>;
+  if (error || !overview) return <div className="form-error">{error ?? "Não foi possível carregar o painel."}</div>;
 
   return (
     <div>
-      <h2>Visão geral</h2>
-
-      <div style={{ display: "flex", gap: 16, marginBottom: 32, flexWrap: "wrap" }}>
-        <StatCard label="Total de empresas" value={overview?.totalCompanies ?? 0} />
-        <StatCard label="Total de usuários" value={overview?.totalUsers ?? 0} />
+      <div className="mst-head">
+        <h2>Visão geral</h2>
       </div>
+      <p className="mst-sub">Situação comercial de todas as empresas da plataforma.</p>
 
-      <h3 style={{ fontSize: 18 }}>Empresas</h3>
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-        <thead>
-          <tr style={{ textAlign: "left", borderBottom: "1px solid var(--border)" }}>
-            <th style={{ padding: "8px 4px" }}>Nome</th>
-            <th style={{ padding: "8px 4px" }}>Documento</th>
-            <th style={{ padding: "8px 4px" }}>Criada em</th>
-            <th style={{ padding: "8px 4px" }}>Membros</th>
-          </tr>
-        </thead>
-        <tbody>
-          {companies.map((c) => (
-            <tr key={c.id} style={{ borderBottom: "1px solid var(--border)" }}>
-              <td style={{ padding: "8px 4px" }}>{c.name}</td>
-              <td style={{ padding: "8px 4px" }}>{c.document ?? "—"}</td>
-              <td style={{ padding: "8px 4px" }}>
-                {new Date(c.createdAt).toLocaleDateString("pt-BR")}
-              </td>
-              <td style={{ padding: "8px 4px" }}>{c.memberCount}</td>
-            </tr>
-          ))}
-          {companies.length === 0 && (
+      <dl className="mst-kpis">
+        <Kpi label="Total de empresas" value={overview.totalCompanies} />
+        <Kpi label="Em trial" value={overview.trialingCompanies} hint="período grátis vigente" />
+        <Kpi label="Assinaturas ativas" value={overview.activeSubscriptions} />
+        <Kpi label="Bloqueadas / inadimplentes" value={overview.blockedSubscriptions} hint="atraso, carência, restrita, suspensa ou aguardando pagamento" />
+        <Kpi label="Total de usuários" value={overview.totalUsers} />
+        <Kpi strong label="MRR estimado" value={formatCents(overview.mrrCents)} hint="só assinaturas ativas pagas (sem trial)" />
+      </dl>
+
+      <h3 style={{ fontSize: 18, margin: "0 0 8px" }}>Empresas</h3>
+      <div className="mst-scroll">
+        <table className="mst-table">
+          <thead>
             <tr>
-              <td style={{ padding: "8px 4px" }} colSpan={4}>
-                Nenhuma empresa cadastrada ainda.
-              </td>
+              <th>Empresa</th>
+              <th>Documento</th>
+              <th>Plano</th>
+              <th>Assinatura</th>
+              <th>Vencimento</th>
+              <th>Módulos ativos</th>
+              <th className="mst-num">Usuários</th>
             </tr>
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
-}
-
-function StatCard({ label, value }: { label: string; value: number }) {
-  return (
-    <div
-      style={{
-        border: "1px solid var(--border)",
-        borderRadius: 8,
-        padding: "16px 20px",
-        minWidth: 160,
-        background: "var(--surface)",
-      }}
-    >
-      <div style={{ fontSize: 13, color: "var(--text-muted)" }}>{label}</div>
-      <div style={{ fontSize: 28, fontWeight: 700, color: "var(--text-h)" }}>{value}</div>
+          </thead>
+          <tbody>
+            {companies.map((c) => (
+              <tr key={c.id} onClick={() => navigate(`/master/empresas/${c.id}`)} style={{ cursor: "pointer" }}>
+                <td>
+                  <Link to={`/master/empresas/${c.id}`}>{c.name}</Link>
+                </td>
+                <td>{fmtDocument(c.document)}</td>
+                <td>{c.planName ?? "—"}</td>
+                <td>
+                  <CompanyStatusBadge status={c.subscriptionStatus} trialState={c.trialState} trialEndsAt={c.trialEndsAt} />
+                </td>
+                <td>{fmtDateOnly(c.nextDueDate)}</td>
+                <td>{c.activeModuleNames.length ? c.activeModuleNames.join(", ") : "—"}</td>
+                <td className="mst-num">{c.memberCount}</td>
+              </tr>
+            ))}
+            {companies.length === 0 && (
+              <tr>
+                <td colSpan={7}>Nenhuma empresa cadastrada ainda.</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

@@ -7,7 +7,7 @@ import { Link, NavLink, Outlet } from "react-router-dom";
 export function MasterLayout() {
   return (
     <div className="app-shell">
-      <header className="app-topbar">
+      <header className="app-topbar master-topbar">
         <div className="app-topbar-left">
           <div className="brand">Gestão Atendimento Pro</div>
           <span style={{ color: "var(--text-muted)", fontSize: 14 }}>Painel Master</span>
@@ -19,6 +19,7 @@ export function MasterLayout() {
             <NavLink to="/master/faturas">Faturas</NavLink>
             <NavLink to="/master/planos">Planos</NavLink>
             <NavLink to="/master/modulos">Módulos</NavLink>
+            <NavLink to="/master/configuracoes">Configurações</NavLink>
           </nav>
         </div>
         <div className="app-user">
@@ -27,7 +28,7 @@ export function MasterLayout() {
           </Link>
         </div>
       </header>
-      <main className="app-body">
+      <main className="app-body app-body-master">
         <Outlet />
       </main>
     </div>

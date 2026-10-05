@@ -20,17 +20,6 @@ interface FormState {
   moduleIds: string[];
 }
 
-const EMPTY: FormState = {
-  id: null,
-  code: "",
-  name: "",
-  description: "",
-  price: "",
-  isActive: true,
-  limits: [],
-  moduleIds: [],
-};
-
 function describeLimits(limits: Record<string, number | null>): string {
   const entries = Object.entries(limits);
   if (entries.length === 0) return "—";
@@ -145,14 +134,9 @@ export function MasterPlansPage() {
     <div>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
         <h2>Planos</h2>
-        {!form && (
-          <button className="btn-secondary" type="button" onClick={() => setForm({ ...EMPTY })}>
-            Novo plano
-          </button>
-        )}
       </div>
       <p style={{ color: "var(--text-muted)", fontSize: 14 }}>
-        Planos comerciais do Gestão Atendimento Pro. O código não pode ser alterado depois de criado.
+        Planos comerciais do Gestão Atendimento Pro (Plano Base e período grátis). Não há criação de novos planos nesta versão; o código não pode ser alterado.
         Limites vazios ou marcados como "ilimitado" não restringem o recurso.
       </p>
 
@@ -160,7 +144,7 @@ export function MasterPlansPage() {
 
       {form && (
         <form onSubmit={submit} style={{ maxWidth: 520, marginBottom: 32 }}>
-          <h3 style={{ fontSize: 18 }}>{form.id ? "Editar plano" : "Novo plano"}</h3>
+          <h3 style={{ fontSize: 18 }}>Editar plano</h3>
           <div className="field">
             <label htmlFor="plan-code">Código</label>
             <input

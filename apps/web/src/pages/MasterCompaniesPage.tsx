@@ -1,29 +1,21 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { fetchMasterCompanies } from "../features/master/api";
-import { fmtDateTimeSP } from "../lib/dates";
-import { STATUS_LABEL, TRIAL_STATE_LABEL } from "../lib/subscriptionLabels";
-import type { MasterCompanyRow } from "../lib/types";
-
-// Assinatura vigente manda; sem ela, mostra o período grátis quando ele é a
-// situação atual (em andamento, expirado ou cancelado). "converted" sem
-// assinatura vigente é histórico: a empresa está sem assinatura.
-function companyStatusLabel(c: MasterCompanyRow): string {
-  if (c.subscriptionStatus) return STATUS_LABEL[c.subscriptionStatus];
-  if (c.trialState === "trialing") return `${TRIAL_STATE_LABEL.trialing} (até ${fmtDateTimeSP(c.trialEndsAt)})`;
-  if (c.trialState === "expired" || c.trialState === "canceled") return TRIAL_STATE_LABEL[c.trialState];
-  return "Sem assinatura";
-}
+import { listCompaniesSummary, type CompanySummaryRow } from "../features/master/commercialApi";
+import { CompanyStatusBadge } from "../features/master/MasterBits";
+import { filterCompanies, fmtDocument } from "../features/master/masterLogic";
+import { fmtDateOnly } from "../lib/dates";
+import { formatCents } from "../lib/money";
 
 export function MasterCompaniesPage() {
-  const [companies, setCompanies] = useState<MasterCompanyRow[]>([]);
+  const [companies, setCompanies] = useState<CompanySummaryRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState("");
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const result = await fetchMasterCompanies();
+      const result = await listCompaniesSummary();
       if (cancelled) return;
       setCompanies(result.data);
       setError(result.error);
@@ -34,43 +26,62 @@ export function MasterCompaniesPage() {
     };
   }, []);
 
+  const rows = useMemo(() => filterCompanies(companies, search), [companies, search]);
+
   if (loading) return <p>Carregando empresas…</p>;
   if (error) return <div className="form-error">{error}</div>;
 
   return (
     <div>
-      <h2>Empresas</h2>
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-        <thead>
-          <tr style={{ textAlign: "left", borderBottom: "1px solid var(--border)" }}>
-            <th style={{ padding: "8px 4px" }}>Nome</th>
-            <th style={{ padding: "8px 4px" }}>Documento</th>
-            <th style={{ padding: "8px 4px" }}>Membros</th>
-            <th style={{ padding: "8px 4px" }}>Plano</th>
-            <th style={{ padding: "8px 4px" }}>Assinatura</th>
-          </tr>
-        </thead>
-        <tbody>
-          {companies.map((c) => (
-            <tr key={c.id} style={{ borderBottom: "1px solid var(--border)" }}>
-              <td style={{ padding: "8px 4px" }}>
-                <Link to={`/master/empresas/${c.id}`}>{c.name}</Link>
-              </td>
-              <td style={{ padding: "8px 4px" }}>{c.document ?? "—"}</td>
-              <td style={{ padding: "8px 4px" }}>{c.memberCount}</td>
-              <td style={{ padding: "8px 4px" }}>{c.planName ?? "—"}</td>
-              <td style={{ padding: "8px 4px" }}>{companyStatusLabel(c)}</td>
-            </tr>
-          ))}
-          {companies.length === 0 && (
+      <div className="mst-head">
+        <h2>Empresas</h2>
+      </div>
+      <p className="mst-sub">Gerencie cadastro, assinatura e módulos de cada empresa. Empresas não são excluídas por aqui.</p>
+      <div className="mst-toolbar">
+        <div>
+          <label htmlFor="mst-search">Buscar por nome ou documento</label>
+          <input id="mst-search" value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Nome ou CPF/CNPJ" />
+        </div>
+      </div>
+      <div className="mst-scroll">
+        <table className="mst-table">
+          <thead>
             <tr>
-              <td style={{ padding: "8px 4px" }} colSpan={5}>
-                Nenhuma empresa cadastrada ainda.
-              </td>
+              <th>Empresa</th>
+              <th>Documento</th>
+              <th>Plano</th>
+              <th>Assinatura</th>
+              <th>Vencimento</th>
+              <th>Módulos</th>
+              <th className="mst-num">Mensal</th>
+              <th className="mst-num">Usuários</th>
             </tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {rows.map((c) => (
+              <tr key={c.id}>
+                <td>
+                  <Link to={`/master/empresas/${c.id}`}>{c.name}</Link>
+                </td>
+                <td>{fmtDocument(c.document)}</td>
+                <td>{c.planName ?? "—"}</td>
+                <td>
+                  <CompanyStatusBadge status={c.subscriptionStatus} trialState={c.trialState} trialEndsAt={c.trialEndsAt} />
+                </td>
+                <td>{fmtDateOnly(c.nextDueDate)}</td>
+                <td>{c.activeModuleNames.length ? c.activeModuleNames.join(", ") : "—"}</td>
+                <td className="mst-num">{c.monthlyTotalCents === null ? "—" : formatCents(c.monthlyTotalCents)}</td>
+                <td className="mst-num">{c.memberCount}</td>
+              </tr>
+            ))}
+            {rows.length === 0 && (
+              <tr>
+                <td colSpan={8}>{companies.length === 0 ? "Nenhuma empresa cadastrada ainda." : "Nenhuma empresa encontrada para a busca."}</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

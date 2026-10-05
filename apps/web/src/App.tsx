@@ -22,6 +22,7 @@ import { MasterCompanyDetailPage } from "./pages/MasterCompanyDetailPage";
 import { MasterInvoiceDetailPage } from "./pages/MasterInvoiceDetailPage";
 import { MasterInvoicesPage } from "./pages/MasterInvoicesPage";
 import { MasterModulesPage } from "./pages/MasterModulesPage";
+import { MasterSettingsPage } from "./pages/MasterSettingsPage";
 import { MasterOverviewPage } from "./pages/MasterOverviewPage";
 import { MasterPlansPage } from "./pages/MasterPlansPage";
 import { ModulePlaceholderPage } from "./pages/ModulePlaceholderPage";
@@ -221,6 +222,7 @@ function App() {
         <Route path="faturas/:id" element={<MasterInvoiceDetailPage />} />
         <Route path="planos"element={<MasterPlansPage />} />
         <Route path="modulos" element={<MasterModulesPage />} />
+        <Route path="configuracoes" element={<MasterSettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

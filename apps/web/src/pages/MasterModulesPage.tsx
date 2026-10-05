@@ -1,10 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { listModules, saveModule } from "../features/master/catalogApi";
+import { listModules, listPlans, saveModule } from "../features/master/catalogApi";
+import { isCommercialModule, MODULE_FEATURES, totalBreakdown } from "../features/master/masterLogic";
+import { Badge } from "../features/master/MasterBits";
 import { formatCents, parseCents } from "../lib/money";
 import type { CatalogModule } from "../lib/types";
 
 interface FormState {
-  id: string | null;
+  id: string;
   code: string;
   name: string;
   description: string;
@@ -12,10 +14,9 @@ interface FormState {
   isActive: boolean;
 }
 
-const EMPTY: FormState = { id: null, code: "", name: "", description: "", price: "", isActive: true };
-
 export function MasterModulesPage() {
   const [modules, setModules] = useState<CatalogModule[]>([]);
+  const [baseCents, setBaseCents] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState<FormState | null>(null);
@@ -25,10 +26,12 @@ export function MasterModulesPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const result = await listModules();
+      const [m, p] = await Promise.all([listModules(), listPlans()]);
       if (cancelled) return;
-      setModules(result.data);
-      setError(result.error);
+      // Só os módulos comerciais oficiais aparecem: o núcleo está no Plano Base e não é módulo pago.
+      setModules(m.data.filter((x) => isCommercialModule(x.code)));
+      setBaseCents(p.data.find((x) => x.code === "base")?.monthlyPriceCents ?? 0);
+      setError(m.error ?? p.error);
       setLoading(false);
     })();
     return () => {
@@ -38,14 +41,7 @@ export function MasterModulesPage() {
 
   function edit(m: CatalogModule) {
     setError(null);
-    setForm({
-      id: m.id,
-      code: m.code,
-      name: m.name,
-      description: m.description ?? "",
-      price: (m.monthlyPriceCents / 100).toFixed(2).replace(".", ","),
-      isActive: m.isActive,
-    });
+    setForm({ id: m.id, code: m.code, name: m.name, description: m.description ?? "", price: (m.monthlyPriceCents / 100).toFixed(2).replace(".", ","), isActive: m.isActive });
   }
 
   async function submit(event: FormEvent) {
@@ -53,19 +49,12 @@ export function MasterModulesPage() {
     if (!form) return;
     const cents = parseCents(form.price);
     if (cents === null) {
-      setError("Preço inválido. Use o formato 49,90.");
+      setError("Preço inválido. Use o formato 19,90.");
       return;
     }
     setError(null);
     setSaving(true);
-    const { error } = await saveModule({
-      id: form.id,
-      code: form.code,
-      name: form.name,
-      description: form.description,
-      monthlyPriceCents: cents,
-      isActive: form.isActive,
-    });
+    const { error } = await saveModule({ id: form.id, code: form.code, name: form.name, description: form.description, monthlyPriceCents: cents, isActive: form.isActive });
     setSaving(false);
     if (error) {
       setError(error);
@@ -77,72 +66,50 @@ export function MasterModulesPage() {
 
   if (loading) return <p>Carregando módulos…</p>;
 
+  const active = modules.filter((m) => m.isActive);
+  const { totalCents } = totalBreakdown(baseCents, active.map((m) => ({ name: m.name, priceCents: m.monthlyPriceCents })));
+  const modulesCents = totalCents - baseCents;
+
   return (
     <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+      <div className="mst-head">
         <h2>Módulos</h2>
-        {!form && (
-          <button className="btn-secondary" type="button" onClick={() => setForm({ ...EMPTY })}>
-            Novo módulo
-          </button>
-        )}
       </div>
-      <p style={{ color: "var(--text-muted)", fontSize: 14 }}>
-        Módulos opcionais do Gestão Atendimento Pro que uma empresa poderá contratar. O código é a chave
-        de permissão e não pode ser alterado depois de criado.
-      </p>
+      <div className="mst-banner">
+        Plano Base + todos os módulos: {formatCents(totalCents)}/mês
+        <span>
+          Base {formatCents(baseCents)} + módulos {formatCents(modulesCents)}. Atendimento, Comandas/Mesas, Pedidos, Caixa básico, Clientes, Dashboard e Configurações fazem parte do Plano Base.
+        </span>
+      </div>
 
       {error && <div className="form-error">{error}</div>}
 
       {form && (
-        <form onSubmit={submit} style={{ maxWidth: 460, marginBottom: 32 }}>
-          <h3 style={{ fontSize: 18 }}>{form.id ? "Editar módulo" : "Novo módulo"}</h3>
+        <form onSubmit={submit} className="mst-card" style={{ maxWidth: 520 }}>
+          <h3>Editar módulo</h3>
           <div className="field">
-            <label htmlFor="mod-code">Código</label>
-            <input
-              id="mod-code"
-              required
-              disabled={form.id !== null}
-              placeholder="ex.: whatsapp"
-              value={form.code}
-              onChange={(e) => setForm({ ...form, code: e.target.value })}
-            />
+            <label htmlFor="mod-code">Código (não pode ser alterado)</label>
+            <input id="mod-code" disabled value={form.code} readOnly />
           </div>
           <div className="field">
             <label htmlFor="mod-name">Nome</label>
-            <input
-              id="mod-name"
-              required
-              value={form.name}
-              onChange={(e) => setForm({ ...form, name: e.target.value })}
-            />
+            <input id="mod-name" required value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
           </div>
           <div className="field">
             <label htmlFor="mod-desc">Descrição</label>
-            <input
-              id="mod-desc"
-              value={form.description}
-              onChange={(e) => setForm({ ...form, description: e.target.value })}
-            />
+            <input id="mod-desc" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} />
           </div>
           <div className="field">
             <label htmlFor="mod-price">Preço mensal (R$)</label>
-            <input
-              id="mod-price"
-              required
-              inputMode="decimal"
-              value={form.price}
-              onChange={(e) => setForm({ ...form, price: e.target.value })}
-            />
+            <input id="mod-price" required inputMode="decimal" value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} />
           </div>
           <label style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-            <input
-              type="checkbox"
-              checked={form.isActive}
-              onChange={(e) => setForm({ ...form, isActive: e.target.checked })}
-            />
+            <input type="checkbox" checked={form.isActive} onChange={(e) => setForm({ ...form, isActive: e.target.checked })} />
             Ativo
           </label>
+          <p className="mst-sub" style={{ marginTop: 0 }}>
+            Mudar o preço vale para novas contratações; contratos já firmados mantêm o valor contratado.
+          </p>
           <div style={{ display: "flex", gap: 8 }}>
             <button className="btn-primary" type="submit" disabled={saving} style={{ width: "auto" }}>
               {saving ? "Salvando…" : "Salvar"}
@@ -154,39 +121,46 @@ export function MasterModulesPage() {
         </form>
       )}
 
-      <table style={{ width: "100%", borderCollapse: "collapse" }}>
-        <thead>
-          <tr style={{ textAlign: "left", borderBottom: "1px solid var(--border)" }}>
-            <th style={{ padding: "8px 4px" }}>Código</th>
-            <th style={{ padding: "8px 4px" }}>Nome</th>
-            <th style={{ padding: "8px 4px" }}>Preço mensal</th>
-            <th style={{ padding: "8px 4px" }}>Status</th>
-            <th style={{ padding: "8px 4px" }} />
-          </tr>
-        </thead>
-        <tbody>
-          {modules.map((m) => (
-            <tr key={m.id} style={{ borderBottom: "1px solid var(--border)" }}>
-              <td style={{ padding: "8px 4px" }}>{m.code}</td>
-              <td style={{ padding: "8px 4px" }}>{m.name}</td>
-              <td style={{ padding: "8px 4px" }}>{formatCents(m.monthlyPriceCents)}</td>
-              <td style={{ padding: "8px 4px" }}>{m.isActive ? "Ativo" : "Inativo"}</td>
-              <td style={{ padding: "8px 4px" }}>
-                <button className="btn-secondary" type="button" onClick={() => edit(m)}>
-                  Editar
-                </button>
-              </td>
-            </tr>
-          ))}
-          {modules.length === 0 && (
+      <div className="mst-scroll">
+        <table className="mst-table">
+          <thead>
             <tr>
-              <td style={{ padding: "8px 4px" }} colSpan={5}>
-                Nenhum módulo cadastrado ainda.
-              </td>
+              <th>Módulo</th>
+              <th>Código</th>
+              <th>O que inclui</th>
+              <th className="mst-num">Preço mensal</th>
+              <th>Status</th>
+              <th />
             </tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {modules.map((m) => (
+              <tr key={m.id}>
+                <td>
+                  <strong>{m.name}</strong>
+                  {m.description && <div style={{ color: "var(--text-muted)", fontSize: 12 }}>{m.description}</div>}
+                </td>
+                <td>{m.code}</td>
+                <td>{(MODULE_FEATURES[m.code] ?? []).join(" · ") || "—"}</td>
+                <td className="mst-num">{formatCents(m.monthlyPriceCents)}</td>
+                <td>
+                  <Badge tone={m.isActive ? "ok" : "muted"}>{m.isActive ? "Ativo" : "Inativo"}</Badge>
+                </td>
+                <td>
+                  <button className="btn-secondary" type="button" onClick={() => edit(m)}>
+                    Editar
+                  </button>
+                </td>
+              </tr>
+            ))}
+            {modules.length === 0 && (
+              <tr>
+                <td colSpan={6}>Os módulos oficiais ainda não existem no catálogo (aplique a migration de fechamento comercial).</td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }
