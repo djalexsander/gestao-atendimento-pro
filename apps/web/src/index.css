@@ -4134,3 +4134,113 @@ button {
     border-radius: 14px 14px 0 0;
   }
 }
+
+/* Impressão → Etiquetas */
+.lab-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.lab-modes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 12px;
+}
+.lab-mode {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  min-height: 72px;
+  padding: 12px 16px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.lab-mode small {
+  color: var(--text-muted);
+}
+.lab-mode-active {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.lab-grid-page {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 16px;
+  align-items: start;
+}
+.lab-form,
+.lab-side {
+  min-width: 0;
+}
+.lab-check {
+  min-height: 36px;
+  margin-bottom: 4px;
+}
+.lab-points {
+  max-height: 280px;
+  overflow-y: auto;
+}
+.lab-empty {
+  padding: 8px 12px;
+}
+.lab-print {
+  min-height: 48px;
+}
+.lab-preview svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 260px;
+}
+.lab-sheet {
+  fill: var(--bg);
+}
+.lab-label {
+  fill: #fff;
+  stroke: var(--text-muted);
+  stroke-width: 0.25;
+  stroke-dasharray: 1 0.8;
+}
+.lab-text {
+  fill: #111;
+  font-family: Arial, Helvetica, sans-serif;
+}
+.lab-bars rect {
+  fill: #000;
+}
+.lab-warnings {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: #b7791f;
+  font-size: 13px;
+}
+.lab-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 12px;
+}
+.lab-default {
+  margin-left: 6px;
+}
+@media (max-width: 900px) {
+  .lab-grid-page {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 640px) {
+  .lab-grid {
+    grid-template-columns: 1fr;
+  }
+  .lab-mode,
+  .lab-print,
+  .lab-page .cus-option,
+  .lab-page .cus-selected button {
+    min-height: 44px;
+  }
+}

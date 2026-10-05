@@ -6,8 +6,14 @@ import {
   NAME_MAX_LENGTH,
   PAPER_WIDTHS,
   printersForSector,
+  DEFAULT_LABEL_DRAFT,
+  labelDraftFrom,
   validateDeviceName,
+  validateLabelDraft,
   type DeviceInput,
+  type DeviceKind,
+  type LabelDraft,
+  type LabelPrinterInput,
   type DocumentRoute,
   type PaperWidth,
   type PrintDevice,
@@ -58,6 +64,7 @@ export function PrinterDialog({
   sectors,
   windowsPrinters = [],
   onSubmit,
+  onSubmitLabel,
   onClose,
 }: {
   device?: PrintDevice;
@@ -65,8 +72,12 @@ export function PrinterDialog({
   sectors: PrintSector[];
   windowsPrinters?: string[];
   onSubmit: Submit<DeviceInput>;
+  // Impressora de ETIQUETAS (tipo escolhido no topo ao adicionar; fixo ao editar).
+  onSubmitLabel?: Submit<LabelPrinterInput>;
   onClose: () => void;
 }) {
+  const [kind, setKind] = useState<DeviceKind>(device?.kind ?? "receipt");
+  const [label, setLabel] = useState<LabelDraft>(device && device.kind === "label" ? labelDraftFrom(device) : DEFAULT_LABEL_DRAFT);
   const [name, setName] = useState(device?.name ?? "");
   const [width, setWidth] = useState<PaperWidth>(device?.paper_width ?? 80);
   const [fullOrder, setFullOrder] = useState(device?.full_order ?? false);
@@ -92,6 +103,18 @@ export function PrinterDialog({
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     setError(null);
+    if (kind === "label") {
+      const checked = validateLabelDraft({ ...label, name });
+      if ("error" in checked) {
+        setError(checked.error);
+        return;
+      }
+      setSubmitting(true);
+      const failure = await onSubmitLabel!(checked.input);
+      setSubmitting(false);
+      if (failure) setError(failure);
+      return;
+    }
     const problem = validateDeviceName(name);
     if (problem) {
       setError(problem);
@@ -106,6 +129,15 @@ export function PrinterDialog({
   return (
     <Modal title={device ? "Editar impressora" : "Adicionar impressora"} onClose={onClose}>
       <form onSubmit={handleSubmit} noValidate>
+        {!device && onSubmitLabel && (
+          <div className="field">
+            <label htmlFor="printer-kind">Tipo de impressora</label>
+            <select id="printer-kind" value={kind} onChange={(e) => setKind(e.target.value as DeviceKind)}>
+              <option value="receipt">Cupom / Recibo</option>
+              <option value="label">Etiquetas</option>
+            </select>
+          </div>
+        )}
         <div className="field">
           <label htmlFor="printer-name">Nome</label>
           <input
@@ -113,13 +145,16 @@ export function PrinterDialog({
             type="text"
             value={name}
             maxLength={NAME_MAX_LENGTH}
-            placeholder="Impressora Cozinha"
+            placeholder={kind === "label" ? "Impressora de etiquetas" : "Impressora Cozinha"}
             autoComplete="off"
             autoFocus
             onChange={(e) => setName(e.target.value)}
           />
         </div>
 
+        {kind === "label" && <LabelFields draft={label} onChange={setLabel} />}
+
+        {kind === "receipt" && (
         <div className="field">
           <label htmlFor="printer-width">Largura do papel</label>
           <select id="printer-width" value={width} onChange={(e) => setWidth(Number(e.target.value) as PaperWidth)}>
@@ -130,6 +165,8 @@ export function PrinterDialog({
             ))}
           </select>
         </div>
+
+        )}
 
         <div className="field">
           <label htmlFor="printer-windows">Impressora do Windows</label>
@@ -143,6 +180,8 @@ export function PrinterDialog({
           <p className="field-hint">A impressora física será escolhida pelo Agente de impressão.</p>
         </div>
 
+        {kind === "receipt" && (
+        <>
         <fieldset className="print-destinations">
           <legend>Destinos automáticos</legend>
           <p className="field-hint">Imprimem sozinhos quando o pedido é enviado.</p>
@@ -180,11 +219,60 @@ export function PrinterDialog({
             </label>
           ))}
         </fieldset>
+        </>
+        )}
 
         {error && <div className="form-error">{error}</div>}
         <Actions submitting={submitting} submitLabel="Salvar" submittingLabel="Salvando…" onClose={onClose} />
       </form>
     </Modal>
+  );
+}
+
+// Campos da impressora de ETIQUETAS: tamanho livre em mm, gap, colunas e margens (sem tabela de tamanhos fixos).
+function LabelFields({ draft, onChange }: { draft: LabelDraft; onChange: (next: LabelDraft) => void }) {
+  const set = (key: keyof LabelDraft) => (e: { target: { value: string } }) => onChange({ ...draft, [key]: e.target.value });
+  return (
+    <fieldset className="print-destinations lab-fields">
+      <legend>Etiqueta</legend>
+      <p className="field-hint">Informe o tamanho de UMA etiqueta. Exemplos: 50 × 30, 40 × 25 ou 38 × 25 mm, com 1 ou 2 colunas.</p>
+      <div className="lab-grid">
+        <div className="field">
+          <label htmlFor="label-width">Largura (mm)</label>
+          <input id="label-width" inputMode="decimal" value={draft.width} onChange={set("width")} />
+        </div>
+        <div className="field">
+          <label htmlFor="label-height">Altura (mm)</label>
+          <input id="label-height" inputMode="decimal" value={draft.height} onChange={set("height")} />
+        </div>
+        <div className="field">
+          <label htmlFor="label-gap">Espaçamento / gap (mm)</label>
+          <input id="label-gap" inputMode="decimal" value={draft.gap} onChange={set("gap")} />
+        </div>
+        <div className="field">
+          <label htmlFor="label-columns">Colunas</label>
+          <select id="label-columns" value={draft.columns} onChange={set("columns")}>
+            {[1, 2, 3, 4].map((n) => (
+              <option key={n} value={n}>
+                {n}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="field">
+          <label htmlFor="label-margin-x">Margem horizontal (mm)</label>
+          <input id="label-margin-x" inputMode="decimal" value={draft.marginX} onChange={set("marginX")} />
+        </div>
+        <div className="field">
+          <label htmlFor="label-margin-y">Margem vertical (mm)</label>
+          <input id="label-margin-y" inputMode="decimal" value={draft.marginY} onChange={set("marginY")} />
+        </div>
+      </div>
+      <label className="checkbox-row">
+        <input type="checkbox" checked={draft.isDefault} onChange={(e) => onChange({ ...draft, isDefault: e.target.checked })} />
+        Impressora padrão de etiquetas
+      </label>
+    </fieldset>
   );
 }
 

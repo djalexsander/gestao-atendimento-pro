@@ -15,7 +15,9 @@ import {
 import {
   describePrintError,
   type DeviceInput,
+  type DeviceKind,
   type DocumentRoute,
+  type LabelPrinterInput,
   type PairingCode,
   type PrintAgent,
   type PrintEnqueueFailure,
@@ -76,6 +78,10 @@ export interface PrintingSource {
   loadJobStatus(jobId: string): Promise<{ data: PrintJob | null; error: string | null }>;
   createDevice(companyId: string, input: DeviceInput): Promise<{ error: string | null }>;
   updateDevice(deviceId: string, input: DeviceInput): Promise<{ error: string | null }>;
+  // Impressoras de ETIQUETAS (mesma tabela print_devices, RPCs próprias; o cupom não muda).
+  createLabelPrinter(companyId: string, input: LabelPrinterInput): Promise<{ error: string | null }>;
+  updateLabelPrinter(deviceId: string, input: LabelPrinterInput): Promise<{ error: string | null }>;
+  setDefaultLabelPrinter(deviceId: string): Promise<{ error: string | null }>;
   archiveDevice(deviceId: string): Promise<{ error: string | null }>;
   testPrint(deviceId: string): Promise<{ error: string | null; jobId?: string | null }>;
   reprint(jobId: string): Promise<{ error: string | null }>;
@@ -87,6 +93,20 @@ export interface PrintingSource {
   unbindDevice(deviceId: string): Promise<{ error: string | null }>;
   // Realtime (opcional: fontes simuladas não têm). Só avisa qual tabela mudou; a tela recarrega do servidor.
   subscribeToChanges?(companyId: string, onChange: (table: PrintTable) => void): () => void;
+}
+
+function labelArgs(input: LabelPrinterInput, key: Record<string, string>): Record<string, unknown> {
+  return {
+    ...key,
+    p_name: input.name,
+    p_width_mm: input.width_mm,
+    p_height_mm: input.height_mm,
+    p_gap_mm: input.gap_mm,
+    p_columns: input.columns,
+    p_margin_x_mm: input.margin_x_mm,
+    p_margin_y_mm: input.margin_y_mm,
+    p_is_default: input.is_default,
+  };
 }
 
 async function rpc(name: string, args: Record<string, unknown>): Promise<{ error: string | null }> {
@@ -103,7 +123,7 @@ export const supabasePrintingSource: PrintingSource = {
     const [devices, routes, sectors] = await Promise.all([
       supabase
         .from("print_devices")
-        .select("id, name, paper_width, windows_printer_name, is_ready, agent_id")
+        .select("id, name, paper_width, windows_printer_name, is_ready, agent_id, device_kind, label_width_mm, label_height_mm, label_gap_mm, label_columns, label_margin_x_mm, label_margin_y_mm, is_default")
         .eq("company_id", companyId)
         .eq("is_active", true)
         .order("created_at"),
@@ -121,7 +141,20 @@ export const supabasePrintingSource: PrintingSource = {
         devices: (devices.data ?? []).map((d) => ({
           id: d.id as string,
           name: d.name as string,
-          paper_width: d.paper_width as PaperWidth,
+          kind: (d.device_kind as DeviceKind | null) ?? "receipt",
+          is_default: d.is_default === true,
+          label:
+            d.device_kind === "label"
+              ? {
+                  width_mm: Number(d.label_width_mm),
+                  height_mm: Number(d.label_height_mm),
+                  gap_mm: Number(d.label_gap_mm),
+                  columns: Number(d.label_columns),
+                  margin_x_mm: Number(d.label_margin_x_mm),
+                  margin_y_mm: Number(d.label_margin_y_mm),
+                }
+              : null,
+          paper_width: (d.paper_width as PaperWidth | null) ?? null,
           windows_printer_name: (d.windows_printer_name as string | null) ?? null,
           ready: d.is_ready === true,
           agent_id: (d.agent_id as string | null) ?? null,
@@ -239,6 +272,12 @@ export const supabasePrintingSource: PrintingSource = {
       p_sector_ids: input.sector_ids,
       p_documents: input.documents,
     }),
+
+  createLabelPrinter: (companyId, input) => rpc("create_label_printer", labelArgs(input, { p_company_id: companyId })),
+
+  updateLabelPrinter: (deviceId, input) => rpc("update_label_printer", labelArgs(input, { p_device_id: deviceId })),
+
+  setDefaultLabelPrinter: (deviceId) => rpc("set_default_label_printer", { p_device_id: deviceId }),
 
   updateDevice: (deviceId, input) =>
     rpc("update_print_device", {

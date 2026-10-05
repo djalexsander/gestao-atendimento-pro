@@ -1,3 +1,4 @@
+mod label_print;
 mod printers;
 mod raw_print;
 mod secrets;
@@ -118,6 +119,15 @@ fn print_raw(app: AppHandle, printer_name: String, bytes: Vec<u8>, purpose: Stri
     let installed: Vec<String> = printers::list()?.into_iter().map(|p| p.name).collect();
     raw_print::validate(&printer_name, &bytes, &purpose, &installed, real_mode(&app))?;
     raw_print::send(&printer_name, &bytes)
+}
+
+/// Imprime ETIQUETAS (bitmaps 1 bit) pelo driver do Windows (GDI). Mesmas regras do RAW: validação no lado nativo
+/// (modo real para jobs, impressora instalada, limites).
+#[tauri::command]
+fn print_label_pages(app: AppHandle, printer_name: String, pages: Vec<label_print::LabelPage>, purpose: String) -> Result<(), String> {
+    let installed: Vec<String> = printers::list()?.into_iter().map(|p| p.name).collect();
+    label_print::validate(&printer_name, &pages, &purpose, &installed, real_mode(&app))?;
+    label_print::send(&printer_name, &pages)
 }
 
 /// Liga/desliga "Iniciar com o Windows" (entrada HKCU\...\Run criada pelo plugin oficial de autostart,
@@ -267,6 +277,7 @@ pub fn run() {
             secret_get,
             secret_delete,
             print_raw,
+            print_label_pages,
             autostart_set,
             autostart_status,
             launched_minimized,

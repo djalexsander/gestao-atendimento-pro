@@ -1,3 +1,4 @@
+import { canvasSurface } from "./canvas-surface.ts";
 import { AgentApi, DOCUMENT_LABEL, type LogicalDevice } from "./core/api.ts";
 import { PrintAgentApp, type Snapshot, type WindowsPrinter } from "./core/app.ts";
 import { parsePublicConfig } from "./core/config.ts";
@@ -8,7 +9,7 @@ import { defaultDiagnosticPrinter, isVirtualPrinter, looksLikeLabelPrinter } fro
 import { renderText } from "./core/text-renderer.ts";
 import { RawEscPosPrinterTransport } from "./core/transport.ts";
 import { listen } from "@tauri-apps/api/event";
-import { computerName, exitApp, listWindowsPrinters, nativeRawPort, nativeSecrets, nativeStartup, nativeStore } from "./tauri.ts";
+import { computerName, exitApp, listWindowsPrinters, nativeLabelPort, nativeRawPort, nativeSecrets, nativeStartup, nativeStore } from "./tauri.ts";
 import "./style.css";
 
 const root = document.getElementById("app")!;
@@ -157,6 +158,7 @@ if (!config) {
     store: nativeStore,
     secrets: nativeSecrets,
     rawPort: nativeRawPort,
+    labels: { port: nativeLabelPort, makeSurface: canvasSurface },
     startup: nativeStartup,
     listPrinters: listWindowsPrinters,
     hostName: computerName,
@@ -201,7 +203,13 @@ if (!config) {
 
   function deviceRow(d: LogicalDevice, printers: WindowsPrinter[]): HTMLElement {
     const dest = [d.fullOrder ? "Pedido completo" : "", ...d.sectors, ...d.documents.map((x) => DOCUMENT_LABEL[x] ?? x)].filter(Boolean).join(", ") || "Nenhum destino";
-    const row = el("div", { class: "device" }, el("strong", {}, d.name), el("span", { class: "muted" }, ` ${d.paperWidth} mm`), el("div", { class: "muted" }, `Destinos: ${dest}`));
+    const row = el(
+      "div",
+      { class: "device" },
+      el("strong", {}, d.name),
+      el("span", { class: "muted" }, d.kind === "label" ? ` Etiquetas${d.labelSummary ? ` · ${d.labelSummary}` : ""}` : ` ${d.paperWidth} mm`),
+      el("div", { class: "muted" }, d.kind === "label" ? "Destino: etiquetas (produto, livre, comanda/mesa)" : `Destinos: ${dest}`),
+    );
     if (d.boundToOther) {
       row.append(el("div", { class: "muted" }, "Vinculada a outro computador."));
       return row;

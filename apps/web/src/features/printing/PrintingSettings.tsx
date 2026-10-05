@@ -15,6 +15,7 @@ import {
   isAgentOnline,
   lastContactLabel,
   documentLabels,
+  labelSummary,
   physicalPrinterLabel,
   type PrintAgent,
   type PrintDevice,
@@ -289,12 +290,25 @@ export function PrintingSettings({ source = supabasePrintingSource }: { source?:
             return (
               <section key={device.id} className="print-card" aria-label={device.name}>
                 <h3>{device.name}</h3>
-                <p className="print-card-meta">{device.paper_width} mm</p>
+                <p className="print-card-meta">
+                  {device.kind === "label" && device.label ? (
+                    <>
+                      Etiquetas · {labelSummary(device.label)}
+                      {device.is_default && <span className="rec-badge rec-badge-paid lab-default"> Padrão</span>}
+                    </>
+                  ) : (
+                    `${device.paper_width} mm`
+                  )}
+                </p>
                 <dl className="print-details">
-                  <dt>Automático</dt>
-                  <dd>{destinations.length > 0 ? destinations.join(", ") : "Nenhum"}</dd>
-                  <dt>Documentos</dt>
-                  <dd>{documentLabels(device).length > 0 ? documentLabels(device).join(", ") : "Nenhum"}</dd>
+                  {device.kind === "receipt" && (
+                    <>
+                      <dt>Automático</dt>
+                      <dd>{destinations.length > 0 ? destinations.join(", ") : "Nenhum"}</dd>
+                      <dt>Documentos</dt>
+                      <dd>{documentLabels(device).length > 0 ? documentLabels(device).join(", ") : "Nenhum"}</dd>
+                    </>
+                  )}
                   <dt>Impressora física</dt>
                   <dd>
                     {physicalPrinterLabel(device)}
@@ -316,6 +330,16 @@ export function PrintingSettings({ source = supabasePrintingSource }: { source?:
                   <button className="btn-secondary btn-small" type="button" onClick={() => open({ kind: "edit", device })}>
                     Editar
                   </button>
+                  {device.kind === "label" && !device.is_default && (
+                    <button
+                      className="btn-secondary btn-small"
+                      type="button"
+                      disabled={busyId === device.id}
+                      onClick={() => void direct(device.id, () => source.setDefaultLabelPrinter(device.id), `${device.name} agora é a impressora padrão de etiquetas.`)}
+                    >
+                      Tornar padrão
+                    </button>
+                  )}
                   {device.agent_id && (
                     <button className="btn-secondary btn-small" type="button" onClick={() => open({ kind: "unbind", device })}>
                       Desvincular impressora física
@@ -459,6 +483,7 @@ export function PrintingSettings({ source = supabasePrintingSource }: { source?:
           devices={devices ?? []}
           sectors={sectors}
           onSubmit={(input) => submit(() => source.createDevice(companyId!, input), `${input.name} adicionada.`)}
+          onSubmitLabel={(input) => submit(() => source.createLabelPrinter(companyId!, input), `${input.name} adicionada.`)}
           onClose={() => setDialog(null)}
         />
       )}
@@ -469,6 +494,7 @@ export function PrintingSettings({ source = supabasePrintingSource }: { source?:
           devices={devices ?? []}
           sectors={sectors}
           onSubmit={(input) => submit(() => source.updateDevice(dialog.device.id, input), `${input.name} atualizada.`)}
+          onSubmitLabel={(input) => submit(() => source.updateLabelPrinter(dialog.device.id, input), `${input.name} atualizada.`)}
           onClose={() => setDialog(null)}
         />
       )}

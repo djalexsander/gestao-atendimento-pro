@@ -23,6 +23,9 @@ export interface LogicalDevice {
   id: string;
   name: string;
   paperWidth: number;
+  // "label" = impressora de etiquetas (sem papel 58/80); labelSummary = "50 × 30 mm · 2 colunas".
+  kind: "receipt" | "label";
+  labelSummary: string | null;
   windowsPrinterName: string | null;
   isReady: boolean;
   boundToMe: boolean;
@@ -30,6 +33,11 @@ export interface LogicalDevice {
   fullOrder: boolean;
   sectors: string[];
   documents: string[];
+}
+
+function labelSummaryOf(l: Record<string, unknown>): string | null {
+  const w = Number(l.width_mm), h = Number(l.height_mm), c = Number(l.columns);
+  return Number.isFinite(w) && Number.isFinite(h) && Number.isFinite(c) ? `${w} × ${h} mm · ${c} ${c === 1 ? "coluna" : "colunas"}` : null;
 }
 
 export const DOCUMENT_LABEL: Record<string, string> = {
@@ -130,6 +138,8 @@ export class AgentApi {
           id: String(d.id),
           name: String(d.name ?? "?"),
           paperWidth: Number(d.paper_width) || 80,
+          kind: d.device_kind === "label" ? "label" : "receipt",
+          labelSummary: d.device_kind === "label" ? labelSummaryOf(record(d.label)) : null,
           windowsPrinterName: typeof d.windows_printer_name === "string" ? d.windows_printer_name : null,
           isReady: d.is_ready === true,
           boundToMe: d.bound_to_me === true,
@@ -153,7 +163,7 @@ export class AgentApi {
   }
 
   async claim(c: Credentials, limit: number): Promise<ApiResult<{ jobs: JobModel[]; invalid: number }>> {
-    const res = await this.rpc("claim_print_jobs", { p_agent_id: c.agentId, p_token: c.token, p_limit: limit });
+    const res = await this.rpc("claim_print_jobs", { p_agent_id: c.agentId, p_token: c.token, p_limit: limit, p_capabilities: ["labels"] });
     if (!res.ok) return res;
     return { ok: true, data: parseClaimResult(res.data) };
   }

@@ -63,6 +63,7 @@ export const ADMIN_NAV: NavEntry[] = [
     items: [
       { type: "item", label: "Comandas / Mesas abertas", path: "/operacional/atendimentos-abertos", status: "ready" },
       { type: "item", label: "Pedidos", path: "/operacional/pedidos", status: "ready" },
+      { type: "item", label: "Etiquetas", path: "/operacional/etiquetas", status: "ready" },
       { type: "item", label: "Produção", path: "/operacional/producao", status: "ready" },
       { type: "item", label: "Caixa / Balcão", path: "/operacional/caixa", status: "ready" },
     ],

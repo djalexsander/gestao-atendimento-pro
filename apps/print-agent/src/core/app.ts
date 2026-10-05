@@ -3,7 +3,7 @@ import { isPaired, loadOrCreateState, parseState, saveState, SECRET_ERROR_MESSAG
 import { ConnectionTracker, pollDelayMs, type ConnectionState } from "./connection.ts";
 import type { JobModel } from "./model.ts";
 import { Poller, type Timers } from "./poller.ts";
-import { processJob } from "./processor.ts";
+import { processJob, type LabelDeps } from "./processor.ts";
 import { RawEscPosPrinterTransport, type PrinterTransport, type PrintMode, type RawPrinterPort } from "./transport.ts";
 
 export interface WindowsPrinter {
@@ -53,6 +53,8 @@ export interface AppDeps {
   secrets: SecretStore;
   // Porta nativa de impressão RAW (usada SÓ no modo real).
   rawPort: RawPrinterPort;
+  // Etiquetas (driver do Windows). Opcional: sem isso o agente falha o job de etiqueta com mensagem clara.
+  labels?: LabelDeps;
   startup: StartupPort;
   listPrinters(): Promise<WindowsPrinter[]>;
   hostName(): Promise<string>;
@@ -438,6 +440,7 @@ export class PrintAgentApp {
       complete: (cr, id) => this.deps.api.complete(cr, id),
       fail: (cr, id, err) => this.deps.api.fail(cr, id, err),
       transport: this.transport(),
+      labels: this.deps.labels,
       log: (line) => this.log(line),
       onPreview: (_j, lines) => {
         this.preview = lines;

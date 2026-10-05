@@ -29,6 +29,7 @@ import { OnboardingPage } from "./pages/OnboardingPage";
 import {
   OperationalCashierOrderPage,
   OperationalOpenAttendancesPage,
+  OperationalLabelsPage,
   OperationalOrdersPage,
   OperationalProductionPage,
   OperationalCashierPage,
@@ -120,6 +121,14 @@ function App() {
         element={
           <OperationalRoute area="abertos">
             <OperationalOpenAttendancesPage />
+          </OperationalRoute>
+        }
+      />
+      <Route
+        path="/operacional/etiquetas"
+        element={
+          <OperationalRoute area="etiquetas">
+            <OperationalLabelsPage />
           </OperationalRoute>
         }
       />

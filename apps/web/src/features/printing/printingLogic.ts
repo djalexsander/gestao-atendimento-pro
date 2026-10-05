@@ -12,10 +12,31 @@ export interface PrintSector {
 
 // Impressora LÓGICA do sistema. windows_printer_name é a impressora física do Windows, que só o
 // Agente de Impressão (etapa futura) preenche: o navegador nunca a descobre nem a digita.
+export type DeviceKind = "receipt" | "label";
+
+// Configuração de uma impressora de ETIQUETAS (tamanho livre, em mm).
+export interface LabelConfig {
+  width_mm: number;
+  height_mm: number;
+  gap_mm: number;
+  columns: number;
+  margin_x_mm: number;
+  margin_y_mm: number;
+}
+
+export interface LabelPrinterInput extends LabelConfig {
+  name: string;
+  is_default: boolean;
+}
+
 export interface PrintDevice {
   id: string;
   name: string;
-  paper_width: PaperWidth;
+  // Toda impressora antiga é 'receipt'. Etiqueta não tem papel 58/80 (paper_width nulo).
+  kind: DeviceKind;
+  label: LabelConfig | null;
+  is_default: boolean;
+  paper_width: PaperWidth | null;
   windows_printer_name: string | null;
   // PRONTA = ativa + vinculada a um Agente e a uma impressora do Windows. Só impressora pronta gera jobs
   // (teste, pedido, documentos, reimpressão); cadastrada != pronta.
@@ -57,7 +78,10 @@ export type JobType =
   | "test"
   | "customer_bill"
   | "payment_receipt"
-  | "cash_closing";
+  | "cash_closing"
+  | "label_product"
+  | "label_free"
+  | "label_service_point";
 export type JobStatus = "pending" | "claimed" | "printed" | "error" | "cancelled";
 
 export interface PrintJobItemSnapshot {
@@ -96,6 +120,53 @@ export interface PrintJob {
   reprint_of_id: string | null;
   created_at: string;
   payload: PrintJobPayload;
+}
+
+// "50 × 30 mm · 2 colunas · gap 3 mm"
+export function labelSummary(config: LabelConfig): string {
+  const n = (v: number) => String(Number(v)).replace(".", ",");
+  return `${n(config.width_mm)} × ${n(config.height_mm)} mm · ${config.columns} ${config.columns === 1 ? "coluna" : "colunas"} · gap ${n(config.gap_mm)} mm`;
+}
+
+export interface LabelDraft {
+  name: string;
+  width: string;
+  height: string;
+  gap: string;
+  columns: string;
+  marginX: string;
+  marginY: string;
+  isDefault: boolean;
+}
+
+export const DEFAULT_LABEL_DRAFT: LabelDraft = { name: "", width: "50", height: "30", gap: "3", columns: "1", marginX: "1", marginY: "1", isDefault: false };
+
+const parseMm = (raw: string): number | null => {
+  const n = Number(raw.trim().replace(",", "."));
+  return raw.trim() !== "" && Number.isFinite(n) ? Math.round(n * 10) / 10 : null;
+};
+
+export function labelDraftFrom(device: PrintDevice): LabelDraft {
+  const c = device.label;
+  const t = (v: number) => String(Number(v)).replace(".", ",");
+  return c
+    ? { name: device.name, width: t(c.width_mm), height: t(c.height_mm), gap: t(c.gap_mm), columns: String(c.columns), marginX: t(c.margin_x_mm), marginY: t(c.margin_y_mm), isDefault: device.is_default }
+    : { ...DEFAULT_LABEL_DRAFT, name: device.name };
+}
+
+// Mesmos limites do banco (create_label_printer). Tamanho LIVRE: qualquer valor dentro dos limites.
+export function validateLabelDraft(d: LabelDraft): { error: string } | { input: LabelPrinterInput } {
+  const nameProblem = validateDeviceName(d.name);
+  if (nameProblem) return { error: nameProblem };
+  const width = parseMm(d.width), height = parseMm(d.height), gap = parseMm(d.gap), mx = parseMm(d.marginX), my = parseMm(d.marginY);
+  const columns = Number(d.columns);
+  if (width === null || width < 10 || width > 200) return { error: "A largura da etiqueta deve ficar entre 10 e 200 mm." };
+  if (height === null || height < 10 || height > 300) return { error: "A altura da etiqueta deve ficar entre 10 e 300 mm." };
+  if (gap === null || gap < 0 || gap > 30) return { error: "O espaçamento (gap) deve ficar entre 0 e 30 mm." };
+  if (!Number.isInteger(columns) || columns < 1 || columns > 4) return { error: "A quantidade de colunas deve ser de 1 a 4." };
+  if (mx === null || my === null || mx < 0 || my < 0 || mx > 20 || my > 20) return { error: "As margens devem ficar entre 0 e 20 mm." };
+  if (mx * 2 >= width || my * 2 >= height) return { error: "As margens não podem ocupar toda a etiqueta." };
+  return { input: { name: d.name.trim(), width_mm: width, height_mm: height, gap_mm: gap, columns, margin_x_mm: mx, margin_y_mm: my, is_default: d.isDefault } };
 }
 
 export function validateDeviceName(raw: string): string | null {
@@ -174,6 +245,9 @@ const JOB_TYPE_LABEL: Record<JobType, string> = {
   customer_bill: "Conta / pré-conta",
   payment_receipt: "Comprovante",
   cash_closing: "Fechamento de caixa",
+  label_product: "Etiqueta de produto",
+  label_free: "Etiqueta livre",
+  label_service_point: "Comanda / mesa",
 };
 
 export function jobTypeLabel(job: Pick<PrintJob, "job_type" | "reprint_of_id">): string {

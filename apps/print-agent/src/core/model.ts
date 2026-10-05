@@ -1,6 +1,7 @@
 // Modelo interno de um job recebido do servidor (claim_print_jobs) e do que a tela precisa.
 
 import type { CodePage, CutMode } from "./document.ts";
+import type { LabelContent, LabelGeometry } from "./labels/labelLayout.ts";
 
 export type JobType =
   | "production_order"
@@ -8,7 +9,10 @@ export type JobType =
   | "test"
   | "customer_bill"
   | "payment_receipt"
-  | "cash_closing";
+  | "cash_closing"
+  | "label_product"
+  | "label_free"
+  | "label_service_point";
 
 const JOB_TYPES: readonly string[] = [
   "production_order",
@@ -17,6 +21,9 @@ const JOB_TYPES: readonly string[] = [
   "customer_bill",
   "payment_receipt",
   "cash_closing",
+  "label_product",
+  "label_free",
+  "label_service_point",
 ];
 
 // Adicional/opção escolhida no item (snapshot do servidor). priceDelta só vem na CONTA; produção não leva preço.
@@ -35,6 +42,13 @@ export interface JobItem {
   total: number | null;
 }
 
+// Job de ETIQUETAS: o conteúdo (snapshot do servidor), a quantidade e a geometria da impressora (mm).
+export interface LabelJobModel {
+  quantity: number;
+  content: LabelContent;
+  geometry: LabelGeometry;
+}
+
 export interface JobModel {
   id: string;
   type: JobType;
@@ -48,6 +62,7 @@ export interface JobModel {
   pointLabel: string | null;
   customerName: string | null;
   items: JobItem[];
+  label: LabelJobModel | null; // só nos jobs label_*
   payload: Record<string, unknown>; // snapshot completo (o render lê daqui)
 }
 
@@ -59,6 +74,35 @@ const num = (v: unknown): number | null => (typeof v === "number" && Number.isFi
 
 // Transforma o JSON cru do servidor no modelo interno; devolve null se faltar o essencial (o chamador
 // então FALHA o job com mensagem clara em vez de imprimir lixo).
+function toLabelContent(raw: unknown): LabelContent {
+  const l = asRecord(raw);
+  const barcode = asRecord(l.barcode);
+  const symbology = barcode.symbology === "ean13" ? "ean13" : barcode.symbology === "code128" ? "code128" : null;
+  const value = text(barcode.value);
+  return {
+    header: text(l.header) ?? undefined,
+    title: text(l.title) ?? undefined,
+    lines: Array.isArray(l.lines) ? l.lines.filter((x): x is string => typeof x === "string" && x.length > 0) : undefined,
+    price: text(l.price) ?? undefined,
+    barcode: symbology && value ? { value, symbology } : undefined,
+    code_text: text(l.code_text) ?? undefined,
+    footer: text(l.footer) ?? undefined,
+    big_title: l.big_title === true ? true : undefined,
+  };
+}
+
+// Geometria vem do claim (impressora ATUAL); cai no snapshot do payload. Valores fora dos limites do banco = job inválido.
+function toLabelGeometry(...sources: unknown[]): LabelGeometry | null {
+  for (const s of sources) {
+    const g = asRecord(s);
+    const w = num(g.width_mm), h = num(g.height_mm), gap = num(g.gap_mm), cols = num(g.columns), mx = num(g.margin_x_mm), my = num(g.margin_y_mm);
+    if (w === null || h === null || gap === null || cols === null || mx === null || my === null) continue;
+    if (w < 10 || w > 200 || h < 10 || h > 300 || gap < 0 || gap > 30 || !Number.isInteger(cols) || cols < 1 || cols > 4 || mx < 0 || my < 0 || mx * 2 >= w || my * 2 >= h) return null;
+    return { widthMm: w, heightMm: h, marginXMm: mx, marginYMm: my, columns: cols, gapMm: gap };
+  }
+  return null;
+}
+
 export function toJobModel(raw: unknown): JobModel | null {
   const o = asRecord(raw);
   const id = text(o.id);
@@ -84,6 +128,13 @@ export function toJobModel(raw: unknown): JobModel | null {
       })
     : [];
   const point = asRecord(payload.service_point);
+  let label: LabelJobModel | null = null;
+  if (type.startsWith("label_")) {
+    const geometry = toLabelGeometry(o.label, asRecord(payload.printer).label);
+    const quantity = num(payload.quantity);
+    if (!geometry || quantity === null || !Number.isInteger(quantity) || quantity < 1 || quantity > 500) return null;
+    label = { quantity, content: toLabelContent(payload.label), geometry };
+  }
   return {
     id,
     type: type as JobType,
@@ -97,6 +148,7 @@ export function toJobModel(raw: unknown): JobModel | null {
     pointLabel: text(point.label),
     customerName: text(payload.customer_name),
     items,
+    label,
     payload,
   };
 }
@@ -120,6 +172,9 @@ export const JOB_TYPE_LABEL: Record<JobType, string> = {
   customer_bill: "Conta",
   payment_receipt: "Comprovante",
   cash_closing: "Fechamento de caixa",
+  label_product: "Etiqueta de produto",
+  label_free: "Etiqueta livre",
+  label_service_point: "Cartão de comanda/mesa",
 };
 
 // Rótulo curto para o log: "Pedido CMD005", "Teste", "Fechamento de caixa".

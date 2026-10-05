@@ -242,6 +242,11 @@ export function buildDocument(job: JobModel): PrintDocument {
       return { blocks: cashClosing(job) };
     case "test":
       return { blocks: serverTest(job) };
+    case "label_product":
+    case "label_free":
+    case "label_service_point":
+      // Etiquetas NÃO passam por ESC/POS: o processador as rasteriza e envia ao driver (processLabelJob).
+      throw new Error("Etiquetas não usam o documento ESC/POS.");
   }
 }
 

@@ -11,6 +11,7 @@ import { ROLE_LABEL } from "../features/employees/roles";
 import type { ServicePanelSource } from "../features/operations/api";
 import type { OpenSessionsSource } from "../features/operations/openSessionsApi";
 import { OpenAttendancesBoard } from "../features/operations/OpenAttendancesBoard";
+import { LabelsPage } from "../features/labels/LabelsPage";
 import { OrdersBoard } from "../features/ordersBoard/OrdersBoard";
 import type { OrdersBoardApi } from "../features/ordersBoard/ordersBoardApi";
 import { ServicePointsPanel } from "../features/operations/ServicePointsPanel";
@@ -33,6 +34,8 @@ function OperationalShell({ title, children }: { title: string; children: ReactN
   const onOpenBoard = pathname === OPERATIONAL_PATH.abertos;
   const onOrdersBoard = pathname === OPERATIONAL_PATH.pedidos;
   const canSeeOpenBoard = role !== null && canOpenOperationalArea(role, "abertos");
+  const onLabels = pathname === OPERATIONAL_PATH.etiquetas;
+  const canSeeLabels = role !== null && canOpenOperationalArea(role, "etiquetas");
   const isAdminRole = role === "owner" || role === "admin";
   const { cash: myCash } = useMyOpenCash(isCashier);
   const [logoutBlocked, setLogoutBlocked] = useState<"open-cash" | "unverified" | null>(null);
@@ -94,7 +97,12 @@ function OperationalShell({ title, children }: { title: string; children: ReactN
               Pedidos
             </Link>
           )}
-          {(onOpenBoard || onOrdersBoard) && role && !isAdminRole && (
+          {canSeeLabels && !onLabels && (
+            <Link to={OPERATIONAL_PATH.etiquetas} className="btn-secondary btn-small" style={{ textDecoration: "none" }}>
+              Etiquetas
+            </Link>
+          )}
+          {(onOpenBoard || onOrdersBoard || onLabels) && role && !isAdminRole && (
             <Link to={homePathForRole(role)} className="btn-secondary btn-small" style={{ textDecoration: "none" }}>
               Voltar
             </Link>
@@ -209,6 +217,15 @@ export function OperationalOpenAttendancesPage({ source }: { source?: OpenSessio
   return (
     <OperationalShell title="Comandas / Mesas abertas">
       <OpenAttendancesBoard source={source} emptyAction={emptyAction} />
+    </OperationalShell>
+  );
+}
+
+// Etiquetas e impressão livre (produto, livre, comanda/mesa) pela fila de impressão existente.
+export function OperationalLabelsPage() {
+  return (
+    <OperationalShell title="Etiquetas">
+      <LabelsPage />
     </OperationalShell>
   );
 }

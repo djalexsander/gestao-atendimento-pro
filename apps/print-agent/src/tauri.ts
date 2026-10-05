@@ -3,6 +3,7 @@ import type { WindowsPrinter } from "./core/app.ts";
 import type { KeyValueStore, SecretStore } from "./core/config.ts";
 import type { StartupPort } from "./core/app.ts";
 import type { RawPrinterPort } from "./core/transport.ts";
+import type { LabelPrinterPort } from "./core/processor.ts";
 
 // Ponte com o shell nativo (Rust). O navegador/webview NÃO enumera impressoras nem imprime: quem faz é o Rust.
 
@@ -30,6 +31,16 @@ export const nativeSecrets: SecretStore = {
 // Impressão RAW. O Rust recusa purpose="job" nesta versão; só o diagnóstico local ("diagnostic") imprime.
 export const nativeRawPort: RawPrinterPort = {
   printRaw: (printerName, bytes, purpose) => invoke<void>("print_raw", { printerName, bytes: Array.from(bytes), purpose }),
+};
+
+// Etiquetas pelo driver do Windows (GDI). Mesma regra do RAW: o Rust confere o modo REAL para purpose="job".
+export const nativeLabelPort: LabelPrinterPort = {
+  printLabels: (printerName, pages, purpose) =>
+    invoke<void>("print_label_pages", {
+      printerName,
+      pages: pages.map((p) => ({ widthPx: p.widthPx, heightPx: p.heightPx, widthMm: p.widthMm, heightMm: p.heightMm, data: Array.from(p.data) })),
+      purpose,
+    }),
 };
 
 // Inicialização com o Windows, bandeja e avisos (Rust). Nenhuma permissão extra para o JavaScript: tudo passa por comandos próprios.
