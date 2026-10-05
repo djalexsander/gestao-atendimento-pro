@@ -24,7 +24,7 @@ const dateTime = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyl
 const when = (iso: string) => dateTime.format(new Date(iso));
 const pct = (n: number | null) => (n === null ? "—" : `${n.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}%`);
 
-function DeltaText({ delta, versus }: { delta: Delta | null; versus: string }) {
+export function DeltaText({ delta, versus }: { delta: Delta | null; versus: string }) {
   if (!delta) return null;
   return (
     <span className={`fin-delta fin-delta-${delta.direction}`}>
@@ -34,7 +34,7 @@ function DeltaText({ delta, versus }: { delta: Delta | null; versus: string }) {
   );
 }
 
-function Kpi({ label, value, delta, versus, strong }: { label: string; value: string; delta?: Delta | null; versus: string; strong?: boolean }) {
+export function Kpi({ label, value, delta, versus, strong }: { label: string; value: string; delta?: Delta | null; versus: string; strong?: boolean }) {
   return (
     <div className={strong ? "fin-kpi fin-kpi-strong" : "fin-kpi"}>
       <dt>{label}</dt>
@@ -44,7 +44,7 @@ function Kpi({ label, value, delta, versus, strong }: { label: string; value: st
   );
 }
 
-function Line({ label, value, hint, strong }: { label: string; value: string; hint?: string; strong?: boolean }) {
+export function Line({ label, value, hint, strong }: { label: string; value: string; hint?: string; strong?: boolean }) {
   return (
     <li className={strong ? "fin-line fin-line-strong" : "fin-line"}>
       <span>
@@ -72,7 +72,7 @@ function Skeleton() {
   );
 }
 
-function SalesChart({ model }: { model: FinancialOverviewModel }) {
+export function SalesChart({ model }: { model: FinancialOverviewModel }) {
   const { series } = model;
   const dense = series.points.length > 31;
   return (

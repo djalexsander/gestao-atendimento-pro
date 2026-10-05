@@ -14,7 +14,7 @@ const ROLE_LABEL: Record<string, string> = {
 };
 
 // Páginas com tabelas/listas que pedem a largura maior (demais seguem em 720px).
-const WIDE_PATHS = ["/app/configuracoes/notificacoes", "/app/financeiro/visao", "/app/financeiro/contas-a-receber", "/app/financeiro/contas-a-pagar", "/app/financeiro/caixa", "/app/cadastros/estoque", "/app/cadastros/clientes", "/app/configuracoes/sistema", "/app/financeiro/relatorios", "/app/configuracoes/impressao"];
+const WIDE_PATHS = ["/app", "/app/configuracoes/notificacoes", "/app/financeiro/visao", "/app/financeiro/contas-a-receber", "/app/financeiro/contas-a-pagar", "/app/financeiro/caixa", "/app/cadastros/estoque", "/app/cadastros/clientes", "/app/configuracoes/sistema", "/app/financeiro/relatorios", "/app/configuracoes/impressao"];
 
 // Administrativo (owner/admin — a rota /app já garante isso, ver accessRules.ts): sidebar fixa
 // à esquerda no desktop/tablet, vira drawer no mobile. Identidade/papel/sair ficam num topo

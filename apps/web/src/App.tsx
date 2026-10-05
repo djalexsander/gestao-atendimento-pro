@@ -13,7 +13,7 @@ import {
 } from "./app/routeGuards";
 import { AccessCodeSettingsPage } from "./pages/AccessCodeSettingsPage";
 import { AccessDisabledPage } from "./pages/AccessDisabledPage";
-import { AppHomePage } from "./pages/AppHomePage";
+import { DashboardPage } from "./features/dashboard/DashboardPage";
 import { CompanySettingsPage } from "./pages/CompanySettingsPage";
 import { EmployeeLoginPage } from "./pages/EmployeeLoginPage";
 import { LoginPage } from "./pages/LoginPage";
@@ -173,7 +173,7 @@ function App() {
           </AppRoute>
         }
       >
-        <Route index element={<AppHomePage />} />
+        <Route index element={<DashboardPage />} />
         {/* Link antigo: /app/configuracoes agora é só Empresa/Código de acesso/Modo de atendimento. */}
         <Route path="configuracoes" element={<Navigate to="/app/configuracoes/empresa" replace />} />
         <Route path="configuracoes/empresa" element={<CompanySettingsPage />} />
