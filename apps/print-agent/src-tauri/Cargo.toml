@@ -1,6 +1,6 @@
 [package]
 name = "print-agent"
-version = "1.0.1"
+version = "1.0.2"
 description = "Gestão Atendimento Pro - Agente de Impressão"
 edition = "2021"
 publish = false

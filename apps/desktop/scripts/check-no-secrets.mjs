@@ -43,7 +43,8 @@ function scanText(label, text, bundle) {
 const tracked = execFileSync("git", ["ls-files", "-z"], { cwd: root, encoding: "utf8" }).split("\0").filter(Boolean);
 const textExt = /\.(ts|tsx|js|mjs|cjs|rs|toml|json|html|css|md|yml|yaml|sql|example|txt|nsi)$/i;
 for (const f of tracked) {
-  if (!textExt.test(f) || /package-lock\.json$|Cargo\.lock$/.test(f)) continue;
+  // Os próprios scripts de auditoria descrevem os padrões procurados (regex), então não se varrem.
+  if (!textExt.test(f) || /package-lock\.json$|Cargo\.lock$|scripts\/check-no-[a-z-]+\.mjs$/.test(f)) continue;
   const full = path.join(root, f);
   if (!fs.existsSync(full)) continue;
   const raw = fs.readFileSync(full, "utf8");
