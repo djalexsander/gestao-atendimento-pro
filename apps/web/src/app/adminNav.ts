@@ -78,7 +78,7 @@ export const ADMIN_NAV: NavEntry[] = [
       { type: "item", label: "Modo de atendimento", path: "/app/configuracoes/modo-atendimento", status: "ready" },
       { type: "item", label: "Impressão", path: "/app/configuracoes/impressao", status: "ready" },
       { type: "item", label: "Notificações", path: "/app/configuracoes/notificacoes", status: "ready" },
-      { type: "item", label: "Sistema / Preferências", path: "/app/configuracoes/sistema", status: "placeholder" },
+      { type: "item", label: "Sistema / Preferências", path: "/app/configuracoes/sistema", status: "ready" },
     ],
   },
 ];

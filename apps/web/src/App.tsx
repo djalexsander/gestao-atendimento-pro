@@ -42,6 +42,7 @@ import { ProductModifiersPage } from "./pages/ProductModifiersPage";
 import { ProductionSectorsPage } from "./pages/ProductionSectorsPage";
 import { ReportsRoutePage } from "./pages/ReportsRoutePage";
 import { FinancialOverview } from "./features/financial/FinancialOverview";
+import { SystemSettingsPage } from "./features/system/SystemSettingsPage";
 import { CustomersPage } from "./features/customers/CustomersPage";
 import { ReceivablesPage } from "./features/receivables/ReceivablesPage";
 import { PayablesPage } from "./features/payables/PayablesPage";
@@ -203,7 +204,7 @@ function App() {
 
         <Route path="configuracoes/impressoras" element={<Navigate to="/app/configuracoes/impressao" replace />} />
         <Route path="configuracoes/impressao" element={<PrintingSettingsPage />} />
-        <Route path="configuracoes/sistema" element={<ModulePlaceholderPage title="Sistema / Preferências" />} />
+        <Route path="configuracoes/sistema" element={<SystemSettingsPage />} />
       </Route>
       <Route
         path="/master"

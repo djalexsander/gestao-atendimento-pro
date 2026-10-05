@@ -15,11 +15,13 @@ const IGNORE_SUBMIT_MS = 600;
 export function OpenSessionDialog({
   point,
   companyId,
+  allowQuickCreate = true,
   onSubmit,
   onClose,
 }: {
   point: ServicePoint;
   companyId: string | null;
+  allowQuickCreate?: boolean;
   onSubmit: (customer: string | null, customerId: string | null) => Promise<string | null>;
   onClose: () => void;
 }) {
@@ -60,6 +62,7 @@ export function OpenSessionDialog({
             onTextChange={setCustomer}
             selected={selected}
             onSelect={setSelected}
+            allowQuickCreate={allowQuickCreate}
           />
         ) : (
           <div className="field">

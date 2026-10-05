@@ -4244,3 +4244,165 @@ button {
     min-height: 44px;
   }
 }
+
+/* Cards operacionais confortáveis (preferência "Cards compactos" desligada). Compacto = como sempre foi. */
+.op-grid-comfy {
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+}
+.op-grid-comfy .op-card {
+  min-height: 140px;
+  padding: 18px 20px;
+  gap: 10px;
+}
+.oa-grid-comfy {
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 18px;
+}
+.oa-grid-comfy .oa-card {
+  gap: 12px;
+  padding: 18px 20px;
+}
+
+/* Configurações → Sistema / Preferências */
+.sys-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 8px;
+}
+.sys-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  align-items: start;
+}
+.sys-col {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.sys-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.sys-card h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.sys-card .field {
+  margin-bottom: 0;
+}
+.sys-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.sys-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-height: 44px;
+  cursor: pointer;
+}
+.sys-toggle input {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  margin-top: 2px;
+}
+.sys-toggle span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 14px;
+}
+.sys-link {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  text-decoration: none;
+}
+.sys-info {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px 12px;
+  margin: 0;
+  font-size: 14px;
+}
+.sys-info dt {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+.sys-info dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.sys-savebar {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.sys-savebar-dirty {
+  border-color: var(--accent);
+}
+.sys-dirty {
+  font-size: 14px;
+  font-weight: 600;
+}
+.sys-savebar-actions {
+  display: flex;
+  gap: 8px;
+}
+@media (max-width: 900px) {
+  .sys-grid {
+    grid-template-columns: 1fr;
+  }
+}
+/* O .admin-shell tem overflow-x:hidden (vira contêiner de rolagem e impede o sticky): no celular a barra de salvar
+   fica FIXA na base da tela e o formulário ganha folga para ela não cobrir o conteúdo. */
+@media (max-width: 900px) {
+  .sys-savebar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    border-radius: 12px 12px 0 0;
+    border-bottom: 0;
+  }
+  .sys-form {
+    padding-bottom: 170px;
+  }
+}
+@media (max-width: 640px) {
+  .sys-row,
+  .sys-info {
+    grid-template-columns: 1fr;
+  }
+  .sys-savebar {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .sys-savebar-actions button,
+  .sys-link {
+    flex: 1 1 auto;
+    min-height: 44px;
+    justify-content: center;
+  }
+}

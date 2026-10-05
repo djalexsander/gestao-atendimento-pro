@@ -84,7 +84,10 @@ export function maskDocumentInput(value: string): string {
   return formatDocument(digitsOnly(value).slice(0, 14)) || digitsOnly(value).slice(0, 14);
 }
 export function maskPhoneInput(value: string): string {
-  const d = digitsOnly(value).slice(0, 11);
+  // +55 colado/digitado (mais de 11 dígitos começando por 55): o código do país sai, não vira DDD.
+  let d = digitsOnly(value);
+  if (d.length > 11 && d.startsWith("55")) d = d.slice(2);
+  d = d.slice(0, 11);
   if (d.length <= 2) return d;
   if (d.length <= 6) return d.replace(/^(\d{2})(\d+)$/, "($1) $2");
   if (d.length <= 10) return d.replace(/^(\d{2})(\d{4})(\d+)$/, "($1) $2-$3");

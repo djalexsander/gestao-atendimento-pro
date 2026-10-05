@@ -4,6 +4,8 @@ import { OPERATIONAL_PATH } from "../../app/accessRules";
 import { useAuth } from "../../app/useAuth";
 import { supabaseServicePanelSource, type ServicePanelSource } from "./api";
 import { createCoalescedRunner } from "../orders/coalesce";
+import { CAN_ALWAYS_CREATE_CUSTOMER } from "../system/systemLogic";
+import { useOperationalPreferences } from "../system/useOperationalPreferences";
 import { OpenSessionDialog } from "./PointDialogs";
 import {
   countByStatus,
@@ -40,13 +42,13 @@ const EMPTY_TEXT = {
 
 type OpenDialog = { kind: "open"; point: ServicePoint };
 
-function PointCard({ point, onSelect }: { point: ServicePoint; onSelect: (point: ServicePoint) => void }) {
+function PointCard({ point, showCustomer, onSelect }: { point: ServicePoint; showCustomer: boolean; onSelect: (point: ServicePoint) => void }) {
   const status = statusOf(point);
   const session = point.open_session;
   const label = [
     point.display_name,
     STATUS_LABEL[status],
-    session ? `cliente ${session.customer_name ?? "sem nome"}` : "",
+    session && showCustomer ? `cliente ${session.customer_name ?? "sem nome"}` : "",
   ]
     .filter(Boolean)
     .join(", ");
@@ -67,7 +69,7 @@ function PointCard({ point, onSelect }: { point: ServicePoint; onSelect: (point:
         <span className={`status-badge status-${status}`}>{STATUS_LABEL[status]}</span>
         {session && (
           <>
-            <span className="op-card-line">Cliente: {session.customer_name ?? "sem nome"}</span>
+            {showCustomer && <span className="op-card-line">Cliente: {session.customer_name ?? "sem nome"}</span>}
             <span className="op-card-line op-card-muted">{formatOpenedShort(session.opened_at)}</span>
           </>
         )}
@@ -98,6 +100,9 @@ export function ServicePointsPanel({
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<StatusFilter>("all");
   const [typeChoice, setTypeChoice] = useState<TypeFilter>(null);
+  const { prefs, loaded: prefsLoaded } = useOperationalPreferences(companyId);
+  const typeInitialized = useRef(false);
+  const allowQuick = prefs.allowQuickCustomerCreate || CAN_ALWAYS_CREATE_CUSTOMER.includes(activeMembership?.role ?? "");
   const [dialog, setDialog] = useState<OpenDialog | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [scanMessage, setScanMessage] = useState<string | null>(null);
@@ -151,6 +156,13 @@ export function ServicePointsPanel({
 
   const points = useMemo(() => data?.points ?? [], [data]);
   const mode = data?.service_mode ?? "command";
+
+  // Preferência "ao abrir o painel": só no modo Comandas e mesas, uma vez, sem remover nenhuma opção (o filtro continua trocável).
+  useEffect(() => {
+    if (typeInitialized.current || !prefsLoaded || !data) return;
+    typeInitialized.current = true;
+    if (data.service_mode === "both" && prefs.defaultType !== "ask") setTypeChoice(prefs.defaultType);
+  }, [prefsLoaded, prefs.defaultType, data]);
   const type = mode === "both" ? typeChoice : null;
   const shown = useMemo(
     () => sortPoints(filterPoints(points, { query, status, type })),
@@ -244,9 +256,9 @@ export function ServicePointsPanel({
     content = <p className="op-state">Nada encontrado com esses filtros.</p>;
   } else {
     content = (
-      <ul className="op-grid" role="list">
+      <ul className={prefs.compactCards ? "op-grid" : "op-grid op-grid-comfy"} role="list">
         {shown.map((point) => (
-          <PointCard key={point.id} point={point} onSelect={openPoint} />
+          <PointCard key={point.id} point={point} showCustomer={prefs.showCustomerOnCard} onSelect={openPoint} />
         ))}
       </ul>
     );
@@ -331,6 +343,7 @@ export function ServicePointsPanel({
           key={dialog.point.id}
           point={dialog.point}
           companyId={companyId}
+          allowQuickCreate={allowQuick}
           onSubmit={(customer, customerId) => submitOpen(dialog.point, customer, customerId)}
           onClose={closeDialog}
         />

@@ -1,3 +1,4 @@
+import { useOperationalPreferences } from "../system/useOperationalPreferences";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../app/useAuth";
@@ -38,7 +39,7 @@ function itemsText(count: number): string {
   return count === 1 ? "1 item" : `${count} itens`;
 }
 
-function AttendanceCard({ item, now, onOpen }: { item: OpenAttendance; now: Date; onOpen: (item: OpenAttendance) => void }) {
+function AttendanceCard({ item, now, showCustomer, onOpen }: { item: OpenAttendance; now: Date; showCustomer: boolean; onOpen: (item: OpenAttendance) => void }) {
   const tier = ageTier(item.openedAt, now);
   const title = item.kind === "table" ? item.displayName : item.code;
   return (
@@ -50,10 +51,12 @@ function AttendanceCard({ item, now, onOpen }: { item: OpenAttendance; now: Date
         {item.kind === "table" && item.displayName !== item.code && <span className="oa-sub">{item.code}</span>}
       </div>
       <dl className="oa-meta">
-        <div>
-          <dt>Cliente</dt>
-          <dd>{item.customerName ?? "sem nome"}</dd>
-        </div>
+        {showCustomer && (
+          <div>
+            <dt>Cliente</dt>
+            <dd>{item.customerName ?? "sem nome"}</dd>
+          </div>
+        )}
         <div>
           <dt>Atendente</dt>
           <dd>{item.waiterName ?? "—"}</dd>
@@ -87,6 +90,7 @@ export function OpenAttendancesBoard({
   const { activeMembership } = useAuth();
   const companyId = activeMembership?.companyId ?? null;
   const role = activeMembership?.role ?? null;
+  const { prefs } = useOperationalPreferences(companyId);
 
   const [items, setItems] = useState<OpenAttendance[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -177,9 +181,9 @@ export function OpenAttendancesBoard({
     content = <p className="op-state">Nada encontrado com esses filtros.</p>;
   } else {
     content = (
-      <ul className="oa-grid" role="list">
+      <ul className={prefs.compactCards ? "oa-grid" : "oa-grid oa-grid-comfy"} role="list">
         {shown.map((item) => (
-          <AttendanceCard key={item.id} item={item} now={now} onOpen={openAttendance} />
+          <AttendanceCard key={item.id} item={item} now={now} showCustomer={prefs.showCustomerOnCard} onOpen={openAttendance} />
         ))}
       </ul>
     );

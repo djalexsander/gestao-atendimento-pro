@@ -20,6 +20,7 @@ export function CustomerPicker({
   selected,
   onSelect,
   autoFocus,
+  allowQuickCreate = true,
   source = supabaseCustomersSource,
 }: {
   companyId: string;
@@ -31,6 +32,8 @@ export function CustomerPicker({
   selected: CustomerOption | null;
   onSelect: (customer: CustomerOption | null) => void;
   autoFocus?: boolean;
+  // false = só busca/seleção/texto livre (preferência da empresa; o servidor também recusa).
+  allowQuickCreate?: boolean;
   source?: CustomersSource;
 }) {
   const [options, setOptions] = useState<CustomerOption[]>([]);
@@ -150,12 +153,12 @@ export function CustomerPicker({
         </ul>
       )}
       {showEmpty && !quickOpen && <p className="field-hint">Nenhum cliente cadastrado com esse nome. Você pode usar o texto digitado assim mesmo.</p>}
-      {term.length >= MIN_CHARS && !quickOpen && (
+      {allowQuickCreate && term.length >= MIN_CHARS && !quickOpen && (
         <button type="button" className="btn-link cus-quick-link" onClick={() => setQuickOpen(true)}>
           Cadastrar “{term}” como cliente
         </button>
       )}
-      {quickOpen && (
+      {allowQuickCreate && quickOpen && (
         <div className="cus-quick">
           <p className="field-hint">
             Novo cliente: <strong>{term}</strong>
