@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { CustomerPicker } from "../customers/CustomerPicker";
+import type { CustomerOption } from "../customers/customersLogic";
 import { Modal } from "../employees/Modal";
 import type { ServicePoint } from "./panel";
 
@@ -8,18 +10,21 @@ const CUSTOMER_MAX_LENGTH = 80;
 // intervalo depois de abrir, o envio é ignorado.
 const IGNORE_SUBMIT_MS = 600;
 
-// Ponto LIVRE: pede só o cliente (opcional) e abre o atendimento. `onSubmit` devolve a mensagem
+// Ponto LIVRE: pede só o cliente (opcional: nome livre OU cliente cadastrado) e abre o atendimento. `onSubmit` devolve a mensagem
 // de erro (ou null quando abriu); quem fecha o diálogo em caso de sucesso é o painel.
 export function OpenSessionDialog({
   point,
+  companyId,
   onSubmit,
   onClose,
 }: {
   point: ServicePoint;
-  onSubmit: (customer: string | null) => Promise<string | null>;
+  companyId: string | null;
+  onSubmit: (customer: string | null, customerId: string | null) => Promise<string | null>;
   onClose: () => void;
 }) {
   const [customer, setCustomer] = useState("");
+  const [selected, setSelected] = useState<CustomerOption | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const openedAt = useRef(0);
@@ -33,7 +38,7 @@ export function OpenSessionDialog({
     if (Date.now() - openedAt.current < IGNORE_SUBMIT_MS) return;
     setError(null);
     setSubmitting(true);
-    const problem = await onSubmit(customer.trim() || null);
+    const problem = await onSubmit(customer.trim() || null, selected?.id ?? null);
     setSubmitting(false);
     if (problem) setError(problem);
   }
@@ -45,17 +50,23 @@ export function OpenSessionDialog({
           <strong>{point.display_name}</strong> está livre.
         </p>
         {error && <div className="form-error">{error}</div>}
-        <div className="field">
-          <label htmlFor="op-customer">Cliente (opcional)</label>
-          <input
-            id="op-customer"
-            type="text"
+        {companyId ? (
+          <CustomerPicker
+            companyId={companyId}
+            inputId="op-customer"
+            label="Cliente (opcional)"
             maxLength={CUSTOMER_MAX_LENGTH}
-            autoComplete="off"
-            value={customer}
-            onChange={(e) => setCustomer(e.target.value)}
+            text={customer}
+            onTextChange={setCustomer}
+            selected={selected}
+            onSelect={setSelected}
           />
-        </div>
+        ) : (
+          <div className="field">
+            <label htmlFor="op-customer">Cliente (opcional)</label>
+            <input id="op-customer" type="text" maxLength={CUSTOMER_MAX_LENGTH} autoComplete="off" value={customer} onChange={(e) => setCustomer(e.target.value)} />
+          </div>
+        )}
         <div className="modal-actions">
           <button className="btn-secondary" type="button" disabled={submitting} onClick={onClose}>
             Cancelar

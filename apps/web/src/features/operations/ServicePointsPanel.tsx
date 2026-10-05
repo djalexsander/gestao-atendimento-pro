@@ -207,8 +207,8 @@ export function ServicePointsPanel({
 
   // Abre o atendimento e já mostra o cartão em atendimento (o backend grava quem abriu); a
   // recarga em seguida acerta qualquer diferença com o que está no banco.
-  async function submitOpen(point: ServicePoint, customer: string | null): Promise<string | null> {
-    const result = await source.open(point.id, customer);
+  async function submitOpen(point: ServicePoint, customer: string | null, customerId: string | null): Promise<string | null> {
+    const result = await source.open(point.id, customer, customerId);
     if (result.error || !result.session) {
       if (result.conflict) void reload();
       return result.error ?? "Não foi possível abrir o atendimento.";
@@ -330,7 +330,8 @@ export function ServicePointsPanel({
         <OpenSessionDialog
           key={dialog.point.id}
           point={dialog.point}
-          onSubmit={(customer) => submitOpen(dialog.point, customer)}
+          companyId={companyId}
+          onSubmit={(customer, customerId) => submitOpen(dialog.point, customer, customerId)}
           onClose={closeDialog}
         />
       )}

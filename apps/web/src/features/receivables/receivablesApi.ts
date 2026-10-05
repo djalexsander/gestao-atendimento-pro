@@ -32,6 +32,7 @@ export interface ReceivablesSource {
 
 interface RawRow {
   id: string;
+  customer_id: string | null;
   customer_name: string;
   description: string;
   reference: string | null;
@@ -54,6 +55,7 @@ interface RawRow {
 function toRow(r: RawRow): ReceivableRow {
   return {
     id: r.id,
+    customerId: r.customer_id,
     customerName: r.customer_name,
     description: r.description,
     reference: r.reference,
@@ -125,6 +127,7 @@ export const supabaseReceivablesSource: ReceivablesSource = {
       p_due_date: p.dueDate,
       p_reference: p.reference,
       p_notes: p.notes,
+      p_customer_id: p.customerId,
     });
     if (error) return fail(null, error, SAVE_ERROR);
     return { data: null, error: null };
@@ -139,6 +142,7 @@ export const supabaseReceivablesSource: ReceivablesSource = {
       p_due_date: p.dueDate,
       p_reference: p.reference,
       p_notes: p.notes,
+      p_customer_id: p.customerId,
     });
     if (error) return fail(null, error, SAVE_ERROR);
     return { data: null, error: null };

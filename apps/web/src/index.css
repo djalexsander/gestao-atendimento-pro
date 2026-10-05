@@ -4035,3 +4035,102 @@ button {
   font-weight: 600;
   color: #b7791f;
 }
+
+/* Cadastros → Clientes e escolha de cliente em atendimentos/contas */
+.cus-item-inactive {
+  opacity: 0.7;
+}
+.cus-stats {
+  align-items: flex-end;
+}
+.modal:has(.cus-form),
+.modal:has(.cus-detail) {
+  max-width: 520px;
+}
+.cus-selected {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--bg);
+  overflow-wrap: anywhere;
+}
+.cus-selected button {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+.cus-options {
+  display: flex;
+  flex-direction: column;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.cus-option {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.cus-options li:last-child .cus-option {
+  border-bottom: 0;
+}
+.cus-option:hover,
+.cus-option:focus-visible {
+  background: var(--bg);
+}
+.cus-quick-link {
+  align-self: flex-start;
+  margin-top: 6px;
+  min-height: 32px;
+  text-align: left;
+}
+.cus-quick {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+}
+.cus-quick-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+@media (max-width: 640px) {
+  .cus-stats {
+    align-items: flex-start;
+  }
+  .cus-item .rec-actions button,
+  .cus-form .modal-actions button,
+  .cus-quick-actions button,
+  .cus-selected button {
+    min-height: 44px;
+  }
+  .modal:has(.cus-form),
+  .modal:has(.cus-detail) {
+    width: 100%;
+    max-width: 100%;
+    margin: auto 0 0;
+    max-height: 92svh;
+    border-radius: 14px 14px 0 0;
+  }
+}

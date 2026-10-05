@@ -23,6 +23,7 @@ export type DisplayStatus = "pending" | "due_today" | "overdue" | "paid" | "canc
 
 export interface ReceivableRow {
   id: string;
+  customerId: string | null; // cliente cadastrado (opcional); customerName é o snapshot
   customerName: string;
   description: string;
   reference: string | null;
@@ -198,6 +199,7 @@ export function summaryRange(filters: ReceivableFilters, today: string): { range
 
 export interface ReceivableDraft {
   customer: string;
+  customerId: string | null;
   description: string;
   amount: string;
   dueDate: string;
@@ -205,11 +207,12 @@ export interface ReceivableDraft {
   notes: string;
 }
 
-export const EMPTY_DRAFT: ReceivableDraft = { customer: "", description: "", amount: "", dueDate: "", reference: "", notes: "" };
+export const EMPTY_DRAFT: ReceivableDraft = { customer: "", customerId: null, description: "", amount: "", dueDate: "", reference: "", notes: "" };
 
 export function draftFromRow(row: ReceivableRow): ReceivableDraft {
   return {
     customer: row.customerName,
+    customerId: row.customerId,
     description: row.description,
     amount: (row.amountCents / 100).toFixed(2).replace(".", ","),
     dueDate: row.dueDate,
@@ -219,6 +222,7 @@ export function draftFromRow(row: ReceivableRow): ReceivableDraft {
 }
 
 export interface ReceivablePayload {
+  customerId: string | null;
   customerName: string;
   description: string;
   amount: number; // reais
@@ -245,6 +249,7 @@ export function validateDraft(draft: ReceivableDraft, paidCents = 0): { error: s
   if (draft.notes.trim().length > 500) return { error: "A observação pode ter no máximo 500 caracteres." };
   return {
     payload: {
+      customerId: draft.customerId,
       customerName: customer,
       description,
       amount: cents / 100,

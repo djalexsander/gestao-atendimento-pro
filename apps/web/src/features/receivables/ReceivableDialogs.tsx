@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { formatCents } from "../../lib/money";
+import { CustomerPicker } from "../customers/CustomerPicker";
 import { Modal } from "../employees/Modal";
 import { formatDateBR } from "../reports/reportsLogic";
 import type { ReceivablesSource } from "./receivablesApi";
@@ -54,6 +55,7 @@ export function ReceivableFormDialog({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const set = (key: keyof ReceivableDraft) => (e: { target: { value: string } }) => setDraft({ ...draft, [key]: e.target.value });
+  const selectedCustomer = draft.customerId ? { id: draft.customerId, name: draft.customer, phoneLast4: null } : null;
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
@@ -79,10 +81,17 @@ export function ReceivableFormDialog({
       <form className="rec-form" onSubmit={handleSubmit}>
         {error && <div className="form-error">{error}</div>}
         {row && row.paidCents > 0 && <p className="modal-text">Já recebido: {formatCents(row.paidCents)}. O novo valor precisa ser maior que isso.</p>}
-        <div className="field">
-          <label htmlFor="rec-customer">Cliente</label>
-          <input id="rec-customer" autoFocus maxLength={120} value={draft.customer} onChange={set("customer")} />
-        </div>
+        <CustomerPicker
+          companyId={companyId}
+          inputId="rec-customer"
+          label="Cliente"
+          maxLength={120}
+          autoFocus
+          text={draft.customer}
+          onTextChange={(customer) => setDraft((d) => ({ ...d, customer }))}
+          selected={selectedCustomer}
+          onSelect={(c) => setDraft((d) => ({ ...d, customerId: c?.id ?? null, customer: c ? c.name : d.customer }))}
+        />
         <div className="field">
           <label htmlFor="rec-description">Descrição</label>
           <input id="rec-description" maxLength={200} placeholder="Ex.: Encomenda de espetos" value={draft.description} onChange={set("description")} />

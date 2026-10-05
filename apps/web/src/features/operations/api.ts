@@ -15,6 +15,7 @@ export interface ServicePanelSource {
   open(
     pointId: string,
     customerName: string | null,
+    customerId?: string | null,
   ): Promise<{ session: OpenSession | null; error: string | null; conflict: boolean }>;
   // Avisa (sem dados) quando um atendimento da empresa é aberto/fechado em qualquer aparelho.
   // Devolve a função que encerra a assinatura. Opcional: fontes simuladas podem não ter.
@@ -38,10 +39,11 @@ export const supabaseServicePanelSource: ServicePanelSource = {
     return { data: data as ServicePanelData, error: null };
   },
 
-  async open(pointId, customerName) {
+  async open(pointId, customerName, customerId) {
     const { data, error } = await supabase.rpc("open_service_session", {
       p_service_point_id: pointId,
       p_customer_name: customerName,
+      p_customer_id: customerId ?? null,
     });
     if (error) {
       const friendly = error.code?.startsWith("PT");

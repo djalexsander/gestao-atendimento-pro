@@ -41,6 +41,7 @@ import { ProductModifiersPage } from "./pages/ProductModifiersPage";
 import { ProductionSectorsPage } from "./pages/ProductionSectorsPage";
 import { ReportsRoutePage } from "./pages/ReportsRoutePage";
 import { FinancialOverview } from "./features/financial/FinancialOverview";
+import { CustomersPage } from "./features/customers/CustomersPage";
 import { ReceivablesPage } from "./features/receivables/ReceivablesPage";
 import { PayablesPage } from "./features/payables/PayablesPage";
 import { NotificationSettingsPage, PushAutoRegister, PushNavigationListener } from "./features/notifications/NotificationEntryPoints";
@@ -185,7 +186,7 @@ function App() {
         <Route path="cadastros/adicionais" element={<ProductModifiersPage />} />
         <Route path="cadastros/setores" element={<ProductionSectorsPage />} />
         <Route path="cadastros/estoque" element={<StockPage />} />
-        <Route path="cadastros/clientes" element={<ModulePlaceholderPage title="Clientes" />} />
+        <Route path="cadastros/clientes" element={<CustomersPage />} />
 
         <Route path="operacional/comandas-abertas" element={<Navigate to="/operacional/atendimentos-abertos" replace />} />
         <Route path="operacional/pedidos" element={<Navigate to="/operacional/pedidos" replace />} />
