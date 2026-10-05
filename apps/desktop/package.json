@@ -1,0 +1,17 @@
+{
+  "name": "desktop",
+  "private": true,
+  "version": "1.0.1",
+  "type": "module",
+  "description": "Gestão Atendimento Pro - Desktop (Windows, Tauri 2). Empacota o frontend de apps/web.",
+  "scripts": {
+    "dev": "tauri dev",
+    "build:installer": "tauri build --bundles nsis",
+    "build:installer:release": "tauri build --bundles nsis --config src-tauri/tauri.release.conf.json",
+    "audit:secrets": "node scripts/check-no-secrets.mjs",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0"
+  }
+}

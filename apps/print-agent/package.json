@@ -1,7 +1,7 @@
 {
   "name": "print-agent",
   "private": true,
-  "version": "0.2.0",
+  "version": "1.0.1",
   "type": "module",
   "description": "Gestão Atendimento Pro - Agente de Impressão (Windows, Tauri 2)",
   "scripts": {
@@ -11,6 +11,7 @@
     "test": "node --test tests/*.test.ts",
     "audit:secrets": "node scripts/check-no-service-role.mjs",
     "build:installer": "tauri build --bundles nsis",
+    "build:installer:release": "tauri build --bundles nsis --config src-tauri/tauri.release.conf.json",
     "tauri": "tauri"
   },
   "dependencies": {

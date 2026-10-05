@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Gestão Atendimento Pro - Agente de Impressão",
-  "version": "0.2.0",
+  "version": "1.0.1",
   "mainBinaryName": "print-agent",
   "identifier": "br.com.gestaoatendimentopro.printagent",
   "build": {
@@ -27,10 +27,17 @@
       "csp": "default-src 'self'; connect-src 'self' https://*.supabase.co ipc: http://ipc.localhost; style-src 'self' 'unsafe-inline'; img-src 'self' data:"
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU5QTA1N0I4Q0NGQkFFMjgKUldRb3J2dk11RmVnNlRsLzVITzZKa3JYYlYvcTNsU1psYWYvREpqOXRmakx0TDl3OVNEZ2U0eDYK",
+      "endpoints": ["https://github.com/djalexsander/gestao-atendimento-pro/releases/download/print-agent-latest/latest.json"],
+      "windows": { "installMode": "passive" }
+    }
+  },
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "publisher": "ALEXPROAPPS",
+    "publisher": "Alex Pro Apps",
     "shortDescription": "Agente de impressão do Gestão Atendimento Pro",
     "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
     "windows": {

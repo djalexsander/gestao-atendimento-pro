@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { WindowsPrinter } from "./core/app.ts";
 import type { KeyValueStore, SecretStore } from "./core/config.ts";
 import type { StartupPort } from "./core/app.ts";
+import type { UpdaterPort } from "./core/updater.ts";
 import type { RawPrinterPort } from "./core/transport.ts";
 import type { LabelPrinterPort } from "./core/processor.ts";
 
@@ -56,3 +57,9 @@ export const nativeStartup: StartupPort = {
 export function exitApp(): Promise<void> {
   return invoke<void>("exit_app");
 }
+
+// Atualização automática: o Rust consulta o manifesto do Agente, confere a assinatura e instala.
+export const nativeUpdater: UpdaterPort = {
+  check: () => invoke("updater_check"),
+  install: () => invoke<void>("updater_install"),
+};

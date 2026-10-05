@@ -1,0 +1,67 @@
+# Release do GESTÃO ATENDIMENTO PRO DESKTOP (Windows x64). Dispara SÓ com tag v<versão> (ex.: v1.0.1).
+# NÃO dispara para tags do Agente (print-agent-v*). Requer os Secrets de assinatura do updater:
+#   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+# E as Variables públicas do frontend: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, VITE_VAPID_PUBLIC_KEY.
+# Publica na release da própria tag e atualiza o manifesto próprio do Desktop na release-canal "desktop-latest".
+name: Release Desktop
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+      VITE_VAPID_PUBLIC_KEY: ${{ vars.VITE_VAPID_PUBLIC_KEY }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - name: Conferir segredos e versão da tag
+        shell: bash
+        run: |
+          test -n "$TAURI_SIGNING_PRIVATE_KEY" || { echo "Secret TAURI_SIGNING_PRIVATE_KEY ausente"; exit 1; }
+          VERSION="${GITHUB_REF_NAME#v}"
+          CONF=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
+          PKG=$(node -p "require('./apps/desktop/package.json').version")
+          [ "$VERSION" = "$CONF" ] && [ "$VERSION" = "$PKG" ] || { echo "Versão da tag ($VERSION) difere de tauri.conf ($CONF)/package.json ($PKG)"; exit 1; }
+          grep -q 'REPLACE_WITH_UPDATER_PUBLIC_KEY' apps/desktop/src-tauri/tauri.conf.json && { echo "pubkey do updater ainda é o placeholder"; exit 1; } || true
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+      - run: npm ci
+      - run: npm ci
+        working-directory: apps/desktop
+      - name: Build NSIS + artefato de updater assinado
+        run: npm run build:installer:release
+        working-directory: apps/desktop
+      - name: Montar assets e manifesto próprio do Desktop
+        shell: bash
+        run: |
+          DIR=apps/desktop/src-tauri/target/release/bundle/nsis
+          SRC=$(ls "$DIR"/*_${VERSION}_x64-setup.exe | head -n1)
+          mkdir -p out
+          cp "$SRC" "out/Gestao-Atendimento-Pro_${VERSION}_x64-setup.exe"
+          cp "$SRC.sig" "out/Gestao-Atendimento-Pro_${VERSION}_x64-setup.exe.sig"
+          node scripts/release/make-latest-json.mjs --product desktop --version "$VERSION" --repo "$GITHUB_REPOSITORY" \
+            --installer "out/Gestao-Atendimento-Pro_${VERSION}_x64-setup.exe" --sig "out/Gestao-Atendimento-Pro_${VERSION}_x64-setup.exe.sig" \
+            --out out/latest.json --notes "Gestão Atendimento Pro Desktop ${VERSION}"
+      - name: Publicar release da tag (instalador, .sig e manifesto da versão)
+        shell: bash
+        run: |
+          gh release create "$GITHUB_REF_NAME" out/* --title "Gestão Atendimento Pro Desktop $VERSION" --notes "Gestão Atendimento Pro Desktop $VERSION (Windows x64)."
+      - name: Atualizar o canal de atualização do Desktop (manifesto próprio)
+        shell: bash
+        run: |
+          gh release view desktop-latest >/dev/null 2>&1 || gh release create desktop-latest --prerelease --title "Desktop — canal de atualização" --notes "Manifesto latest.json do Gestão Atendimento Pro Desktop. Não baixe instaladores daqui."
+          gh release upload desktop-latest out/latest.json --clobber

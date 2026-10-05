@@ -9,7 +9,7 @@ import { defaultDiagnosticPrinter, isVirtualPrinter, looksLikeLabelPrinter } fro
 import { renderText } from "./core/text-renderer.ts";
 import { RawEscPosPrinterTransport } from "./core/transport.ts";
 import { listen } from "@tauri-apps/api/event";
-import { computerName, exitApp, listWindowsPrinters, nativeLabelPort, nativeRawPort, nativeSecrets, nativeStartup, nativeStore } from "./tauri.ts";
+import { computerName, exitApp, listWindowsPrinters, nativeLabelPort, nativeRawPort, nativeSecrets, nativeStartup, nativeStore, nativeUpdater } from "./tauri.ts";
 import "./style.css";
 
 const root = document.getElementById("app")!;
@@ -160,6 +160,7 @@ if (!config) {
     rawPort: nativeRawPort,
     labels: { port: nativeLabelPort, makeSurface: canvasSurface },
     startup: nativeStartup,
+    updater: nativeUpdater,
     listPrinters: listWindowsPrinters,
     hostName: computerName,
     newId: () => crypto.randomUUID(),
@@ -277,6 +278,23 @@ if (!config) {
     return section;
   }
 
+  // Atualização: aviso discreto; instala só com o Agente ocioso (o núcleo recusa durante a impressão).
+  function updateSection(s: Snapshot): HTMLElement | null {
+    const u = s.update;
+    if (u.status === "none" || !u.info) return null;
+    const section = el("section", { class: "update" }, el("h2", {}, "Atualização"));
+    section.append(el("p", {}, `Nova versão disponível: ${u.info.version} (atual ${u.info.current}).`));
+    if (u.status === "installing") {
+      section.append(el("p", { class: "muted" }, "Instalando… o Agente será reiniciado."));
+    } else {
+      const install = el("button", {}, "Instalar agora");
+      install.addEventListener("click", () => void app.installUpdate());
+      section.append(install, el("p", { class: "muted" }, "A instalação só acontece com nenhuma impressão em andamento. Pareamento e configurações são preservados."));
+    }
+    if (u.message) section.append(el("p", { class: "error", role: "alert" }, u.message));
+    return section;
+  }
+
   function startupSection(s: Snapshot): HTMLElement {
     const check = (id: string, label: string, checked: boolean, onChange: (v: boolean) => void) => {
       const input = el("input", { id, type: "checkbox" });
@@ -328,6 +346,8 @@ if (!config) {
       main.append(el("dl", { class: "info" }, el("dt", {}, "Computador"), el("dd", {}, s.computerName || "—"), el("dt", {}, "Agente"), el("dd", {}, s.agentName ?? "—"), el("dt", {}, "Empresa"), el("dd", {}, s.companyName ?? "—")));
       main.append(modeSection(s));
       main.append(startupSection(s));
+      const upd = updateSection(s);
+      if (upd) main.append(upd);
       main.append(printersSection(s.printers));
       const devices = el("section", {}, el("h2", {}, "Impressoras do sistema"));
       if (s.devices.length === 0) devices.append(el("p", { class: "muted" }, "Nenhuma impressora cadastrada no sistema (Configurações → Impressão)."));

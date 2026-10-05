@@ -1,0 +1,51 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Gestão Atendimento Pro",
+  "version": "1.0.1",
+  "mainBinaryName": "gestao-atendimento-pro",
+  "identifier": "br.com.gestaoatendimentopro.app",
+  "build": {
+    "beforeDevCommand": "npm --prefix ../web run dev -- --port 5173 --strictPort",
+    "devUrl": "http://localhost:5173",
+    "beforeBuildCommand": "npm --prefix ../web run build:desktop",
+    "frontendDist": "../../web/dist-desktop"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Gestão Atendimento Pro",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 640,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://*.supabase.co; font-src 'self' data:; connect-src 'self' https://*.supabase.co wss://*.supabase.co ipc: http://ipc.localhost; worker-src 'self' blob:; object-src 'none'; base-uri 'self'"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEU5QTA1N0I4Q0NGQkFFMjgKUldRb3J2dk11RmVnNlRsLzVITzZKa3JYYlYvcTNsU1psYWYvREpqOXRmakx0TDl3OVNEZ2U0eDYK",
+      "endpoints": ["https://github.com/djalexsander/gestao-atendimento-pro/releases/download/desktop-latest/latest.json"],
+      "windows": { "installMode": "passive" }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "Alex Pro Apps",
+    "shortDescription": "Gestão Atendimento Pro: comandas, mesas, pedidos e caixa",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["PortugueseBR"],
+        "displayLanguageSelector": false,
+        "startMenuFolder": "Gestão Atendimento Pro"
+      }
+    }
+  }
+}

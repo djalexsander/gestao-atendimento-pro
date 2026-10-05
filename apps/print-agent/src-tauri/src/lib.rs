@@ -2,6 +2,7 @@ mod label_print;
 mod printers;
 mod raw_print;
 mod secrets;
+mod updater;
 
 use std::fs;
 use std::path::PathBuf;
@@ -245,6 +246,8 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec![MINIMIZED_ARG])))
         .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(updater::PendingUpdate::default())
         .setup(|app| {
             build_tray(app.handle())?;
             let args: Vec<String> = std::env::args().collect();
@@ -284,7 +287,9 @@ pub fn run() {
             show_main_window,
             set_tray_status,
             show_notification,
-            exit_app
+            exit_app,
+            updater::updater_check,
+            updater::updater_install
         ])
         .run(tauri::generate_context!())
         .expect("erro ao iniciar o Agente de Impressão");

@@ -3,10 +3,15 @@ import { defineConfig } from 'vite'
 import { VitePWA } from 'vite-plugin-pwa'
 
 // https://vite.dev/config/
-export default defineConfig({
+// Desktop (Tauri): `vite build --mode desktop` gera apps/web/dist-desktop SEM service worker/PWA — o frontend vai
+// empacotado no instalador e quem atualiza é o updater do Tauri. O build normal (PWA/Vercel) não muda.
+export default defineConfig(({ mode }) => {
+  const desktop = mode === 'desktop'
+  return {
+  build: desktop ? { outDir: 'dist-desktop' } : undefined,
   plugins: [
     react(),
-    VitePWA({
+    ...(desktop ? [] : [VitePWA({
       // atualização automática: o novo service worker assume assim que instalado
       registerType: 'autoUpdate',
       manifest: {
@@ -39,8 +44,9 @@ export default defineConfig({
         // a forma de estender o generateSW sem trocar de estratégia
         importScripts: ['push-sw.js'],
       },
-    }),
+    })]),
   ],
   // lê o .env da raiz do monorepo em vez de apps/web, para não duplicar o arquivo
   envDir: '../../',
+}
 })

@@ -4,6 +4,7 @@ import { ConnectionTracker, pollDelayMs, type ConnectionState } from "./connecti
 import type { JobModel } from "./model.ts";
 import { Poller, type Timers } from "./poller.ts";
 import { processJob, type LabelDeps } from "./processor.ts";
+import { installBlockReason, UPDATE_CHECK_MS, type UpdateInfo, type UpdaterPort, type UpdateSnapshot, type UpdateStatus } from "./updater.ts";
 import { RawEscPosPrinterTransport, type PrinterTransport, type PrintMode, type RawPrinterPort } from "./transport.ts";
 
 export interface WindowsPrinter {
@@ -35,6 +36,7 @@ export interface Snapshot {
   keepBackground: boolean;
   preview: string[] | null;
   message: string | null;
+  update: UpdateSnapshot;
 }
 
 // Ponte com o shell nativo para inicialização, bandeja e avisos (tudo opcional no sentido de falhar sem derrubar o agente).
@@ -56,6 +58,8 @@ export interface AppDeps {
   // Etiquetas (driver do Windows). Opcional: sem isso o agente falha o job de etiqueta com mensagem clara.
   labels?: LabelDeps;
   startup: StartupPort;
+  // Atualização automática (opcional: sem isso o Agente não consulta atualização).
+  updater?: UpdaterPort;
   listPrinters(): Promise<WindowsPrinter[]>;
   hostName(): Promise<string>;
   newId(): string;
@@ -83,6 +87,11 @@ export class PrintAgentApp {
   private readonly listeners = new Set<() => void>();
   private claimPoller: Poller;
   private heartbeatPoller: Poller;
+  private updatePoller: Poller;
+  private updateStatus: UpdateStatus = "none";
+  private updateInfo: UpdateInfo | null = null;
+  private updateMessage: string | null = null;
+  private notifiedVersion: string | null = null;
 
   // Modo de impressão (persistido em state.json). Padrão: simulação. Só setPrintMode("real"), chamado por uma
   // ação explícita do usuário, liga a impressão automática.
@@ -105,6 +114,12 @@ export class PrintAgentApp {
     this.heartbeatPoller = new Poller(
       () => this.heartbeatCycle(),
       () => HEARTBEAT_MS,
+      deps.timers,
+      (e) => this.log(`Erro inesperado: ${e instanceof Error ? e.message : String(e)}`),
+    );
+    this.updatePoller = new Poller(
+      () => this.checkForUpdate(),
+      () => UPDATE_CHECK_MS,
       deps.timers,
       (e) => this.log(`Erro inesperado: ${e instanceof Error ? e.message : String(e)}`),
     );
@@ -145,6 +160,7 @@ export class PrintAgentApp {
       keepBackground: this.state?.keepBackground ?? true,
       preview: this.preview,
       message: this.message,
+      update: { status: this.updateStatus, info: this.updateInfo, message: this.updateMessage },
     };
   }
 
@@ -181,6 +197,66 @@ export class PrintAgentApp {
     // Credencial/cofre com problema: precisa de atenção, então abre a janela mesmo iniciando escondido.
     if (this.message) void this.deps.startup.showWindow().catch(() => {});
     this.syncTray();
+    if (this.deps.updater) this.updatePoller.start();
+  }
+
+  // Consulta o manifesto do próprio Agente. Falha de rede/assinatura nunca atrapalha a impressão: só vai para o registro.
+  async checkForUpdate(): Promise<void> {
+    const updater = this.deps.updater;
+    if (!updater || this.updateStatus === "installing") return;
+    try {
+      const info = await updater.check();
+      if (!info) {
+        if (this.updateStatus === "available") this.updateStatus = "none";
+        this.updateInfo = null;
+        return;
+      }
+      this.updateInfo = info;
+      this.updateStatus = "available";
+      this.updateMessage = null;
+      if (this.notifiedVersion !== info.version) {
+        this.notifiedVersion = info.version;
+        this.log(`Nova versão disponível: ${info.version} (atual ${info.current}).`);
+        await this.deps.startup.notify("Agente de Impressão", `Nova versão ${info.version} disponível. Abra o Agente para atualizar.`).catch(() => {});
+      }
+    } catch (e) {
+      this.log(`Aviso: não foi possível verificar atualização: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      this.emit();
+    }
+  }
+
+  // Fila em processamento AGORA (claim em andamento ou jobs sendo impressos).
+  get printing(): boolean {
+    return this.claimPoller.busy;
+  }
+
+  // Instala a atualização encontrada, só com o Agente ocioso. Pausa heartbeat/fila durante a instalação; se falhar, retoma.
+  async installUpdate(): Promise<boolean> {
+    const updater = this.deps.updater;
+    const block = installBlockReason(this.printing, this.updateStatus);
+    if (!updater || block) {
+      this.updateMessage = block ?? "Atualização indisponível.";
+      this.emit();
+      return false;
+    }
+    this.updateStatus = "installing";
+    this.updateMessage = null;
+    this.stop();
+    this.log("Instalando atualização…");
+    this.emit();
+    try {
+      await updater.install();
+      return true;
+    } catch (e) {
+      this.updateStatus = "error";
+      this.updateMessage = `Não foi possível instalar a atualização: ${e instanceof Error ? e.message : String(e)}`;
+      this.log(this.updateMessage);
+      if (this.phase === "paired") this.startLoops();
+      if (this.deps.updater) this.updatePoller.start();
+      this.emit();
+      return false;
+    }
   }
 
   // Mantém a entrada do Windows de acordo com a opção salva (só depois de pareado; antes não mexe).
@@ -262,6 +338,7 @@ export class PrintAgentApp {
   stop(): void {
     this.heartbeatPoller.stop();
     this.claimPoller.stop();
+    this.updatePoller.stop();
   }
 
   async refreshPrinters(): Promise<void> {

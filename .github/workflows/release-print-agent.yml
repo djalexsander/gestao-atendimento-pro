@@ -1,0 +1,70 @@
+# Release do AGENTE DE IMPRESSÃO (Windows x64). Dispara SÓ com tag print-agent-v<versão> (ex.: print-agent-v1.0.1).
+# NÃO dispara para tags do Desktop (v*). Requer os Secrets de assinatura do updater:
+#   TAURI_SIGNING_PRIVATE_KEY, TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+# E as Variables públicas: VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY.
+# Publica na release da própria tag e atualiza o manifesto próprio do Agente na release-canal "print-agent-latest".
+name: Release Print Agent
+
+on:
+  push:
+    tags:
+      - "print-agent-v[0-9]+.[0-9]+.[0-9]+"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    env:
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+      VITE_SUPABASE_URL: ${{ vars.VITE_SUPABASE_URL }}
+      VITE_SUPABASE_ANON_KEY: ${{ vars.VITE_SUPABASE_ANON_KEY }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: apps/print-agent/package-lock.json
+      - name: Conferir segredos e versão da tag
+        shell: bash
+        run: |
+          test -n "$TAURI_SIGNING_PRIVATE_KEY" || { echo "Secret TAURI_SIGNING_PRIVATE_KEY ausente"; exit 1; }
+          VERSION="${GITHUB_REF_NAME#print-agent-v}"
+          CONF=$(node -p "require('./apps/print-agent/src-tauri/tauri.conf.json').version")
+          PKG=$(node -p "require('./apps/print-agent/package.json').version")
+          [ "$VERSION" = "$CONF" ] && [ "$VERSION" = "$PKG" ] || { echo "Versão da tag ($VERSION) difere de tauri.conf ($CONF)/package.json ($PKG)"; exit 1; }
+          grep -q 'REPLACE_WITH_UPDATER_PUBLIC_KEY' apps/print-agent/src-tauri/tauri.conf.json && { echo "pubkey do updater ainda é o placeholder"; exit 1; } || true
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+      - run: npm ci
+        working-directory: apps/print-agent
+      - run: npm test
+        working-directory: apps/print-agent
+      - run: npm run audit:secrets
+        working-directory: apps/print-agent
+      - name: Build NSIS + artefato de updater assinado
+        run: npm run build:installer:release
+        working-directory: apps/print-agent
+      - name: Montar assets e manifesto próprio do Agente
+        shell: bash
+        run: |
+          DIR=apps/print-agent/src-tauri/target/release/bundle/nsis
+          SRC=$(ls "$DIR"/*_${VERSION}_x64-setup.exe | head -n1)
+          mkdir -p out
+          cp "$SRC" "out/Agente-de-Impressao_${VERSION}_x64-setup.exe"
+          cp "$SRC.sig" "out/Agente-de-Impressao_${VERSION}_x64-setup.exe.sig"
+          node scripts/release/make-latest-json.mjs --product print-agent --version "$VERSION" --repo "$GITHUB_REPOSITORY" \
+            --installer "out/Agente-de-Impressao_${VERSION}_x64-setup.exe" --sig "out/Agente-de-Impressao_${VERSION}_x64-setup.exe.sig" \
+            --out out/latest.json --notes "Agente de Impressão ${VERSION}"
+      - name: Publicar release da tag (instalador, .sig e manifesto da versão)
+        shell: bash
+        run: |
+          gh release create "$GITHUB_REF_NAME" out/* --title "Agente de Impressão $VERSION" --notes "Gestão Atendimento Pro - Agente de Impressão $VERSION (Windows x64)."
+      - name: Atualizar o canal de atualização do Agente (manifesto próprio)
+        shell: bash
+        run: |
+          gh release view print-agent-latest >/dev/null 2>&1 || gh release create print-agent-latest --prerelease --title "Agente de Impressão — canal de atualização" --notes "Manifesto latest.json do Agente de Impressão. Não baixe instaladores daqui."
+          gh release upload print-agent-latest out/latest.json --clobber
