@@ -6,8 +6,6 @@ import {
   deviceStatusLabel,
   deviceTitle,
   IOS_INSTALL_MESSAGE,
-  isSectorChecked,
-  PLATFORM_LABEL,
   roleNotificationSummary,
   sectorSummary,
   STATE_LABEL,
@@ -15,9 +13,12 @@ import {
   unsupportedReason,
   type PushDevice,
   type PushState,
-  type SectorDraft,
   type SectorOption,
 } from "./pushLogic";
+import { isTauri } from "../../lib/appVersion";
+import { DesktopNotificationCard } from "./DesktopNotificationCard";
+import { SectorEditor } from "./SectorEditor";
+import { DEVICE_KIND_LABEL } from "./desktopNotify";
 import { readPushEnv } from "./pushBrowser";
 import { usePushNotifications } from "./usePushNotifications";
 
@@ -40,41 +41,6 @@ function statusHint(state: PushState): string {
   }
 }
 
-// Editor de setores do aparelho ATUAL (production). As marcações editam um rascunho; só "Salvar configurações" grava.
-function SectorEditor({ draft, sectors, dirty, canSave, saving, onAll, onToggle, onSave }: {
-  draft: SectorDraft;
-  sectors: SectorOption[];
-  dirty: boolean;
-  canSave: boolean;
-  saving: boolean;
-  onAll: () => void;
-  onToggle: (sectorId: string) => void;
-  onSave: () => void;
-}) {
-  return (
-    <div className="push-sector-editor">
-      <div className="push-sector-list" role="group" aria-label="Setores acompanhados neste aparelho">
-        <label className="checkbox-row">
-          <input type="checkbox" checked={draft.all} disabled={saving} onChange={onAll} />
-          Todos os setores
-        </label>
-        {sectors.map((s) => (
-          <label key={s.id} className="checkbox-row">
-            <input type="checkbox" checked={isSectorChecked(draft, s.id)} disabled={saving} onChange={() => onToggle(s.id)} />
-            {s.name}
-          </label>
-        ))}
-      </div>
-      <div className="push-save-row">
-        {dirty && <span className="push-unsaved" role="status">Alterações não salvas</span>}
-        <button className="btn-primary btn-auto" type="button" disabled={!canSave} onClick={onSave}>
-          {saving ? "Salvar configurações..." : "Salvar configurações"}
-        </button>
-      </div>
-    </div>
-  );
-}
-
 function DeviceRow({ device, isProduction, sectors, editor }: {
   device: PushDevice;
   isProduction: boolean;
@@ -89,7 +55,7 @@ function DeviceRow({ device, isProduction, sectors, editor }: {
         <span className={device.isActive ? "rec-badge rec-badge-paid" : "rec-badge"}>{deviceStatusLabel(device)}</span>
       </div>
       <small className="muted">
-        {PLATFORM_LABEL[device.platform]} · {describeLastUsed(device.lastUsedAt)} · cadastrado em {dateTime.format(new Date(device.createdAt))}
+        {DEVICE_KIND_LABEL[device.platform]} · {describeLastUsed(device.lastUsedAt)} · cadastrado em {dateTime.format(new Date(device.createdAt))}
       </small>
       {isProduction && (
         <div className="push-sectors">
@@ -106,6 +72,12 @@ function DeviceRow({ device, isProduction, sectors, editor }: {
 // Três ações distintas: Ativar (associa), Desativar neste aparelho (opt-out) e Salvar configurações (só os setores
 // deste aparelho, gravados no servidor).
 export function NotificationSettings({ client }: { client?: PushClient }) {
+  // Desktop (Tauri): canal nativo do Windows, sem nada de navegador/Web Push.
+  if (isTauri()) return <DesktopNotificationCard />;
+  return <BrowserNotificationSettings client={client} />;
+}
+
+function BrowserNotificationSettings({ client }: { client?: PushClient }) {
   const { activeMembership, user } = useAuth();
   const companyId = activeMembership?.companyId ?? null;
   const role = activeMembership?.role ?? null;

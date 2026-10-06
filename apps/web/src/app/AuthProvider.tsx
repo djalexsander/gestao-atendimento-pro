@@ -5,7 +5,9 @@ import { staffEmail } from "../lib/staffAuth";
 import { supabase } from "../lib/supabaseClient";
 import type { CompanyMembership, ProfileRow } from "../lib/types";
 import type { Session } from "@supabase/supabase-js";
+import { desktopSync } from "../features/notifications/desktopSyncBrowser";
 import { pushClient } from "../features/notifications/pushBrowser";
+import { isTauri } from "../lib/appVersion";
 import { AuthContext, type AuthContextValue } from "./authContext";
 import { clearReturnPath } from "./returnTo";
 
@@ -210,6 +212,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Melhor esforço (máx. 2 s, nunca bloqueia nem falha o logout): desativa este aparelho para notificações. Se
     // não der, o servidor continua protegido: vínculo inativo/sem sessão não recebe push.
     await pushClient.deactivateForLogout();
+    // Desktop (Tauri): desativa a associação deste computador (histórico e opt-out preservados). Melhor esforço, máx. 2 s.
+    if (isTauri()) await Promise.race([desktopSync.deactivate(), new Promise<void>((resolve) => setTimeout(resolve, 2000))]);
     clearReturnPath();
     await supabase.auth.signOut();
     setPreferredCompanyId(null);

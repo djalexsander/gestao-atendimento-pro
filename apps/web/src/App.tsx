@@ -47,6 +47,7 @@ import { SystemSettingsPage } from "./features/system/SystemSettingsPage";
 import { CustomersPage } from "./features/customers/CustomersPage";
 import { ReceivablesPage } from "./features/receivables/ReceivablesPage";
 import { PayablesPage } from "./features/payables/PayablesPage";
+import { DesktopNotificationService } from "./features/notifications/DesktopNotificationService";
 import { NotificationSettingsPage, PushAutoRegister, PushNavigationListener } from "./features/notifications/NotificationEntryPoints";
 import { StockPage } from "./pages/StockPage";
 import { ProductsPage } from "./pages/ProductsPage";
@@ -60,6 +61,7 @@ function App() {
     <>
     <PushNavigationListener />
     <PushAutoRegister />
+    <DesktopNotificationService />
     <Routes>
       <Route path="/" element={<RootRedirect />} />
       <Route

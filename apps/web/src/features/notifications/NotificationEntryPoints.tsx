@@ -4,6 +4,8 @@ import { useAuth } from "../../app/useAuth";
 import { Modal } from "../employees/Modal";
 import { NotificationSettings } from "./NotificationSettings";
 import { pushClient } from "./pushBrowser";
+import { desktopRoute, takePendingRoute } from "./desktopNotify";
+import { isTauri } from "../../lib/appVersion";
 import { parsePushNavigateMessage } from "./pushLogic";
 
 // Página administrativa: Configurações → Notificações (/app/configuracoes/notificacoes).
@@ -45,6 +47,26 @@ export function NotificationsButton() {
 // e navega pelo router. Só aceita rota interna; qualquer outra mensagem é ignorada.
 export function PushNavigationListener() {
   const navigate = useNavigate();
+  // Desktop (Tauri): o clique no toast nativo (protocolo do app) vira ROTA INTERNA do router, nunca URL web. O Rust valida a
+  // rota e dispara o evento (app aberto) ou a guarda como pendente (app iniciado pelo clique); aqui valida de novo.
+  useEffect(() => {
+    if (!isTauri()) return;
+    let disposed = false;
+    const go = (raw: unknown) => {
+      const path = desktopRoute(raw);
+      if (path && !disposed) navigate(path);
+    };
+    const onDesktop = (event: Event) => {
+      go((event as CustomEvent).detail);
+      void takePendingRoute(); // já navegou pelo evento: limpa a pendente para não repetir
+    };
+    window.addEventListener("gap:desktop-navigate", onDesktop);
+    void takePendingRoute().then(go); // partida a frio: consome a rota pendente UMA vez
+    return () => {
+      disposed = true;
+      window.removeEventListener("gap:desktop-navigate", onDesktop);
+    };
+  }, [navigate]);
   useEffect(() => {
     if (typeof navigator === "undefined" || !("serviceWorker" in navigator)) return;
     const onMessage = (event: MessageEvent) => {

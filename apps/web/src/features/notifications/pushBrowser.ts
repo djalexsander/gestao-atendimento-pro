@@ -1,3 +1,4 @@
+import { isTauri } from "../../lib/appVersion";
 import { supabase } from "../../lib/supabaseClient";
 import { createPushClient, type RegistrationLike } from "./pushClient";
 import type { PushEnv, SectorOption } from "./pushLogic";
@@ -18,9 +19,11 @@ export function readPushEnv(): PushEnv {
     hasWindow &&
     ((window.matchMedia?.("(display-mode: standalone)").matches ?? false) ||
       (navigator as Navigator & { standalone?: boolean }).standalone === true);
+  // Dentro do Desktop (WebView2) NÃO existe Web Push: o canal lá é o toast nativo do Windows (desktopNotify.ts).
+  const webPush = !isTauri();
   return {
-    hasServiceWorker: hasWindow && "serviceWorker" in navigator,
-    hasPushManager: hasWindow && "PushManager" in window,
+    hasServiceWorker: hasWindow && webPush && "serviceWorker" in navigator,
+    hasPushManager: hasWindow && webPush && "PushManager" in window,
     hasNotification: hasWindow && "Notification" in window,
     permission: hasWindow && "Notification" in window ? Notification.permission : "unsupported",
     userAgent: hasWindow ? navigator.userAgent : "",
@@ -32,6 +35,7 @@ export function readPushEnv(): PushEnv {
 }
 
 async function getRegistration(): Promise<RegistrationLike> {
+  if (isTauri()) throw new Error("Web Push indisponível no Desktop");
   // Em desenvolvimento não há service worker: navigator.serviceWorker.ready nunca resolve, daí o timeout.
   const registration = await Promise.race([
     navigator.serviceWorker.ready,
