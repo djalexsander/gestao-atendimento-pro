@@ -1,4 +1,5 @@
 mod updater;
+mod win_icon;
 
 use tauri::{AppHandle, Manager};
 
@@ -23,6 +24,7 @@ pub fn run() {
             // Título da janela com a versão REAL do executável (muda sozinho a cada release).
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_title(&updater::window_title(&app.package_info().version.to_string()));
+                win_icon::apply_exe_icon(&window);
             }
             // Ao iniciar: consulta o manifesto PRÓPRIO do Desktop. Sem atualização (ou sem rede), segue normalmente.
             updater::spawn_startup_check(app.handle().clone());

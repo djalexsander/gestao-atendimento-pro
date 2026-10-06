@@ -3,6 +3,7 @@ mod printers;
 mod raw_print;
 mod secrets;
 mod updater;
+mod win_icon;
 
 use std::fs;
 use std::path::PathBuf;
@@ -266,6 +267,7 @@ pub fn run() {
             // Título da janela com a versão REAL do executável (muda sozinho a cada release).
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_title(&window_title(&app.package_info().version.to_string()));
+                win_icon::apply_exe_icon(&window);
             }
             build_tray(app.handle())?;
             let args: Vec<String> = std::env::args().collect();

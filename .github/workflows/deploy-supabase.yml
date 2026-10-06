@@ -1,29 +1,102 @@
+# Deploy das migrations do Supabase. Projeto ÚNICO e fixo (nunca outro): endbovcvhfvaynqjronl.
+#
+# Quando roda
+#   - push em main que MEXE em supabase/migrations/** (commits só de frontend, ícones, docs, Desktop ou Agente não disparam);
+#   - manualmente (workflow_dispatch): por padrão só DRY-RUN; "apply" aplica de verdade.
+#
+# O que faz
+#   1) confere que os Secrets existem (sem eles termina com aviso, sem falhar);
+#   2) linka o projeto fixo e confere o project-ref;
+#   3) db push --dry-run: "up to date" = no-op com sucesso (ex.: migration já aplicada à mão antes do push);
+#   4) no push automático só aplica se TODAS as migrations pendentes forem arquivos novos deste push (nada inesperado);
+#   5) db push (aplica).
+# Nunca edita migrations já aplicadas; só aplica as novas.
+#
+# Secrets necessários (Settings → Secrets and variables → Actions): SUPABASE_ACCESS_TOKEN e SUPABASE_DB_PASSWORD.
+# O project ref NÃO é secret (é público) e fica fixo aqui.
 name: Deploy Supabase
 
 on:
   push:
     branches: [main]
     paths:
-      - "supabase/**"
+      - "supabase/migrations/**"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "dry-run (padrão) só mostra o que seria aplicado; apply aplica as migrations pendentes"
+        type: choice
+        options: [dry-run, apply]
+        default: dry-run
+
+concurrency:
+  group: deploy-supabase
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  PROJECT_REF: endbovcvhfvaynqjronl
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    # Só roda quando os secrets do Supabase já estiverem configurados no repositório.
-    if: ${{ vars.SUPABASE_PROJECT_REF != '' || secrets.SUPABASE_PROJECT_REF != '' }}
+    env:
+      SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
-      - uses: supabase/setup-cli@v1
         with:
-          version: latest
-      - run: supabase link --project-ref "$SUPABASE_PROJECT_REF"
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
-      - run: supabase db push
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-      - run: supabase functions deploy
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          fetch-depth: 0
+
+      - name: Conferir Secrets
+        id: guard
+        run: |
+          if [ -z "$SUPABASE_ACCESS_TOKEN" ] || [ -z "$SUPABASE_DB_PASSWORD" ]; then
+            echo "::notice::Secrets SUPABASE_ACCESS_TOKEN/SUPABASE_DB_PASSWORD não configurados: deploy ignorado (sem erro)."
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: supabase/setup-cli@v1
+        if: steps.guard.outputs.ready == 'true'
+        with:
+          version: 2.117.0
+
+      - name: Linkar o projeto fixo e conferir o ref
+        if: steps.guard.outputs.ready == 'true'
+        run: |
+          supabase link --project-ref "$PROJECT_REF"
+          LINKED=$(tr -d '[:space:]' < supabase/.temp/project-ref)
+          [ "$LINKED" = "$PROJECT_REF" ] || { echo "Projeto linkado ($LINKED) difere do esperado ($PROJECT_REF)"; exit 1; }
+
+      - name: Dry-run
+        id: dry
+        if: steps.guard.outputs.ready == 'true'
+        run: |
+          supabase db push --dry-run 2>&1 | tee dry.txt
+          # migrations pendentes = linhas "• <versão>_<nome>.sql" da saída do dry-run
+          grep -oE '[0-9]{14}_[A-Za-z0-9_]+\.sql' dry.txt | sort -u > pending.txt || true
+          if [ -s pending.txt ]; then
+            echo "pendentes:"; cat pending.txt
+            echo "pending=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Nenhuma migration pendente (local == remoto): nada a fazer."
+            echo "pending=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Pendências são só migrations novas deste push?
+        if: steps.guard.outputs.ready == 'true' && steps.dry.outputs.pending == 'true' && github.event_name == 'push'
+        run: |
+          git diff --name-only --diff-filter=A "${{ github.event.before }}" "${{ github.sha }}" -- supabase/migrations | xargs -n1 basename | sort -u > added.txt
+          if ! diff <(sort -u pending.txt) added.txt > /dev/null; then
+            echo "::error::As migrations pendentes não coincidem com os arquivos NOVOS deste push. Nada foi aplicado."
+            echo "--- pendentes"; cat pending.txt; echo "--- novas neste push"; cat added.txt
+            exit 1
+          fi
+
+      - name: Aplicar migrations
+        if: steps.guard.outputs.ready == 'true' && steps.dry.outputs.pending == 'true' && (github.event_name == 'push' || inputs.mode == 'apply')
+        run: supabase db push
