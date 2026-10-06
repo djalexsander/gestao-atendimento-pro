@@ -31,6 +31,25 @@ fn configured(app: &AppHandle) -> bool {
     pubkey_configured(key)
 }
 
+/// Resultado de uma consulta.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Outcome {
+    /// Sem versão nova (ou updater ainda não configurado).
+    UpToDate,
+    /// Há versão nova e a pessoa escolheu "Depois".
+    Declined,
+}
+
+impl Outcome {
+    /// Texto que o frontend entende (comando `manual_update_check`).
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Outcome::UpToDate => "uptodate",
+            Outcome::Declined => "available",
+        }
+    }
+}
+
 pub fn spawn_startup_check(app: AppHandle) {
     if !configured(&app) {
         return;
@@ -43,10 +62,21 @@ pub fn spawn_startup_check(app: AppHandle) {
     });
 }
 
-async fn check_and_prompt(app: &AppHandle) -> Result<(), String> {
+/// "Verificar atualização" (Sistema / Preferências → Sobre). Mesmo updater, mesmo endpoint e mesmo diálogo do início.
+#[tauri::command]
+pub async fn manual_update_check(app: AppHandle) -> Result<String, String> {
+    if !configured(&app) {
+        return Err("Atualização automática ainda não configurada.".into());
+    }
+    check_and_prompt(&app).await.map(|o| o.as_str().to_string())
+}
+
+/// Consulta o manifesto; se houver versão nova, pergunta ("Atualizar agora"/"Depois"). Aceitou: baixa, valida a
+/// assinatura, instala e reinicia (não retorna).
+async fn check_and_prompt(app: &AppHandle) -> Result<Outcome, String> {
     let updater = app.updater().map_err(|e| e.to_string())?;
     let Some(update) = updater.check().await.map_err(|e| e.to_string())? else {
-        return Ok(());
+        return Ok(Outcome::UpToDate);
     };
     let message = prompt_message(&app.package_info().version.to_string(), &update.version);
     let handle = app.clone();
@@ -61,10 +91,15 @@ async fn check_and_prompt(app: &AppHandle) -> Result<(), String> {
     .await
     .map_err(|e| e.to_string())?;
     if !accepted {
-        return Ok(());
+        return Ok(Outcome::Declined);
     }
     update.download_and_install(|_, _| {}, || {}).await.map_err(|e| e.to_string())?;
     app.restart();
+}
+
+/// Título da janela: "Gestão Atendimento Pro v<versão real do executável>".
+pub fn window_title(version: &str) -> String {
+    format!("{TITLE} v{version}")
 }
 
 #[cfg(test)]
@@ -78,6 +113,18 @@ mod tests {
         assert!(!pubkey_configured(Some("  ")));
         assert!(!pubkey_configured(Some(PUBKEY_PLACEHOLDER)));
         assert!(pubkey_configured(Some("dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6")));
+    }
+
+    #[test]
+    fn window_title_uses_the_real_version() {
+        assert_eq!(window_title("1.0.2"), "Gestão Atendimento Pro v1.0.2");
+        assert_eq!(window_title("2.3.4"), "Gestão Atendimento Pro v2.3.4");
+    }
+
+    #[test]
+    fn outcome_maps_to_frontend_values() {
+        assert_eq!(Outcome::UpToDate.as_str(), "uptodate");
+        assert_eq!(Outcome::Declined.as_str(), "available");
     }
 
     #[test]

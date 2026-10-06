@@ -9,7 +9,7 @@ import { defaultDiagnosticPrinter, isVirtualPrinter, looksLikeLabelPrinter } fro
 import { renderText } from "./core/text-renderer.ts";
 import { RawEscPosPrinterTransport } from "./core/transport.ts";
 import { listen } from "@tauri-apps/api/event";
-import { computerName, exitApp, listWindowsPrinters, nativeLabelPort, nativeRawPort, nativeSecrets, nativeStartup, nativeStore, nativeUpdater } from "./tauri.ts";
+import { computerName, exitApp, listWindowsPrinters, nativeLabelPort, nativeRawPort, nativeSecrets, nativeStartup, nativeStore, nativeUpdater, appVersion } from "./tauri.ts";
 import "./style.css";
 
 const root = document.getElementById("app")!;
@@ -161,6 +161,7 @@ if (!config) {
     labels: { port: nativeLabelPort, makeSurface: canvasSurface },
     startup: nativeStartup,
     updater: nativeUpdater,
+    appVersion,
     listPrinters: listWindowsPrinters,
     hostName: computerName,
     newId: () => crypto.randomUUID(),
@@ -278,6 +279,20 @@ if (!config) {
     return section;
   }
 
+  // Versão instalada (sempre visível: o Agente costuma iniciar minimizado) + verificação manual de atualização.
+  function versionSection(s: Snapshot): HTMLElement {
+    const u = s.update;
+    const section = el("section", { class: "version" }, el("h2", {}, "Versão"));
+    section.append(el("p", { id: "agent-version" }, `Versão instalada: ${s.version ?? "Versão indisponível"}`));
+    if (s.updatesEnabled) section.append(el("p", { class: "muted" }, "Atualizações automáticas: Ativas"));
+    const check = el("button", { id: "check-update", class: "secondary" }, u.checking ? "Verificando…" : "Verificar atualização");
+    if (u.checking || u.status === "installing") check.setAttribute("disabled", "true");
+    check.addEventListener("click", () => void app.manualCheck());
+    section.append(check);
+    if (u.note) section.append(el("p", { class: "muted", role: "status" }, u.note));
+    return section;
+  }
+
   // Atualização: aviso discreto; instala só com o Agente ocioso (o núcleo recusa durante a impressão).
   function updateSection(s: Snapshot): HTMLElement | null {
     const u = s.update;
@@ -318,6 +333,7 @@ if (!config) {
     const main = el("main", { class: "wrap" });
     main.append(el("header", {}, el("div", { class: "brand" }, "Gestão Atendimento Pro"), el("h1", {}, "Agente de Impressão")));
     main.append(el("p", { class: `status ${status.cls}` }, "Status: ", el("strong", {}, status.text)));
+    main.append(versionSection(s));
     if (s.message) main.append(el("p", { class: "error", role: "alert" }, s.message));
 
     if (s.phase === "booting") {

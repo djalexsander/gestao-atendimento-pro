@@ -36,6 +36,12 @@ fn configured(app: &AppHandle) -> bool {
     pubkey_configured(key)
 }
 
+/// O updater está configurado (chave pública definitiva)? Só para a tela mostrar "Atualizações automáticas: Ativas".
+#[tauri::command]
+pub fn updater_enabled(app: AppHandle) -> bool {
+    configured(&app)
+}
+
 /// Consulta o manifesto PRÓPRIO do Agente. `None` = sem atualização (ou updater ainda não configurado).
 #[tauri::command]
 pub async fn updater_check(app: AppHandle, pending: State<'_, PendingUpdate>) -> Result<Option<UpdateInfo>, String> {

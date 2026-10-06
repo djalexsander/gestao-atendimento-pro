@@ -52,3 +52,15 @@ sem chave continuar funcionando. Variables públicas do repositório (Settings �
 
 1. instalar 1.0.1; 2. publicar 1.0.2 de teste; 3. abrir a 1.0.1; 4. detectar a 1.0.2; 5. baixar; 6. validar assinatura;
 7. instalar; 8. reiniciar; 9. confirmar versão 1.0.2; 10. confirmar dados/configurações preservados.
+
+## Versão visível nos produtos
+
+- **Desktop:** o título da janela ("Gestão Atendimento Pro v<versão>") é definido pelo Rust a partir da versão REAL do executável
+  (`package_info`), e a sidebar/Sistema → Sobre leem a mesma versão pela API oficial do Tauri (`getVersion`). Nada é escrito à mão.
+- **PWA:** mostra a versão do build, injetada pelo Vite a partir de `apps/web/package.json` (`__APP_VERSION__`). Sem botão de atualização.
+- **Agente:** janela, título e bandeja (tooltip e item do menu) mostram a versão real; botão "Verificar atualização" reaproveita o updater.
+
+**Processo de release (a partir da 1.0.3):** o número comercial é único. Antes de criar a tag, atualizar a MESMA versão em
+`apps/web/package.json` (PWA e frontend do Desktop), `apps/desktop` (package.json, package-lock.json, tauri.conf.json,
+Cargo.toml, Cargo.lock) e/ou `apps/print-agent` (idem). Se `apps/web` não for atualizado, o PWA continuará mostrando o número antigo
+(o Desktop mostra o do executável, mesmo assim).

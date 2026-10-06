@@ -1,6 +1,10 @@
 import react from '@vitejs/plugin-react'
 import { defineConfig } from 'vite'
+import { readFileSync } from 'node:fs'
 import { VitePWA } from 'vite-plugin-pwa'
+
+// Versão do app = versão do apps/web/package.json (fonte única; o Desktop mostra a do executável via Tauri).
+const appVersion: string = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version
 
 // https://vite.dev/config/
 // Desktop (Tauri): `vite build --mode desktop` gera apps/web/dist-desktop SEM service worker/PWA — o frontend vai
@@ -8,6 +12,7 @@ import { VitePWA } from 'vite-plugin-pwa'
 export default defineConfig(({ mode }) => {
   const desktop = mode === 'desktop'
   return {
+  define: { __APP_VERSION__: JSON.stringify(appVersion) },
   build: desktop ? { outDir: 'dist-desktop' } : undefined,
   plugins: [
     react(),

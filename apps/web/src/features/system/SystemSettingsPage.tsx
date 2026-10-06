@@ -1,3 +1,4 @@
+import { AboutCard } from "../about/AboutCard";
 import { useCallback, useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../app/useAuth";
@@ -261,6 +262,8 @@ function Form({ companyId, source, printSummary }: { companyId: string; source: 
             Gerenciar impressão
           </Link>
         </Card>
+
+        <AboutCard />
 
         </div>
       </div>

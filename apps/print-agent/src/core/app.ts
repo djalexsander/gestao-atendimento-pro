@@ -4,7 +4,7 @@ import { ConnectionTracker, pollDelayMs, type ConnectionState } from "./connecti
 import type { JobModel } from "./model.ts";
 import { Poller, type Timers } from "./poller.ts";
 import { processJob, type LabelDeps } from "./processor.ts";
-import { installBlockReason, UPDATE_CHECK_MS, type UpdateInfo, type UpdaterPort, type UpdateSnapshot, type UpdateStatus } from "./updater.ts";
+import { CHECK_FAILED_MESSAGE, installBlockReason, UP_TO_DATE_MESSAGE, UPDATE_CHECK_MS, type UpdateInfo, type UpdaterPort, type UpdateSnapshot, type UpdateStatus } from "./updater.ts";
 import { RawEscPosPrinterTransport, type PrinterTransport, type PrintMode, type RawPrinterPort } from "./transport.ts";
 
 export interface WindowsPrinter {
@@ -36,6 +36,9 @@ export interface Snapshot {
   keepBackground: boolean;
   preview: string[] | null;
   message: string | null;
+  // Versão real do executável (Tauri) e se a atualização automática está ativa.
+  version: string | null;
+  updatesEnabled: boolean;
   update: UpdateSnapshot;
 }
 
@@ -60,6 +63,8 @@ export interface AppDeps {
   startup: StartupPort;
   // Atualização automática (opcional: sem isso o Agente não consulta atualização).
   updater?: UpdaterPort;
+  // Versão instalada, lida em runtime (API do Tauri). Falha = "Versão indisponível" na tela.
+  appVersion?(): Promise<string>;
   listPrinters(): Promise<WindowsPrinter[]>;
   hostName(): Promise<string>;
   newId(): string;
@@ -91,6 +96,10 @@ export class PrintAgentApp {
   private updateStatus: UpdateStatus = "none";
   private updateInfo: UpdateInfo | null = null;
   private updateMessage: string | null = null;
+  private updateNote: string | null = null;
+  private checking = false;
+  private version: string | null = null;
+  private updatesEnabled = false;
   private notifiedVersion: string | null = null;
 
   // Modo de impressão (persistido em state.json). Padrão: simulação. Só setPrintMode("real"), chamado por uma
@@ -160,7 +169,9 @@ export class PrintAgentApp {
       keepBackground: this.state?.keepBackground ?? true,
       preview: this.preview,
       message: this.message,
-      update: { status: this.updateStatus, info: this.updateInfo, message: this.updateMessage },
+      version: this.version,
+      updatesEnabled: this.updatesEnabled,
+      update: { status: this.updateStatus, info: this.updateInfo, message: this.updateMessage, note: this.updateNote, checking: this.checking },
     };
   }
 
@@ -175,6 +186,8 @@ export class PrintAgentApp {
 
   async init(): Promise<void> {
     this.computerName = await this.deps.hostName().catch(() => "");
+    this.version = await this.deps.appVersion?.().catch(() => null) ?? null;
+    this.updatesEnabled = (await this.deps.updater?.enabled?.().catch(() => false)) ?? false;
     try {
       this.state = await loadOrCreateState(this.deps.store, this.deps.secrets, this.deps.newId);
     } catch {
@@ -222,6 +235,38 @@ export class PrintAgentApp {
     } catch (e) {
       this.log(`Aviso: não foi possível verificar atualização: ${e instanceof Error ? e.message : String(e)}`);
     } finally {
+      this.emit();
+    }
+  }
+
+  // "Verificar atualização" (botão): reaproveita a MESMA consulta do início/6 h. Não instala nada; o botão "Instalar agora"
+  // continua sujeito à regra de nunca instalar com impressão em andamento.
+  async manualCheck(): Promise<void> {
+    if (!this.deps.updater || this.checking || this.updateStatus === "installing") return;
+    this.checking = true;
+    this.updateNote = null;
+    this.updateMessage = null;
+    this.emit();
+    let failed = false;
+    try {
+      const info = await this.deps.updater.check();
+      if (info) {
+        this.updateInfo = info;
+        this.updateStatus = "available";
+        this.notifiedVersion = info.version;
+        this.log(`Nova versão disponível: ${info.version} (atual ${info.current}).`);
+      } else {
+        this.updateInfo = null;
+        if (this.updateStatus === "available") this.updateStatus = "none";
+        this.updateNote = UP_TO_DATE_MESSAGE;
+      }
+    } catch (e) {
+      failed = true;
+      this.updateNote = CHECK_FAILED_MESSAGE;
+      this.log(`Aviso: não foi possível verificar atualização: ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      this.checking = false;
+      if (failed) this.updateStatus = this.updateInfo ? this.updateStatus : "none";
       this.emit();
     }
   }

@@ -8,6 +8,8 @@ export interface UpdateInfo {
 
 // Ponte com o shell nativo. check() devolve null quando não há atualização (ou o updater ainda não está configurado).
 export interface UpdaterPort {
+  // O updater está configurado (chave pública definitiva)? Só informativo ("Atualizações automáticas: Ativas").
+  enabled?(): Promise<boolean>;
   check(): Promise<UpdateInfo | null>;
   install(): Promise<void>;
 }
@@ -18,9 +20,15 @@ export interface UpdateSnapshot {
   status: UpdateStatus;
   info: UpdateInfo | null;
   message: string | null;
+  // Resultado da última verificação MANUAL ("já está na versão mais recente" ou falha). null = nada a mostrar.
+  note: string | null;
+  checking: boolean;
 }
 
 export const UPDATE_CHECK_MS = 6 * 60 * 60 * 1000; // ao iniciar e a cada 6 h
+
+export const UP_TO_DATE_MESSAGE = "Você já está usando a versão mais recente.";
+export const CHECK_FAILED_MESSAGE = "Não foi possível verificar atualização agora. Tente novamente em instantes.";
 
 export const UPDATE_BUSY_MESSAGE = "Há impressão em andamento. A atualização só é instalada com o Agente ocioso; tente novamente em instantes.";
 

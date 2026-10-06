@@ -1,3 +1,4 @@
+import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import type { WindowsPrinter } from "./core/app.ts";
 import type { KeyValueStore, SecretStore } from "./core/config.ts";
@@ -60,6 +61,10 @@ export function exitApp(): Promise<void> {
 
 // Atualização automática: o Rust consulta o manifesto do Agente, confere a assinatura e instala.
 export const nativeUpdater: UpdaterPort = {
+  enabled: () => invoke<boolean>("updater_enabled"),
   check: () => invoke("updater_check"),
   install: () => invoke<void>("updater_install"),
 };
+
+// Versão REAL do executável instalado (API oficial do Tauri v2); nunca escrita à mão no código.
+export const appVersion = (): Promise<string> => getVersion();

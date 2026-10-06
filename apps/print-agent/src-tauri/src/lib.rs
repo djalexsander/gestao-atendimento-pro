@@ -13,6 +13,19 @@ use tauri::{AppHandle, Emitter, Manager, WindowEvent, Wry};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 use tauri_plugin_notification::NotificationExt;
 
+const PRODUCT: &str = "Gestão Atendimento Pro - Agente de Impressão";
+
+/// Título da janela: "<produto> v<versão real do executável>".
+pub fn window_title(version: &str) -> String {
+    format!("{PRODUCT} v{version}")
+}
+
+/// Tooltip da bandeja (Windows limita a ~127 caracteres): produto + versão, e a situação na linha de baixo.
+pub fn tray_tooltip(version: &str, status: &str, mode: &str) -> String {
+    format!("{}
+{status} — {mode}", window_title(version))
+}
+
 /// Argumento passado pelo autostart do Windows: iniciar ESCONDIDO na bandeja.
 pub const MINIMIZED_ARG: &str = "--minimized";
 
@@ -176,7 +189,7 @@ fn set_tray_status(app: AppHandle, connection: String, mode: String) {
         let _ = items.mode.set_text(format!("Modo: {mode}"));
     }
     if let Some(tray) = app.tray_by_id("main") {
-        let _ = tray.set_tooltip(Some(format!("Agente de Impressão — {status} — {mode}")));
+        let _ = tray.set_tooltip(Some(tray_tooltip(&app.package_info().version.to_string(), status, mode)));
     }
 }
 
@@ -200,7 +213,8 @@ struct TrayItems {
 }
 
 fn build_tray(app: &AppHandle) -> tauri::Result<()> {
-    let title = MenuItem::with_id(app, "title", "Gestão Atendimento Pro - Agente de Impressão", false, None::<&str>)?;
+    let version = app.package_info().version.to_string();
+    let title = MenuItem::with_id(app, "title", window_title(&version), false, None::<&str>)?;
     let open = MenuItem::with_id(app, "open", "Abrir", true, None::<&str>)?;
     let status = MenuItem::with_id(app, "status", "Status: Conectando…", false, None::<&str>)?;
     let mode = MenuItem::with_id(app, "mode", "Modo: Simulação", false, None::<&str>)?;
@@ -211,7 +225,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
 
     let mut builder = TrayIconBuilder::with_id("main")
         .menu(&menu)
-        .tooltip("Agente de Impressão")
+        .tooltip(window_title(&version))
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open" => show_main(app),
@@ -249,6 +263,10 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(updater::PendingUpdate::default())
         .setup(|app| {
+            // Título da janela com a versão REAL do executável (muda sozinho a cada release).
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_title(&window_title(&app.package_info().version.to_string()));
+            }
             build_tray(app.handle())?;
             let args: Vec<String> = std::env::args().collect();
             // Autostart sobe escondido na bandeja; clique manual abre a janela.
@@ -288,6 +306,7 @@ pub fn run() {
             set_tray_status,
             show_notification,
             exit_app,
+            updater::updater_enabled,
             updater::updater_check,
             updater::updater_install
         ])
@@ -299,6 +318,15 @@ pub fn run() {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn titles_and_tooltip_carry_the_real_version() {
+        assert_eq!(window_title("1.0.2"), "Gestão Atendimento Pro - Agente de Impressão v1.0.2");
+        let t = tray_tooltip("1.0.2", "Online", "Real");
+        assert!(t.starts_with("Gestão Atendimento Pro - Agente de Impressão v1.0.2"));
+        assert!(t.contains("Online — Real"));
+        assert!(t.chars().count() <= 127, "tooltip do Windows tem limite de 127 caracteres");
+    }
 
     #[test]
     fn keep_background_defaults_to_on() {

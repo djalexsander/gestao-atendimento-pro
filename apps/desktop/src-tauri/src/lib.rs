@@ -18,7 +18,12 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| show_main(app)))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .invoke_handler(tauri::generate_handler![updater::manual_update_check])
         .setup(|app| {
+            // Título da janela com a versão REAL do executável (muda sozinho a cada release).
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.set_title(&updater::window_title(&app.package_info().version.to_string()));
+            }
             // Ao iniciar: consulta o manifesto PRÓPRIO do Desktop. Sem atualização (ou sem rede), segue normalmente.
             updater::spawn_startup_check(app.handle().clone());
             Ok(())

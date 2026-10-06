@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
+import { AppVersionLabel } from "../features/about/AppVersionLabel";
 import { ADMIN_NAV, groupContaining, type NavGroup } from "./adminNav";
 import { useAuth } from "./useAuth";
 
@@ -89,6 +90,7 @@ export function AdminSidebar({ open, onNavigate }: { open: boolean; onNavigate: 
           ),
         )}
       </div>
+      <AppVersionLabel />
     </nav>
   );
 }
