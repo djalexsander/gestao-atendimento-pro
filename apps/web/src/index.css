@@ -4944,3 +4944,53 @@ button {
   gap: 12px;
   align-items: center;
 }
+
+/* Banner global de nova versão do PWA: acima de sidebar/menus, respeita a área segura do iPhone, não bloqueia a operação */
+.pwa-update {
+  position: fixed;
+  left: 12px;
+  right: 12px;
+  bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  z-index: 2000;
+  max-width: 560px;
+  margin: 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px 16px;
+  padding: 12px 14px;
+  background: var(--surface);
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  box-shadow: 0 8px 28px rgba(13, 11, 18, 0.22);
+}
+
+.pwa-update-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  flex: 1 1 220px;
+  font-size: 14px;
+}
+
+.pwa-update-text strong {
+  color: var(--text-h);
+}
+
+.pwa-update-actions {
+  display: flex;
+  gap: 8px;
+  flex: 0 0 auto;
+}
+
+@media (max-width: 480px) {
+  .pwa-update-actions {
+    width: 100%;
+  }
+  .pwa-update-actions .btn-auto {
+    flex: 1 1 0;
+  }
+}
