@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { AppVersionLabel } from "../features/about/AppVersionLabel";
 import { ADMIN_NAV, groupContaining, type NavGroup } from "./adminNav";
+import { moduleAccess } from "../features/commercial/commercialLogic";
+import { useCommercial } from "../features/commercial/CommercialProvider";
 import { useAuth } from "./useAuth";
 
 // Sidebar administrativa (owner/admin — a rota /app já garante isso, ver accessRules.ts). Grupos
@@ -10,6 +12,7 @@ import { useAuth } from "./useAuth";
 // o drawer no mobile; no desktop `open` é ignorado (a sidebar é sempre fixa).
 export function AdminSidebar({ open, onNavigate }: { open: boolean; onNavigate: () => void }) {
   const { activeMembership } = useAuth();
+  const { entitlements } = useCommercial();
   const { pathname } = useLocation();
   const [openGroups, setOpenGroups] = useState<Set<string>>(() => {
     const current = groupContaining(pathname);
@@ -58,6 +61,7 @@ export function AdminSidebar({ open, onNavigate }: { open: boolean; onNavigate: 
                 >
                   {item.label}
                   {item.status === "placeholder" && <span className="admin-nav-soon">em breve</span>}
+                  {item.module && moduleAccess(entitlements, item.module) === "locked" && <span className="admin-nav-soon">contratar</span>}
                 </NavLink>
               </li>
             ))}

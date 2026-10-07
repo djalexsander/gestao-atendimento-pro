@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
+import { CHARGE_STATUS_LABEL, listInvoiceGateway, type InvoiceGatewayRow } from "../features/master/billingApi";
 import { getInvoice, markInvoicePaid, voidInvoice } from "../features/master/invoiceApi";
 import { fmtCompetence, fmtDateOnly } from "../lib/dates";
 import { formatCents } from "../lib/money";
@@ -20,13 +21,16 @@ export function MasterInvoiceDetailPage() {
   const [paidAt, setPaidAt] = useState("");
   const [voiding, setVoiding] = useState(false);
   const [reason, setReason] = useState("");
+  const [gateway, setGateway] = useState<InvoiceGatewayRow | null>(null);
 
   useEffect(() => {
     if (!id) return;
     let cancelled = false;
     (async () => {
       const result = await getInvoice(id);
+      const gw = await listInvoiceGateway(id);
       if (cancelled) return;
+      setGateway(gw.data?.[0] ?? null);
       setDetail(result.data);
       setError(result.error);
       setLoading(false);
@@ -93,6 +97,25 @@ export function MasterInvoiceDetailPage() {
           restrição por causa dela. Para desistir da contratação, cancele a assinatura — a cobrança inicial é anulada
           automaticamente.
         </p>
+      )}
+      {gateway?.gateway && (
+        <section>
+          <h3 style={{ fontSize: 18 }}>Cobrança no gateway (Asaas)</h3>
+          <p>
+            Situação: <strong>{CHARGE_STATUS_LABEL[gateway.charge_status ?? ""] ?? gateway.charge_status}</strong>
+            {gateway.gateway_due_date && ` · Vencimento enviado ao gateway: ${fmtDateOnly(gateway.gateway_due_date)} (o vencimento comercial é o da fatura)`}
+            {gateway.attempts ? ` · Tentativas: ${gateway.attempts}` : ""}
+          </p>
+          {gateway.invoice_url && (
+            <p><a href={gateway.invoice_url} target="_blank" rel="noreferrer">Abrir fatura no gateway</a></p>
+          )}
+          {gateway.last_error && <p className="form-error">Último erro: {gateway.last_error}</p>}
+          {gateway.open_anomalies > 0 && (
+            <p className="form-error">
+              {gateway.open_anomalies} anomalia(s) pendente(s). <Link to="/master/anomalias">Ver anomalias</Link>
+            </p>
+          )}
+        </section>
       )}
       <p style={{ color: "var(--text-muted)", fontSize: 13 }}>
         Valores e vencimento são um retrato do momento da geração; mudanças posteriores na assinatura ou no

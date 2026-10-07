@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { listCompaniesSummary, type CompanySummaryRow } from "../features/master/commercialApi";
-import { CompanyStatusBadge } from "../features/master/MasterBits";
+import { ACCESS_STATE_TEXT, listCompanyAccessStates } from "../features/master/billingApi";
+import { Badge, CompanyStatusBadge } from "../features/master/MasterBits";
 import { filterCompanies, fmtDocument } from "../features/master/masterLogic";
 import { fmtDateOnly } from "../lib/dates";
 import { formatCents } from "../lib/money";
@@ -11,12 +12,15 @@ export function MasterCompaniesPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [search, setSearch] = useState("");
+  const [access, setAccess] = useState<Record<string, { state: string; blocked: boolean }>>({});
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const result = await listCompaniesSummary();
+      const states = await listCompanyAccessStates();
       if (cancelled) return;
+      setAccess(Object.fromEntries((states.data ?? []).map((s) => [s.company_id, { state: s.access_state, blocked: s.write_blocked }])));
       setCompanies(result.data);
       setError(result.error);
       setLoading(false);
@@ -51,6 +55,7 @@ export function MasterCompaniesPage() {
               <th>Documento</th>
               <th>Plano</th>
               <th>Assinatura</th>
+              <th>Acesso</th>
               <th>Vencimento</th>
               <th>Módulos</th>
               <th className="mst-num">Mensal</th>
@@ -68,6 +73,9 @@ export function MasterCompaniesPage() {
                 <td>
                   <CompanyStatusBadge status={c.subscriptionStatus} trialState={c.trialState} trialEndsAt={c.trialEndsAt} />
                 </td>
+                <td>
+                  {access[c.id] ? <Badge tone={access[c.id].blocked ? "bad" : access[c.id].state === "unmanaged" ? "muted" : "ok"}>{ACCESS_STATE_TEXT[access[c.id].state] ?? access[c.id].state}</Badge> : "—"}
+                </td>
                 <td>{fmtDateOnly(c.nextDueDate)}</td>
                 <td>{c.activeModuleNames.length ? c.activeModuleNames.join(", ") : "—"}</td>
                 <td className="mst-num">{c.monthlyTotalCents === null ? "—" : formatCents(c.monthlyTotalCents)}</td>
@@ -76,7 +84,7 @@ export function MasterCompaniesPage() {
             ))}
             {rows.length === 0 && (
               <tr>
-                <td colSpan={8}>{companies.length === 0 ? "Nenhuma empresa cadastrada ainda." : "Nenhuma empresa encontrada para a busca."}</td>
+                <td colSpan={9}>{companies.length === 0 ? "Nenhuma empresa cadastrada ainda." : "Nenhuma empresa encontrada para a busca."}</td>
               </tr>
             )}
           </tbody>

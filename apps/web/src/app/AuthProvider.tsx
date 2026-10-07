@@ -1,3 +1,4 @@
+import { friendlyResendError, normalizeEmail, signupRedirectUrl } from "../lib/authEmail";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { isManagedAccount } from "../lib/managedAccount";
 import { randomSlugSuffix, slugify } from "../lib/slug";
@@ -175,9 +176,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     persistActiveCompanyId(companyId);
   }
 
+  // O e-mail é normalizado (trim + minúsculas) e o link de confirmação volta SEMPRE ao domínio oficial (ou à própria
+  // origem, só em desenvolvimento local): nunca depende apenas da Site URL do projeto.
+  const redirectTo = () => signupRedirectUrl(window.location.hostname, window.location.origin);
+
   async function signUp(email: string, password: string) {
-    const { error } = await supabase.auth.signUp({ email, password });
+    const { error } = await supabase.auth.signUp({
+      email: normalizeEmail(email),
+      password,
+      options: { emailRedirectTo: redirectTo() },
+    });
     return { error: error?.message ?? null };
+  }
+
+  async function resendSignupConfirmation(email: string) {
+    const { error } = await supabase.auth.resend({
+      type: "signup",
+      email: normalizeEmail(email),
+      options: { emailRedirectTo: redirectTo() },
+    });
+    return { error: error ? friendlyResendError(error) : null };
   }
 
   async function signIn(email: string, password: string) {
@@ -280,6 +298,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     activeMembership,
     setActiveCompanyId,
     signUp,
+    resendSignupConfirmation,
     signIn,
     signInEmployee,
     signOut,

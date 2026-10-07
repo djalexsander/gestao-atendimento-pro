@@ -45,6 +45,10 @@ export const EVENT_LABEL: Record<string, string> = {
   module_removed: "Módulo removido",
   status_changed: "Status alterado",
   billing_day_changed: "Dia de vencimento alterado (ajuste excepcional)",
+  modules_change_scheduled: "Alteração de módulos agendada (cliente)",
+  modules_change_updated: "Alteração de módulos agendada substituída (cliente)",
+  modules_change_canceled: "Alteração de módulos agendada cancelada",
+  modules_change_applied: "Alteração de módulos aplicada no novo ciclo",
 };
 
 export const INVOICE_STATUS_LABEL: Record<InvoiceStatus, string> = {
@@ -57,6 +61,7 @@ export const INVOICE_STATUS_LABEL: Record<InvoiceStatus, string> = {
 export const INVOICE_KIND_LABEL: Record<string, string> = {
   initial: "Cobrança inicial",
   recurring: "Mensalidade",
+  module_addition: "Adição de módulos (proporcional)",
 };
 
 export const INVOICE_EVENT_LABEL: Record<string, string> = {

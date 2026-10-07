@@ -48,3 +48,18 @@ verify_jwt = true
 # Chamada SÓ pelo banco (pg_net) com o segredo compartilhado no header x-internal-secret (>= 32 caracteres,
 # comparação em tempo constante); não há JWT de usuário nessa chamada.
 verify_jwt = false
+
+[functions.billing-charge]
+# Cobrança Pix de UMA fatura, pedida pelo OWNER. JWT obrigatório na borda; o handler valida o token de novo, a
+# autorização (owner + fatura da empresa) é decidida no banco com o JWT do usuário, e o corpo só aceita invoice_id.
+verify_jwt = true
+
+[functions.asaas-webhook]
+# Webhook do Asaas (público). Autenticação = header asaas-access-token (ASAAS_WEBHOOK_TOKEN, tempo constante); o
+# pagamento é reconsultado no Asaas antes de qualquer mudança de estado.
+verify_jwt = false
+
+[functions.billing-worker]
+# Chamada SÓ pelo banco (pg_net) com o segredo compartilhado no header x-internal-secret (>= 32 caracteres, tempo
+# constante); não há JWT de usuário nessa chamada.
+verify_jwt = false

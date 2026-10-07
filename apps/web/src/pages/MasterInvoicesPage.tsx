@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
+import { CHARGE_STATUS_LABEL, listInvoiceGateway, type InvoiceGatewayRow } from "../features/master/billingApi";
 import { InvoiceStatusBadge, Kpi } from "../features/master/MasterBits";
 import { listInvoices } from "../features/master/invoiceApi";
 import { filterInvoices } from "../features/master/masterLogic";
@@ -19,12 +20,15 @@ export function MasterInvoicesPage() {
   const [company, setCompany] = useState("");
   const [dueFrom, setDueFrom] = useState("");
   const [dueTo, setDueTo] = useState("");
+  const [gateway, setGateway] = useState<Record<string, InvoiceGatewayRow>>({});
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       const result = await listInvoices({ status, competence: monthToCompetence(month) });
+      const gw = await listInvoiceGateway();
       if (cancelled) return;
+      setGateway(Object.fromEntries((gw.data ?? []).map((g) => [g.invoice_id, g])));
       setInvoices(result.data);
       setError(result.error);
       setLoading(false);
@@ -99,6 +103,7 @@ export function MasterInvoicesPage() {
                 <th>Status</th>
                 <th className="mst-num">Dias de atraso</th>
                 <th>Pagamento</th>
+                <th>Cobrança (gateway)</th>
               </tr>
             </thead>
             <tbody>
@@ -116,11 +121,15 @@ export function MasterInvoicesPage() {
                   </td>
                   <td className="mst-num">{i.days_overdue ? i.days_overdue : "—"}</td>
                   <td>{i.paid_at ? fmtDateTimeSP(i.paid_at) : "—"}</td>
+                  <td>
+                    {gateway[i.id]?.gateway ? `Asaas · ${CHARGE_STATUS_LABEL[gateway[i.id].charge_status ?? ""] ?? gateway[i.id].charge_status}` : "—"}
+                    {gateway[i.id]?.open_anomalies ? ` · ⚠ ${gateway[i.id].open_anomalies} anomalia(s)` : ""}
+                  </td>
                 </tr>
               ))}
               {rows.length === 0 && (
                 <tr>
-                  <td colSpan={8}>Nenhuma fatura encontrada para os filtros.</td>
+                  <td colSpan={9}>Nenhuma fatura encontrada para os filtros.</td>
                 </tr>
               )}
             </tbody>

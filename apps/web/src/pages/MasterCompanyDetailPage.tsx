@@ -11,6 +11,7 @@ import {
 } from "../features/master/subscriptionApi";
 import { CompanyInvoices } from "../features/master/CompanyInvoices";
 import { BillingStatus } from "../features/master/BillingStatus";
+import { PendingModuleChangeCard } from "../features/master/PendingModuleChangeCard";
 import { SubscriptionTimeline } from "../features/master/SubscriptionTimeline";
 import { TrialPanel } from "../features/master/TrialPanel";
 import { CompanyDataCard } from "../features/master/CompanyDataCard";
@@ -127,6 +128,8 @@ export function MasterCompanyDetailPage() {
       {detail.subscription && (
         <BillingStatus key={`billing-${loadedVersion}`} subscriptionId={detail.subscription.id} />
       )}
+
+      {detail.subscription && <PendingModuleChangeCard key={`pend-${loadedVersion}`} companyId={detail.company.id} />}
 
       {detail.subscription && (
         <SubscriptionTimeline key={`timeline-${loadedVersion}`} subscriptionId={detail.subscription.id} />

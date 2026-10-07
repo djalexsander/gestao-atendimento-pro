@@ -1,4 +1,5 @@
 import { NotificationsButton } from "../features/notifications/NotificationEntryPoints";
+import { CommercialBanner } from "../features/commercial/CommercialBanner";
 import { useEffect, useState, type ReactNode } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { canOpenOperationalArea, homePathForRole, OPERATIONAL_PATH } from "../app/accessRules";
@@ -121,6 +122,7 @@ function OperationalShell({ title, children }: { title: string; children: ReactN
           </button>
         </div>
       </header>
+      <CommercialBanner />
       <main className="app-body app-body-wide">
         <h2>{title}</h2>
         {children}

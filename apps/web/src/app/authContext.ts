@@ -20,6 +20,8 @@ export interface AuthContextValue {
   activeMembership: CompanyMembership | null;
   setActiveCompanyId: (companyId: string) => void;
   signUp: (email: string, password: string) => Promise<{ error: string | null }>;
+  // Reenvio do e-mail de confirmação do cadastro (método oficial do Supabase Auth). O cooldown é da tela.
+  resendSignupConfirmation: (email: string) => Promise<{ error: string | null }>;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
   // Login operacional (código da empresa + login + PIN/senha), separado do login por e-mail.
   signInEmployee: (

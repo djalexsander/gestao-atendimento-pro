@@ -205,7 +205,7 @@ export interface InvoiceRow {
   paid_at: string | null;
   created_at: string;
   days_overdue: number | null;
-  kind: "initial" | "recurring";
+  kind: "initial" | "recurring" | "module_addition";
 }
 
 export interface InvoiceDetail {
@@ -220,7 +220,7 @@ export interface InvoiceDetail {
     paid_at: string | null;
     created_at: string;
     updated_at: string;
-    kind: "initial" | "recurring";
+    kind: "initial" | "recurring" | "module_addition";
   };
   company: { id: string; name: string };
   subscription: {

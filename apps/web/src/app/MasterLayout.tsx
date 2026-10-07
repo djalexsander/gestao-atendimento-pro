@@ -17,6 +17,7 @@ export function MasterLayout() {
             </NavLink>
             <NavLink to="/master/empresas">Empresas</NavLink>
             <NavLink to="/master/faturas">Faturas</NavLink>
+            <NavLink to="/master/anomalias">Anomalias</NavLink>
             <NavLink to="/master/planos">Planos</NavLink>
             <NavLink to="/master/modulos">Módulos</NavLink>
             <NavLink to="/master/configuracoes">Configurações</NavLink>

@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Link, Outlet, useLocation } from "react-router-dom";
 import { AdminSidebar } from "./AdminSidebar";
 import { CompanySwitcher } from "./CompanySwitcher";
+import { CommercialBanner } from "../features/commercial/CommercialBanner";
 import { isManagedAccount } from "../lib/managedAccount";
 import { useAuth } from "./useAuth";
 
@@ -63,6 +64,7 @@ export function AppLayout() {
             </button>
           </div>
         </header>
+        <CommercialBanner />
         <main className={isWidePage ? "app-body app-body-wide" : "app-body"}>
           <Outlet />
         </main>

@@ -1,3 +1,4 @@
+import { ModuleGate } from "./features/commercial/ModuleGate";
 import { CashAdmin } from "./features/cash/CashAdmin";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AppLayout } from "./app/AppLayout";
@@ -54,6 +55,8 @@ import { ProductsPage } from "./pages/ProductsPage";
 import { ServiceModeSettingsPage } from "./pages/ServiceModeSettingsPage";
 import { ServicePointsAdminPage } from "./pages/ServicePointsAdminPage";
 import { SignupPage } from "./pages/SignupPage";
+import { MyPlansPage } from "./pages/MyPlansPage";
+import { MasterBillingAnomaliesPage } from "./pages/MasterBillingAnomaliesPage";
 import { TeamPage } from "./pages/TeamPage";
 
 function App() {
@@ -132,7 +135,9 @@ function App() {
         path="/operacional/etiquetas"
         element={
           <OperationalRoute area="etiquetas">
-            <OperationalLabelsPage />
+            <ModuleGate module="impressao">
+              <OperationalLabelsPage />
+            </ModuleGate>
           </OperationalRoute>
         }
       />
@@ -148,7 +153,9 @@ function App() {
         path="/operacional/producao"
         element={
           <OperationalRoute area="producao">
-            <OperationalProductionPage />
+            <ModuleGate module="producao">
+              <OperationalProductionPage />
+            </ModuleGate>
           </OperationalRoute>
         }
       />
@@ -183,22 +190,24 @@ function App() {
         <Route path="configuracoes/codigo-acesso" element={<AccessCodeSettingsPage />} />
         <Route path="configuracoes/modo-atendimento" element={<ServiceModeSettingsPage />} />
         <Route path="configuracoes/notificacoes" element={<NotificationSettingsPage />} />
+        <Route path="configuracoes/meus-planos" element={<MyPlansPage />} />
+        <Route path="assinatura" element={<Navigate to="/app/configuracoes/meus-planos" replace />} />
         <Route path="equipe" element={<TeamPage />} />
         <Route path="comandas" element={<ServicePointsAdminPage />} />
 
         {/* Placeholders da nova sidebar (ver app/adminNav.ts): módulos ainda não implementados,
             todos com a MESMA página reutilizável — nada de lógica de negócio aqui. */}
-        <Route path="financeiro/visao" element={<FinancialOverview />} />
+        <Route path="financeiro/visao" element={<ModuleGate module="financeiro"><FinancialOverview /></ModuleGate>} />
         <Route path="financeiro/caixa" element={<CashAdmin />} />
-        <Route path="financeiro/contas-a-receber" element={<ReceivablesPage />} />
-        <Route path="financeiro/contas-a-pagar" element={<PayablesPage />} />
+        <Route path="financeiro/contas-a-receber" element={<ModuleGate module="financeiro"><ReceivablesPage /></ModuleGate>} />
+        <Route path="financeiro/contas-a-pagar" element={<ModuleGate module="financeiro"><PayablesPage /></ModuleGate>} />
         <Route path="financeiro/relatorios" element={<ReportsRoutePage />} />
 
         <Route path="cadastros/produtos" element={<ProductsPage />} />
         <Route path="cadastros/categorias" element={<ProductCategoriesPage />} />
         <Route path="cadastros/adicionais" element={<ProductModifiersPage />} />
-        <Route path="cadastros/setores" element={<ProductionSectorsPage />} />
-        <Route path="cadastros/estoque" element={<StockPage />} />
+        <Route path="cadastros/setores" element={<ModuleGate module="producao"><ProductionSectorsPage /></ModuleGate>} />
+        <Route path="cadastros/estoque" element={<ModuleGate module="estoque"><StockPage /></ModuleGate>} />
         <Route path="cadastros/clientes" element={<CustomersPage />} />
 
         <Route path="operacional/comandas-abertas" element={<Navigate to="/operacional/atendimentos-abertos" replace />} />
@@ -206,7 +215,7 @@ function App() {
         <Route path="operacional/caixa" element={<ModulePlaceholderPage title="Caixa / Balcão" />} />
 
         <Route path="configuracoes/impressoras" element={<Navigate to="/app/configuracoes/impressao" replace />} />
-        <Route path="configuracoes/impressao" element={<PrintingSettingsPage />} />
+        <Route path="configuracoes/impressao" element={<ModuleGate module="impressao"><PrintingSettingsPage /></ModuleGate>} />
         <Route path="configuracoes/sistema" element={<SystemSettingsPage />} />
       </Route>
       <Route
@@ -222,6 +231,7 @@ function App() {
         <Route path="empresas/:id" element={<MasterCompanyDetailPage />} />
         <Route path="faturas" element={<MasterInvoicesPage />} />
         <Route path="faturas/:id" element={<MasterInvoiceDetailPage />} />
+        <Route path="anomalias" element={<MasterBillingAnomaliesPage />} />
         <Route path="planos"element={<MasterPlansPage />} />
         <Route path="modulos" element={<MasterModulesPage />} />
         <Route path="configuracoes" element={<MasterSettingsPage />} />
