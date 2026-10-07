@@ -2,7 +2,7 @@
 //
 // Segurança e semântica
 //   * Autenticação: header `asaas-access-token` contra ASAAS_WEBHOOK_TOKEN, em TEMPO CONSTANTE. Sem token configurado,
-//     sem ASAAS_ENV=sandbox ou sem chave: 503 e nada é processado (o Asaas retenta; a fila só pausa após 15 falhas).
+//     sem ASAAS_ENV válido (sandbox ou production) ou sem chave: 503 e nada é processado (o Asaas retenta; a fila só pausa após 15 falhas).
 //   * O payload NUNCA é confiado: o pagamento é RECONSULTADO no Asaas (GET /payments/{id}) e o banco valida id, referência
 //     externa, valor, fatura e empresa antes de mudar qualquer estado (billing_event_apply).
 //   * Idempotência: event_id do Asaas (ou hash do corpo quando não houver) em asaas_webhook_events.

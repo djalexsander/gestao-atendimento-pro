@@ -2,7 +2,7 @@
 // Lógica em handler.ts; aqui só se ligam as dependências reais.
 //
 // Secrets (Supabase Edge Function secrets — NUNCA no git/frontend/VITE_): ASAAS_WEBHOOK_TOKEN (o mesmo cadastrado no
-// painel Sandbox do Asaas), ASAAS_ENV (= sandbox nesta fase), ASAAS_API_KEY. URL a cadastrar no Asaas:
+// painel Sandbox do Asaas), ASAAS_ENV (sandbox ou production), ASAAS_API_KEY. URL a cadastrar no Asaas:
 //   https://<project-ref>.supabase.co/functions/v1/asaas-webhook
 import { createClient } from "npm:@supabase/supabase-js@2.117.1";
 import { createAsaasClient, readAsaasConfig, sha256Hex } from "../_shared/asaas-core.ts";

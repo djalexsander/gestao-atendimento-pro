@@ -6,7 +6,7 @@
 //     (400): tudo isso é lido/calculado no servidor a partir da fatura.
 //   * Autorização no banco, com o JWT do próprio usuário: tenant_prepare_invoice_charge exige OWNER ativo da empresa
 //     da fatura e fatura aberta. Só então as RPCs billing_* (service_role) e o Asaas entram.
-//   * Sem ASAAS_ENV=sandbox + ASAAS_API_KEY: 503 e NENHUMA chamada ao Asaas.
+//   * Sem ASAAS_ENV válido (sandbox ou production) + ASAAS_API_KEY: 503 e NENHUMA chamada ao Asaas.
 //   * A resposta devolve só o necessário para exibir o Pix (nunca ids do Asaas, nem customer).
 import { type AsaasClient, type AsaasConfigResult } from "../_shared/asaas-core.ts";
 import { type BillingDb, createChargeForInvoice } from "../_shared/billing-core.ts";

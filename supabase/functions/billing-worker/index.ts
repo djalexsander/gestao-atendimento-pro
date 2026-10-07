@@ -3,7 +3,7 @@
 //
 // Secrets (Supabase Edge Function secrets — NUNCA no git/frontend/VITE_): BILLING_WORKER_SECRET (>= 32 caracteres; o
 // mesmo valor vai para o vault do banco como BILLING_WORKER_SECRET, com a URL em BILLING_WORKER_URL), ASAAS_ENV
-// (= sandbox nesta fase), ASAAS_API_KEY.
+// (sandbox ou production), ASAAS_API_KEY.
 import { createClient } from "npm:@supabase/supabase-js@2.117.1";
 import { createAsaasClient, readAsaasConfig } from "../_shared/asaas-core.ts";
 import { handleBillingWorker } from "./handler.ts";

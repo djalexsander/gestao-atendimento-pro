@@ -7,7 +7,7 @@
 //   reconciliação  -> cobranças abertas sem conferência há >6h: reconsulta e aplica pelo MESMO caminho do webhook
 //                    (cura evento perdido; não é polling agressivo)
 //
-// Sem ASAAS_ENV=sandbox + ASAAS_API_KEY: 503 ANTES de reivindicar qualquer job (nada é consumido nem chamado).
+// Sem ASAAS_ENV válido (sandbox ou production) + ASAAS_API_KEY: 503 ANTES de reivindicar qualquer job (nada é consumido nem chamado).
 import { authorizeInternalRequest } from "../_shared/push-core.ts";
 import { type AsaasClient, type AsaasConfigResult } from "../_shared/asaas-core.ts";
 import { type BillingDb, cancelChargeForInvoice, createChargeForInvoice, processPaymentEvent } from "../_shared/billing-core.ts";

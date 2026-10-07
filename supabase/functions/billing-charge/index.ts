@@ -1,6 +1,6 @@
 // Edge Function billing-charge (OWNER, JWT). Lógica em handler.ts; aqui só se ligam as dependências reais.
 //
-// Secrets (Supabase Edge Function secrets — NUNCA no git/frontend/VITE_): ASAAS_ENV (= sandbox nesta fase),
+// Secrets (Supabase Edge Function secrets — NUNCA no git/frontend/VITE_): ASAAS_ENV (sandbox ou production),
 // ASAAS_API_KEY. service_role só é usado aqui, no servidor, para as RPCs billing_*.
 import { createClient } from "npm:@supabase/supabase-js@2.117.1";
 import { createAsaasClient, readAsaasConfig } from "../_shared/asaas-core.ts";

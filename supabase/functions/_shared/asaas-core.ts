@@ -1,33 +1,59 @@
-// Núcleo do Asaas (SANDBOX): configuração por secrets, cliente HTTP com timeout/classificação de erro e utilitários
-// puros. Sem imports e sem Deno: testável em qualquer runtime com um fetch simulado.
+// Núcleo do Asaas: configuração por secrets, cliente HTTP com timeout/classificação de erro e utilitários puros. Sem imports
+// e sem Deno: testável em qualquer runtime com um fetch simulado.
 //
 // SEGURANÇA
 //   * ASAAS_API_KEY, ASAAS_ENV e ASAAS_WEBHOOK_TOKEN só existem como secrets das Edge Functions (nunca no frontend,
 //     em VITE_ ou no git). Nenhum valor tem default: sem configuração completa NENHUMA chamada ao Asaas acontece.
-//   * Nesta fase só o SANDBOX é aceito (https://api-sandbox.asaas.com/v3). Qualquer outro ASAAS_ENV, ou uma chave que
-//     pareça de produção, é recusado antes de qualquer requisição. Habilitar produção é uma mudança deliberada futura.
+//   * AMBIENTE: ASAAS_ENV aceita SOMENTE "sandbox" ou "production" (exato, sem fallback). Ausente, vazio ou qualquer outro
+//     valor => recusa antes de qualquer requisição (nunca cai em produção por engano). A URL base é escolhida AQUI, uma só
+//     vez, por getAsaasBaseUrl(); billing-charge, billing-worker e asaas-webhook (reconsulta do pagamento) usam o MESMO
+//     cliente criado desta configuração, então customer, payment e Pix nunca misturam ambientes.
+//   * Cada ambiente tem a sua própria chave: chave de produção ("_prod_") em sandbox e chave de homologação ("_hmlg_") em
+//     produção são recusadas.
 //   * Chave, token e dados do cliente nunca entram em log/erro devolvido.
 
-export const ASAAS_SANDBOX_BASE_URL = "https://api-sandbox.asaas.com/v3";
+export type AsaasEnvironment = "sandbox" | "production";
+const ASAAS_BASE_URLS: Record<AsaasEnvironment, string> = {
+  sandbox: "https://api-sandbox.asaas.com/v3",
+  production: "https://api.asaas.com/v3",
+};
 const USER_AGENT = "GestaoAtendimentoPro-Billing/1.0";
+
+/** Única fonte da URL base da API do Asaas. */
+export function getAsaasBaseUrl(environment: AsaasEnvironment): string {
+  return ASAAS_BASE_URLS[environment];
+}
+
+/** "sandbox" | "production" (aparando espaços/caixa) ou null para ausente, vazio ou desconhecido. */
+export function parseAsaasEnv(raw: string | undefined | null): AsaasEnvironment | null {
+  const env = (raw ?? "").trim().toLowerCase();
+  return env === "sandbox" || env === "production" ? env : null;
+}
 
 export interface AsaasConfig {
   apiKey: string;
   baseUrl: string;
+  /** só para log/diagnóstico (nunca a chave) */
+  environment: AsaasEnvironment;
 }
 export type AsaasConfigResult =
   | { ok: true; config: AsaasConfig }
-  | { ok: false; reason: "missing_api_key" | "missing_env" | "unsupported_env" | "production_key_in_sandbox" };
+  | {
+      ok: false;
+      reason: "missing_api_key" | "missing_env" | "unsupported_env" | "production_key_in_sandbox" | "sandbox_key_in_production";
+    };
 
 export function readAsaasConfig(getEnv: (name: string) => string | undefined): AsaasConfigResult {
-  const env = (getEnv("ASAAS_ENV") ?? "").trim().toLowerCase();
-  if (!env) return { ok: false, reason: "missing_env" };
-  if (env !== "sandbox") return { ok: false, reason: "unsupported_env" };
+  const raw = (getEnv("ASAAS_ENV") ?? "").trim();
+  if (!raw) return { ok: false, reason: "missing_env" };
+  const environment = parseAsaasEnv(raw);
+  if (!environment) return { ok: false, reason: "unsupported_env" };
   const apiKey = (getEnv("ASAAS_API_KEY") ?? "").trim();
   if (!apiKey) return { ok: false, reason: "missing_api_key" };
-  // chaves de produção do Asaas têm o marcador "_prod_"; jamais usá-las contra o sandbox/nesta fase
-  if (apiKey.includes("_prod_")) return { ok: false, reason: "production_key_in_sandbox" };
-  return { ok: true, config: { apiKey, baseUrl: ASAAS_SANDBOX_BASE_URL } };
+  // marcadores de ambiente da chave do Asaas: produção "_prod_", homologação (sandbox) "_hmlg_"
+  if (environment === "sandbox" && apiKey.includes("_prod_")) return { ok: false, reason: "production_key_in_sandbox" };
+  if (environment === "production" && apiKey.includes("_hmlg_")) return { ok: false, reason: "sandbox_key_in_production" };
+  return { ok: true, config: { apiKey, baseUrl: getAsaasBaseUrl(environment), environment } };
 }
 
 export function timingSafeEqual(received: string, expected: string): boolean {

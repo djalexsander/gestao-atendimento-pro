@@ -1,11 +1,26 @@
 # Cobrança Asaas e controle comercial por módulos
 
 Estado (v1.0.5): código, migrations (`20261006020000` … `20261007020000`) e Edge Functions (`billing-charge`, `billing-worker`,
-`asaas-webhook`) **validados no Asaas SANDBOX**. O ambiente remoto está em `ASAAS_ENV=sandbox`.
+`asaas-webhook`) **validados no Asaas SANDBOX**. O código suporta `ASAAS_ENV=sandbox` e `ASAAS_ENV=production`, mas o ambiente remoto
+continua em `sandbox` até a troca controlada.
 
-> **PUBLICAÇÃO PARA USUÁRIOS REAIS BLOQUEADA ATÉ A TROCA CONTROLADA PARA ASAAS PRODUÇÃO.**
-> O código só aceita `ASAAS_ENV=sandbox` e a URL do Sandbox está em `supabase/functions/_shared/asaas-core.ts` (`ASAAS_SANDBOX_BASE_URL`);
-> uma chave com `_prod_` é recusada. A virada para produção exige alteração de código + secrets + novo webhook, feita de forma controlada.
+> **PUBLICAÇÃO PARA USUÁRIOS REAIS BLOQUEADA ATÉ A TROCA CONTROLADA PARA ASAAS PRODUÇÃO** (secrets + webhook de produção + redeploy).
+
+## Ambientes (`ASAAS_ENV`)
+| `ASAAS_ENV` | URL base da API | Chave | Webhook |
+|---|---|---|---|
+| `sandbox` | `https://api-sandbox.asaas.com/v3` | chave do Sandbox (marcador `_hmlg_`) | painel Sandbox + token próprio |
+| `production` | `https://api.asaas.com/v3` | chave de produção (marcador `_prod_`) | painel de produção + token próprio |
+
+- A URL é escolhida em **um único lugar**: `getAsaasBaseUrl()` em `supabase/functions/_shared/asaas-core.ts`, via `readAsaasConfig()`. `billing-charge`,
+  `billing-worker` e `asaas-webhook` (reconsulta `GET /payments/{id}`) criam o cliente da MESMA configuração, então customer, payment, Pix e reconsulta
+  nunca misturam ambientes.
+- Falha fechada: `ASAAS_ENV` ausente, vazio ou diferente de `sandbox`/`production` (comparação exata, sem fallback) => 503 e nenhuma chamada ao Asaas.
+  Chave de produção em `sandbox` e chave de homologação em `production` também são recusadas.
+- A arquitetura é a mesma nos dois ambientes: as **invoices locais continuam a fonte da verdade**; o Asaas só cobra e avisa. Cada ambiente tem a sua
+  própria API key, o seu customer e o seu webhook/token — dados de um ambiente não existem no outro (trocar de ambiente exige novo cadastro de
+  customers e novo webhook; cobranças já criadas no Sandbox não são migradas).
+- Os logs podem citar o ambiente (`sandbox`/`production`), nunca a chave, o token, o segredo do worker ou o payload Pix.
 
 ## Decisões fechadas
 - Cobrança **avulsa Pix por fatura local** (sem assinatura Asaas, sem Checkout, sem Pix Automático, sem cartão).
@@ -33,9 +48,9 @@ Asaas ─► Edge asaas-webhook (token) ─► reconsulta GET /payments/{id} ─
 ## Secrets (somente servidor — nunca `VITE_`, nunca git)
 | Secret | Uso |
 |---|---|
-| `ASAAS_ENV` | `sandbox` (qualquer outro valor é recusado) |
-| `ASAAS_API_KEY` | chave do **Sandbox** deste projeto (chave com `_prod_` é recusada) |
-| `ASAAS_WEBHOOK_TOKEN` | mesmo token do webhook no painel (header `asaas-access-token`, comparação em tempo constante) |
+| `ASAAS_ENV` | `sandbox` ou `production` (qualquer outro valor é recusado) |
+| `ASAAS_API_KEY` | chave do ambiente escolhido (cada ambiente tem a sua; chave de outro ambiente é recusada) |
+| `ASAAS_WEBHOOK_TOKEN` | mesmo token do webhook cadastrado no painel do ambiente (header `asaas-access-token`, tempo constante) |
 | `BILLING_WORKER_SECRET` | segredo interno cron→worker (≥ 32 caracteres, header `x-internal-secret`) |
 
 Vault do banco (para o `pg_net` do cron): `BILLING_WORKER_URL` e `BILLING_WORKER_SECRET`. Webhook: `https://<ref>.supabase.co/functions/v1/asaas-webhook`,
