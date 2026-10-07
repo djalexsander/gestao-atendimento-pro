@@ -121,8 +121,20 @@ export interface AsaasPixQrCode {
   expirationDate?: string | null;
 }
 
+/**
+ * Prefixo do externalReference das NOSSAS cobranças (gestao-atendimento-pro|invoice|<uuid>). A conta Asaas de produção é
+ * compartilhada com outros sistemas: o que não tiver este prefixo é de outro sistema e nunca é tocado por nós.
+ */
+export const OUR_INVOICE_REF_PREFIX = "gestao-atendimento-pro|invoice|";
+export function isOurInvoiceReference(ref: unknown): boolean {
+  return typeof ref === "string" && ref.startsWith(OUR_INVOICE_REF_PREFIX);
+}
+
 export interface AsaasClient {
-  findCustomer(externalReference: string, document: string): Promise<string | null>;
+  /** ambiente do qual o cliente foi criado: todo id/estado gravado no banco carrega este valor */
+  readonly environment: AsaasEnvironment;
+  /** busca SOMENTE por externalReference (company:<id>); nunca por CPF/CNPJ, para não adotar customer de outro sistema */
+  findCustomer(externalReference: string): Promise<string | null>;
   createCustomer(input: { name: string; cpfCnpj: string; email: string; mobilePhone?: string | null; externalReference: string }): Promise<string>;
   findPaymentByExternalReference(externalReference: string): Promise<AsaasPaymentDto | null>;
   createPayment(input: { customer: string; valueCents: number; dueDate: string; description: string; externalReference: string }): Promise<AsaasPaymentDto>;
@@ -175,14 +187,13 @@ export function createAsaasClient(
   const q = encodeURIComponent;
 
   return {
-    async findCustomer(externalReference, document) {
-      // o filtro por externalReference é documentado, mas cada item é CONFERIDO: se o filtro for ignorado, nada alheio é adotado
+    environment: config.environment,
+    async findCustomer(externalReference) {
+      // o filtro por externalReference é documentado, mas cada item é CONFERIDO: se o filtro for ignorado, nada alheio é adotado.
+      // NÃO há busca por CPF/CNPJ: em conta compartilhada ela poderia adotar o customer de outro sistema.
       const byRef = list<AsaasCustomerDto>(await request("GET", `/customers?externalReference=${q(externalReference)}&limit=100`));
       const exact = byRef.find((c) => c.id && c.externalReference === externalReference && !c.deleted);
-      if (exact?.id) return exact.id;
-      const byDoc = list<AsaasCustomerDto>(await request("GET", `/customers?cpfCnpj=${q(document)}&limit=100`));
-      const doc = byDoc.find((c) => c.id && !c.deleted && (c.externalReference === externalReference || !c.externalReference));
-      return doc?.id ?? null;
+      return exact?.id ?? null;
     },
     async createCustomer(input) {
       const body: Record<string, unknown> = {

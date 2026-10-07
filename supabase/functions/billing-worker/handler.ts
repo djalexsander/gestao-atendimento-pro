@@ -82,7 +82,7 @@ export async function handleBillingWorker(req: Request, deps: WorkerDeps): Promi
     else summary.failed += 1;
   }
 
-  const rec = await deps.db.rpc("billing_claim_reconcile", { p_limit: 10 });
+  const rec = await deps.db.rpc("billing_claim_reconcile", { p_environment: asaas.environment, p_limit: 10 });
   if (!rec.error) {
     for (const item of (rec.data ?? []) as Array<{ asaas_payment_id: string }>) {
       const r = await processPaymentEvent(deps.db, asaas, {

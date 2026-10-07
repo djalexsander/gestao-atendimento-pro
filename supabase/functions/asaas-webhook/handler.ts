@@ -76,9 +76,10 @@ export async function handleAsaasWebhook(req: Request, deps: WebhookDeps): Promi
 
   // eventos que não são de cobrança (assinatura, checkout, nota...) ou sem pagamento: registra e encerra
   if (!event.startsWith("PAYMENT_") || !paymentId) {
-    const begin = await deps.db.rpc("billing_event_begin", { p_event_id: eventId, p_event: event, p_payment_id: paymentId, p_payload: stored });
+    const environment = deps.config.config.environment;
+    const begin = await deps.db.rpc("billing_event_begin", { p_event_id: eventId, p_event: event, p_payment_id: paymentId, p_payload: stored, p_environment: environment });
     if (begin.error) return json({ error: "Falha ao registrar o evento." }, 500);
-    await deps.db.rpc("billing_event_finish", { p_event_id: eventId, p_status: "ignored", p_result: "evento_sem_pagamento", p_error: null });
+    await deps.db.rpc("billing_event_finish", { p_event_id: eventId, p_status: "ignored", p_result: "evento_sem_pagamento", p_error: null, p_environment: environment });
     return json({ received: true, processed: false });
   }
 

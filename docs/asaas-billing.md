@@ -22,6 +22,30 @@ continua em `sandbox` até a troca controlada.
   customers e novo webhook; cobranças já criadas no Sandbox não são migradas).
 - Os logs podem citar o ambiente (`sandbox`/`production`), nunca a chave, o token, o segredo do worker ou o payload Pix.
 
+## Conta compartilhada e isolamento por ambiente
+A conta Asaas de **produção** é compartilhada com outros sistemas (intencional). O Gestão Atendimento Pro se isola por API key, webhook e token próprios,
+`externalReference` próprio (`company:<id>` no customer, `gestao-atendimento-pro|invoice|<id>` na cobrança), customer e payment próprios e **ambiente explícito**.
+- `company_asaas_customers (company_id, environment)`: o customer de cada empresa por ambiente (uma empresa tem um customer Sandbox e outro Production).
+  `company_billing_profiles` guarda só dados comerciais; a coluna antiga `asaas_customer_id` é LEGADO (histórico Sandbox congelado).
+- `environment ('sandbox'|'production')`, NOT NULL e sem default, em `asaas_charges`, `asaas_webhook_events` e `billing_anomalies`. Histórico existente = `sandbox`.
+- Unicidade por ambiente: `(environment, asaas_customer_id)`, `(environment, asaas_payment_id)`, `(environment, event_id)` e uma cobrança ativa por `(fatura, ambiente)`.
+- `billing_gateway_settings` guarda o **ambiente ativo** do banco. Toda RPC `billing_*` de serviço recebe `p_environment` da Edge e **recusa** se divergir do ativo
+  (Edge `production` com banco `sandbox`, ou o contrário, falha fechada). Telas do cliente e do Master leem só as cobranças do ambiente ativo.
+  A virada é deliberada e só por quem tem o banco: `select billing_set_active_environment('production')`.
+- Customer: busca **somente** por `externalReference = company:<id>`; nunca por CPF/CNPJ (não adota customer de outro sistema). Não achou => cria.
+- Pagamento **estrangeiro** (payload ou pagamento verificado com `externalReference` que não começa com `gestao-atendimento-pro|invoice|`): registrado como evento
+  `ignored` com resultado `ignored_foreign_payment`, HTTP 200, sem reconsulta quando o payload já mostra a referência alheia e **sem** anomalia, baixa, job ou
+  alteração de fatura. Só o que tem o NOSSO prefixo é validado com rigor (fatura inexistente/ referência malformada => anomalia).
+- Compatibilidade transitória: as assinaturas antigas (sem ambiente) existem como wrappers que operam como `sandbox`, só para a Edge já publicada continuar
+  funcionando até o redeploy. Devem ser removidas em migration posterior, logo depois do redeploy das Edge Functions novas.
+
+### Sequência da virada para produção (controlada)
+1. Redeploy das 3 Edge Functions novas (ainda em `sandbox`) e migration que remove os wrappers transitórios.
+2. Criar o webhook de produção (URL do projeto, eventos `PAYMENT_*`) com o token de produção.
+3. `supabase secrets set ASAAS_ENV=production ASAAS_API_KEY=<chave de produção> ASAAS_WEBHOOK_TOKEN=<token de produção>`.
+4. `select billing_set_active_environment('production')` (até este passo as Edge de produção são recusadas pelo banco).
+5. Primeiro teste com valor mínimo (R$ 5,00) em empresa de teste; o customer de produção é criado na primeira cobrança.
+
 ## Decisões fechadas
 - Cobrança **avulsa Pix por fatura local** (sem assinatura Asaas, sem Checkout, sem Pix Automático, sem cartão).
 - `invoices` é a fonte de verdade (competência, vencimento, valor, carência, bloqueio). O `OVERDUE` do Asaas é **informativo**:

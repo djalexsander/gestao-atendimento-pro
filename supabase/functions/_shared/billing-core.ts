@@ -5,7 +5,7 @@
 //   GET pixQrCode -> gravar o Pix
 //
 // Cada gravação carrega o lease_token; quem perde o lease não grava mais nada (um segundo worker assumiu).
-import { AsaasApiError, type AsaasClient, type AsaasPaymentDto, valueToCents } from "./asaas-core.ts";
+import { AsaasApiError, type AsaasClient, type AsaasPaymentDto, isOurInvoiceReference, valueToCents } from "./asaas-core.ts";
 
 export interface RpcError {
   message: string;
@@ -46,7 +46,7 @@ export async function ensureCustomer(db: BillingDb, asaas: AsaasClient, companyI
   const claim = await call<{
     state: string; problem?: string; customer_id?: string; token?: string; external_reference?: string;
     profile?: { name: string; document: string; email: string; phone: string | null };
-  }>(db, "billing_claim_customer", { p_company_id: companyId });
+  }>(db, "billing_claim_customer", { p_company_id: companyId, p_environment: asaas.environment });
 
   if (claim.state === "ready" && claim.customer_id) return { ok: true, customerId: claim.customer_id };
   if (claim.state === "invalid_profile") return { ok: false, reason: `perfil de cobrança inválido (${claim.problem})`, retryable: true };
@@ -56,7 +56,7 @@ export async function ensureCustomer(db: BillingDb, asaas: AsaasClient, companyI
   }
 
   try {
-    let customerId = await asaas.findCustomer(claim.external_reference, claim.profile.document);
+    let customerId = await asaas.findCustomer(claim.external_reference);
     if (!customerId) {
       customerId = await asaas.createCustomer({
         name: claim.profile.name,
@@ -67,12 +67,12 @@ export async function ensureCustomer(db: BillingDb, asaas: AsaasClient, companyI
       });
     }
     const set = await call<{ ok: boolean; reason?: string }>(db, "billing_set_customer", {
-      p_company_id: companyId, p_token: claim.token, p_customer_id: customerId,
+      p_company_id: companyId, p_token: claim.token, p_customer_id: customerId, p_environment: asaas.environment,
     });
     if (!set.ok) return { ok: false, reason: `customer não gravado (${set.reason})`, retryable: set.reason === "lease_lost" };
     return { ok: true, customerId };
   } catch (e) {
-    await db.rpc("billing_release_customer", { p_company_id: companyId, p_token: claim.token });
+    await db.rpc("billing_release_customer", { p_company_id: companyId, p_token: claim.token, p_environment: asaas.environment });
     return { ok: false, reason: errText(e), retryable: isTransient(e) };
   }
 }
@@ -82,7 +82,7 @@ export async function ensureCustomer(db: BillingDb, asaas: AsaasClient, companyI
 export async function createChargeForInvoice(db: BillingDb, asaas: AsaasClient, invoiceId: string): Promise<ChargeOutcome> {
   const claim = await call<{
     state: string; reason?: string; token?: string; company_id?: string; description?: string; charge?: Record<string, unknown>;
-  }>(db, "billing_claim_charge", { p_invoice_id: invoiceId });
+  }>(db, "billing_claim_charge", { p_invoice_id: invoiceId, p_environment: asaas.environment });
 
   if (claim.state === "ready") return { kind: "ready", charge: claim.charge as unknown as PublicCharge };
   if (claim.state === "busy") return { kind: "busy" };
@@ -107,7 +107,7 @@ export async function createChargeForInvoice(db: BillingDb, asaas: AsaasClient, 
   const diverged = async (kind: "value_mismatch" | "reference_mismatch", detail: Record<string, unknown>): Promise<ChargeOutcome> => {
     await db.rpc("billing_record_anomaly", {
       p_kind: kind, p_detail: { stage: "charge_creation", ...detail }, p_company_id: companyId, p_invoice_id: invoiceId,
-      p_charge_id: chargeId, p_event_id: `charge:${chargeId}:${kind}`,
+      p_charge_id: chargeId, p_event_id: `charge:${chargeId}:${kind}`, p_environment: asaas.environment,
     });
     return await fail(new Error(kind === "value_mismatch" ? "valor da cobrança no Asaas diverge da fatura" : "referência da cobrança no Asaas diverge da fatura"), false);
   };
@@ -206,7 +206,7 @@ export type CancelOutcome = { kind: "done" } | { kind: "retry"; error: string };
 export async function cancelChargeForInvoice(db: BillingDb, asaas: AsaasClient, invoiceId: string): Promise<CancelOutcome> {
   try {
     const claim = await call<{ state: string; charge_id?: string; asaas_payment_id?: string | null; external_reference?: string }>(
-      db, "billing_claim_cancel", { p_invoice_id: invoiceId });
+      db, "billing_claim_cancel", { p_invoice_id: invoiceId, p_environment: asaas.environment });
     if (claim.state === "nothing") return { kind: "done" };
     if (claim.state === "busy") return { kind: "retry", error: "cobrança em criação" };
     if (!claim.charge_id) return { kind: "retry", error: "estado inesperado" };
@@ -247,11 +247,22 @@ export type PaymentEventOutcome =
 // begin (idempotência) -> RECONSULTA o pagamento no Asaas (o payload do webhook nunca é confiado) -> apply (uma transação).
 // Divergências viram anomalia no banco e a resposta é 200; 500 só para falha transitória (Asaas/banco), para o Asaas reentregar.
 export async function processPaymentEvent(db: BillingDb, asaas: AsaasClient, input: PaymentEventInput): Promise<PaymentEventOutcome> {
+  const environment = asaas.environment;
   try {
     const begin = await call<{ duplicate: boolean }>(db, "billing_event_begin", {
       p_event_id: input.eventId, p_event: input.event, p_payment_id: input.paymentId, p_payload: input.storedPayload,
+      p_environment: environment,
     });
     if (begin.duplicate) return { http: 200, result: "duplicate" };
+    // conta Asaas compartilhada: o payload já traz a referência de OUTRO sistema => registra e ignora, sem reconsultar o Asaas
+    // (nem anomalia, nem baixa, nem job). Payload sem referência segue o fluxo completo e é decidido após a reconsulta.
+    const claimed = (input.storedPayload.payment as { externalReference?: unknown } | null | undefined)?.externalReference;
+    if (typeof claimed === "string" && claimed && !isOurInvoiceReference(claimed)) {
+      await db.rpc("billing_event_finish", {
+        p_event_id: input.eventId, p_status: "ignored", p_result: "ignored_foreign_payment", p_error: null, p_environment: environment,
+      });
+      return { http: 200, result: "ignored_foreign_payment" };
+    }
   } catch (e) {
     return { http: 500, error: errText(e) };
   }
@@ -263,16 +274,17 @@ export async function processPaymentEvent(db: BillingDb, asaas: AsaasClient, inp
     if (e instanceof AsaasApiError && e.status === 404) {
       await db.rpc("billing_record_anomaly", {
         p_kind: "payment_not_found_in_asaas", p_detail: { event: input.event }, p_payment_id: input.paymentId, p_event_id: input.eventId,
+        p_environment: environment,
       });
-      await db.rpc("billing_event_finish", { p_event_id: input.eventId, p_status: "anomaly", p_result: "payment_not_found_in_asaas", p_error: null });
+      await db.rpc("billing_event_finish", { p_event_id: input.eventId, p_status: "anomaly", p_result: "payment_not_found_in_asaas", p_error: null, p_environment: environment });
       return { http: 200, result: "payment_not_found_in_asaas" };
     }
-    await db.rpc("billing_event_finish", { p_event_id: input.eventId, p_status: "failed", p_result: null, p_error: errText(e) });
+    await db.rpc("billing_event_finish", { p_event_id: input.eventId, p_status: "failed", p_result: null, p_error: errText(e), p_environment: environment });
     return { http: 500, error: errText(e) };
   }
 
   if (verified.id !== input.paymentId) {
-    await db.rpc("billing_event_finish", { p_event_id: input.eventId, p_status: "anomaly", p_result: "payment_id_mismatch", p_error: null });
+    await db.rpc("billing_event_finish", { p_event_id: input.eventId, p_status: "anomaly", p_result: "payment_id_mismatch", p_error: null, p_environment: environment });
     return { http: 200, result: "payment_id_mismatch" };
   }
 
@@ -284,6 +296,7 @@ export async function processPaymentEvent(db: BillingDb, asaas: AsaasClient, inp
     const applied = await call<{ result: string }>(db, "billing_event_apply", {
       p_event_id: input.eventId,
       p_event: event,
+      p_environment: environment,
       p_payment: {
         id: verified.id,
         status: verified.status ?? null,
@@ -298,7 +311,7 @@ export async function processPaymentEvent(db: BillingDb, asaas: AsaasClient, inp
     });
     return { http: 200, result: applied.result };
   } catch (e) {
-    await db.rpc("billing_event_finish", { p_event_id: input.eventId, p_status: "failed", p_result: null, p_error: errText(e) });
+    await db.rpc("billing_event_finish", { p_event_id: input.eventId, p_status: "failed", p_result: null, p_error: errText(e), p_environment: environment });
     return { http: 500, error: errText(e) };
   }
 }
