@@ -95,6 +95,8 @@ export function CartPanel({
   onNotesChange,
   onEdit,
   onSubmit,
+  submitLabel = "Enviar pedido",
+  hint = "Total só informativo: o preço cobrado é sempre conferido no envio.",
 }: {
   cart: CartItem[];
   imageUrls: Map<string, string>;
@@ -110,6 +112,9 @@ export function CartPanel({
   // null = a linha não tem opções para editar (quantidade/observação ficam na própria linha)
   onEdit: (item: CartItem) => (() => void) | null;
   onSubmit: () => void;
+  // Reuso fora do atendimento (ex.: novo pedido de Delivery): rótulo do botão e texto de apoio.
+  submitLabel?: string;
+  hint?: string;
 }) {
   const total = cartTotal(cart);
 
@@ -149,9 +154,9 @@ export function CartPanel({
               <span>Total da cesta</span>
               <span>{formatReais(total)}</span>
             </div>
-            <span className="field-hint">Total só informativo: o preço cobrado é sempre conferido no envio.</span>
+            <span className="field-hint">{hint}</span>
             <button className="btn-primary" type="button" disabled={submitting} onClick={onSubmit}>
-              {submitting ? "Enviando…" : "Enviar pedido"}
+              {submitting ? "Enviando…" : submitLabel}
             </button>
           </>
         )}

@@ -30,6 +30,7 @@ import { ModulePlaceholderPage } from "./pages/ModulePlaceholderPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
 import {
   OperationalCashierOrderPage,
+  OperationalDeliveryPage,
   OperationalOpenAttendancesPage,
   OperationalLabelsPage,
   OperationalOrdersPage,
@@ -39,6 +40,7 @@ import {
   OperationalServicePage,
 } from "./pages/OperationalPages";
 import { PrintingSettingsPage } from "./pages/PrintingSettingsPage";
+import { DeliverySettingsPage } from "./pages/DeliverySettingsPage";
 import { ProductCategoriesPage } from "./pages/ProductCategoriesPage";
 import { ProductModifiersPage } from "./pages/ProductModifiersPage";
 import { ProductionSectorsPage } from "./pages/ProductionSectorsPage";
@@ -160,6 +162,16 @@ function App() {
         }
       />
       <Route
+        path="/operacional/delivery"
+        element={
+          <OperationalRoute area="delivery">
+            <ModuleGate module="delivery">
+              <OperationalDeliveryPage />
+            </ModuleGate>
+          </OperationalRoute>
+        }
+      />
+      <Route
         path="/operacional/caixa"
         element={
           <OperationalRoute area="caixa">
@@ -216,6 +228,7 @@ function App() {
 
         <Route path="configuracoes/impressoras" element={<Navigate to="/app/configuracoes/impressao" replace />} />
         <Route path="configuracoes/impressao" element={<ModuleGate module="impressao"><PrintingSettingsPage /></ModuleGate>} />
+        <Route path="configuracoes/delivery" element={<ModuleGate module="delivery"><DeliverySettingsPage /></ModuleGate>} />
         <Route path="configuracoes/sistema" element={<SystemSettingsPage />} />
       </Route>
       <Route

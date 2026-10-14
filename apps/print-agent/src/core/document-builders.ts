@@ -66,15 +66,83 @@ function groupBySector(job: JobModel): Array<{ sector: string | null; items: Job
   return groups;
 }
 
+const PAYMENT_TIMING_LABEL: Record<string, string> = { on_order: "Pago no pedido", on_delivery: "Pagar na entrega", on_pickup: "Pagar na retirada" };
+const PAYMENT_METHOD_LABEL: Record<string, string> = { cash: "Dinheiro", pix: "Pix", debit_card: "Cartão de débito", credit_card: "Cartão de crédito", other: "Outro" };
+
+function formatPhone(raw: string): string {
+  const d = raw.replace(/\D/g, "");
+  if (d.length === 11) return `(${d.slice(0, 2)}) ${d.slice(2, 7)}-${d.slice(7)}`;
+  if (d.length === 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;
+  return raw;
+}
+function formatCep(raw: string): string {
+  const d = raw.replace(/\D/g, "");
+  return d.length === 8 ? `${d.slice(0, 5)}-${d.slice(5)}` : raw;
+}
+
+// Bloco "delivery" do payload (só existe em pedido de entrega/retirada). Pedido de comanda/mesa não passa por aqui.
+export function deliveryOf(payload: Record<string, unknown>): Rec | null {
+  const d = rec(payload.delivery);
+  return Object.keys(d).length > 0 ? d : null;
+}
+
+// Cabeçalho do pedido de delivery: tipo bem grande, cliente e telefone (o endereço vem depois dos itens).
+function deliveryTop(dv: Rec, customer: string | null): Block[] {
+  const pickup = str(dv.fulfillment) === "pickup";
+  const blocks: Block[] = [big(pickup ? "RETIRADA" : "DELIVERY", { align: "left" })];
+  const name = customer ?? (str(dv.customer_name) || null);
+  if (name) blocks.push(text(`Cliente: ${name}`));
+  const phone = str(dv.customer_phone);
+  if (phone) blocks.push(bold(`Tel: ${formatPhone(phone)}`));
+  return blocks;
+}
+
+// Endereço, referência, taxa, pagamento, troco, previsão, entregador e observação. Endereço e referência em destaque
+// (legibilidade em 80 mm); textos longos quebram em linhas (o layout nunca trunca).
+function deliveryDetails(dv: Rec): Block[] {
+  const pickup = str(dv.fulfillment) === "pickup";
+  const blocks: Block[] = [divider()];
+  if (!pickup) {
+    const a = rec(dv.address);
+    blocks.push(bold("ENDEREÇO DE ENTREGA"));
+    const line1 = [str(a.street), str(a.number)].filter(Boolean).join(", ");
+    if (line1) blocks.push(bold(line1.toUpperCase()));
+    if (str(a.complement)) blocks.push(text(`Compl.: ${str(a.complement)}`));
+    if (str(a.neighborhood)) blocks.push(text(`Bairro: ${str(a.neighborhood)}`));
+    const city = [str(a.city), str(a.state)].filter(Boolean).join("/");
+    if (city) blocks.push(text(`Cidade: ${city}`));
+    if (str(a.cep)) blocks.push(text(`CEP: ${formatCep(str(a.cep))}`));
+    if (str(a.reference)) blocks.push(bold(`REF.: ${str(a.reference).toUpperCase()}`));
+    blocks.push(feed(1));
+    blocks.push(text(`Taxa de entrega: ${money(num(dv.delivery_fee))}`));
+  }
+  const timing = PAYMENT_TIMING_LABEL[str(dv.payment_timing)];
+  if (timing) blocks.push(text(timing));
+  const method = PAYMENT_METHOD_LABEL[str(dv.expected_method)];
+  if (method) blocks.push(text(`Forma prevista: ${method}`));
+  if (typeof dv.cash_change_for === "number") blocks.push(bold(`TROCO PARA: ${money(num(dv.cash_change_for))}`));
+  const eta = pickup ? dv.estimated_ready_at : dv.estimated_delivery_at;
+  if (eta) blocks.push(text(`${pickup ? "Previsão de retirada" : "Previsão de entrega"}: ${hhmm(eta)}`));
+  const courier = str(rec(dv.courier).name);
+  if (courier) blocks.push(text(`Entregador: ${courier}`));
+  if (str(dv.notes)) blocks.push(bold(`>> OBS DO PEDIDO: ${str(dv.notes).toUpperCase()}`));
+  return blocks;
+}
+
 function productionOrder(job: JobModel): Block[] {
   const pl = job.payload;
+  const dv = deliveryOf(pl);
   const blocks: Block[] = [...reprintBanner(job), center(TITLE, { bold: true })];
   const groups = groupBySector(job);
   const titled = groups.some((g) => g.sector);
   if (titled && groups.length === 1) blocks.push(feed(1), big(groups[0].sector!.toUpperCase(), { align: "center" }));
   blocks.push(feed(1));
-  if (job.pointLabel) blocks.push(big(job.pointLabel.toUpperCase(), { align: "left" }));
-  if (job.customerName) blocks.push(text(`Cliente: ${job.customerName}`));
+  if (dv) {
+    blocks.push(...deliveryTop(dv, job.customerName));
+  } else {
+    if (job.pointLabel) blocks.push(big(job.pointLabel.toUpperCase(), { align: "left" }));
+    if (job.customerName) blocks.push(text(`Cliente: ${job.customerName}`));
+  }
   blocks.push(divider());
   for (const group of groups) {
     if (titled && groups.length > 1) blocks.push(bold(`[ ${(group.sector ?? "SEM SETOR").toUpperCase()} ]`));
@@ -85,6 +153,7 @@ function productionOrder(job: JobModel): Block[] {
       blocks.push(feed(1));
     }
   }
+  if (dv) blocks.push(...deliveryDetails(dv));
   blocks.push(divider(), text(`Pedido: ${hhmm(pl.sent_at)}`));
   const operator = str(rec(pl.operator).name);
   if (operator) blocks.push(text(`Atendente: ${operator}`));

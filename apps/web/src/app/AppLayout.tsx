@@ -12,6 +12,7 @@ const ROLE_LABEL: Record<string, string> = {
   cashier: "Caixa / Balcão",
   attendant: "Atendente",
   production: "Produção",
+  courier: "Entregador",
 };
 
 // Páginas com tabelas/listas que pedem a largura maior (demais seguem em 720px).

@@ -56,7 +56,14 @@ function json(body: Record<string, unknown>, status = 200): Response {
 
 // Eventos operacionais (pedido) chegam com urgência alta e TTL curto; o resumo financeiro é normal.
 export function kindOf(eventType: string): "order" | "default" {
-  return eventType === "new_order" || eventType === "order_ready" || eventType === "order_cancelled_in_production" ? "order" : "default";
+  return eventType === "new_order" ||
+    eventType === "order_ready" ||
+    eventType === "order_cancelled_in_production" ||
+    eventType === "new_delivery_order" ||
+    eventType === "delivery_out_for_delivery" ||
+    eventType === "delivery_delivered"
+    ? "order"
+    : "default";
 }
 
 export async function handlePushDispatch(req: Request, deps: DispatchDeps): Promise<Response> {

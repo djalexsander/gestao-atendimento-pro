@@ -249,10 +249,12 @@ export function roleNotificationSummary(role: string | null): string {
     case "production":
       return "Você recebe novos pedidos e cancelamentos dos setores escolhidos neste aparelho.";
     case "attendant":
-      return "Você recebe aviso quando um pedido que você enviou fica completo (pronto).";
+      return "Você recebe aviso quando um pedido que você enviou fica completo (pronto) e quando um delivery novo chega ou o seu sai/é entregue.";
     case "owner":
     case "admin":
-      return "Você recebe um resumo diário das contas a receber e a pagar (vencendo hoje e atrasadas).";
+      return "Você recebe um resumo diário das contas a receber e a pagar (vencendo hoje e atrasadas) e aviso de novos deliveries.";
+    case "cashier":
+      return "Você recebe aviso de novos deliveries e retiradas e quando um que você criou sai para entrega ou é entregue.";
     default:
       return "Seu papel ainda não recebe notificações automáticas.";
   }

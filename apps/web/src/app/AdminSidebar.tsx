@@ -51,7 +51,9 @@ export function AdminSidebar({ open, onNavigate }: { open: boolean; onNavigate: 
         </button>
         {isOpen && (
           <ul className="admin-nav-group-items">
-            {group.items.map((item) => (
+            {group.items
+              .filter((item) => !(item.hideWhenLocked && item.module && moduleAccess(entitlements, item.module) !== "allowed"))
+              .map((item) => (
               <li key={item.path + item.label}>
                 <NavLink
                   to={item.path}

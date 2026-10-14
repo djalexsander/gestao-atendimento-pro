@@ -14,6 +14,10 @@ import type { OpenSessionsSource } from "../features/operations/openSessionsApi"
 import { OpenAttendancesBoard } from "../features/operations/OpenAttendancesBoard";
 import { LabelsPage } from "../features/labels/LabelsPage";
 import { OrdersBoard } from "../features/ordersBoard/OrdersBoard";
+import { DeliveryBoard } from "../features/delivery/DeliveryBoard";
+import type { DeliverySource } from "../features/delivery/deliveryApi";
+import { moduleAccess } from "../features/commercial/commercialLogic";
+import { useCommercial } from "../features/commercial/CommercialProvider";
 import type { OrdersBoardApi } from "../features/ordersBoard/ordersBoardApi";
 import { ServicePointsPanel } from "../features/operations/ServicePointsPanel";
 import { ProductionBoard } from "../features/production/ProductionBoard";
@@ -38,6 +42,10 @@ function OperationalShell({ title, children }: { title: string; children: ReactN
   const onLabels = pathname === OPERATIONAL_PATH.etiquetas;
   const canSeeLabels = role !== null && canOpenOperationalArea(role, "etiquetas");
   const isAdminRole = role === "owner" || role === "admin";
+  const { entitlements } = useCommercial();
+  const onDelivery = pathname === OPERATIONAL_PATH.delivery;
+  // Delivery só aparece quando o módulo está liberado (módulo ainda sem oferta comercial: nada de "contratar").
+  const canSeeDelivery = role !== null && canOpenOperationalArea(role, "delivery") && moduleAccess(entitlements, "delivery") === "allowed";
   const { cash: myCash } = useMyOpenCash(isCashier);
   const [logoutBlocked, setLogoutBlocked] = useState<"open-cash" | "unverified" | null>(null);
 
@@ -98,12 +106,17 @@ function OperationalShell({ title, children }: { title: string; children: ReactN
               Pedidos
             </Link>
           )}
+          {canSeeDelivery && !onDelivery && (
+            <Link to={OPERATIONAL_PATH.delivery} className="btn-secondary btn-small" style={{ textDecoration: "none" }}>
+              Delivery
+            </Link>
+          )}
           {canSeeLabels && !onLabels && (
             <Link to={OPERATIONAL_PATH.etiquetas} className="btn-secondary btn-small" style={{ textDecoration: "none" }}>
               Etiquetas
             </Link>
           )}
-          {(onOpenBoard || onOrdersBoard || onLabels) && role && !isAdminRole && (
+          {(onOpenBoard || onOrdersBoard || onLabels || onDelivery) && role && !isAdminRole && role !== "courier" && (
             <Link to={homePathForRole(role)} className="btn-secondary btn-small" style={{ textDecoration: "none" }}>
               Voltar
             </Link>
@@ -238,6 +251,16 @@ export function OperationalOrdersPage({ source }: { source?: OrdersBoardApi }) {
   return (
     <OperationalShell title="Pedidos">
       <OrdersBoard source={source} />
+    </OperationalShell>
+  );
+}
+
+// Delivery / Retirada: quadro em tempo real, novo pedido, detalhe e estados. O entregador usa a MESMA tela (o banco
+// já devolve só os pedidos atribuídos a ele). `source` só existe para exercitar a tela com dados simulados.
+export function OperationalDeliveryPage({ source }: { source?: DeliverySource }) {
+  return (
+    <OperationalShell title="Delivery">
+      <DeliveryBoard source={source} />
     </OperationalShell>
   );
 }

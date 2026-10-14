@@ -14,7 +14,9 @@ export interface NavLeaf {
   path: string;
   status: NavStatus;
   // Item exclusivo de um módulo pago: a sidebar o mostra como "Contratar" quando a empresa não tem o módulo.
-  module?: "financeiro" | "producao" | "estoque" | "impressao";
+  module?: "financeiro" | "producao" | "estoque" | "impressao" | "delivery";
+  // Some do menu enquanto o módulo não estiver liberado (em vez de mostrar "contratar"): módulo ainda sem oferta comercial.
+  hideWhenLocked?: boolean;
   // Só para placeholders que merecem uma explicação melhor que o texto genérico
   // (ex.: "essa configuração já existe, só que em outra tela").
   note?: string;
@@ -68,6 +70,7 @@ export const ADMIN_NAV: NavEntry[] = [
       { type: "item", label: "Etiquetas", path: "/operacional/etiquetas", status: "ready", module: "impressao" },
       { type: "item", label: "Produção", path: "/operacional/producao", status: "ready", module: "producao" },
       { type: "item", label: "Caixa / Balcão", path: "/operacional/caixa", status: "ready" },
+      { type: "item", label: "Delivery", path: "/operacional/delivery", status: "ready", module: "delivery", hideWhenLocked: true },
     ],
   },
   {
@@ -80,6 +83,7 @@ export const ADMIN_NAV: NavEntry[] = [
       { type: "item", label: "Código de acesso", path: "/app/configuracoes/codigo-acesso", status: "ready" },
       { type: "item", label: "Modo de atendimento", path: "/app/configuracoes/modo-atendimento", status: "ready" },
       { type: "item", label: "Impressão", path: "/app/configuracoes/impressao", status: "ready", module: "impressao" },
+      { type: "item", label: "Delivery", path: "/app/configuracoes/delivery", status: "ready", module: "delivery", hideWhenLocked: true },
       { type: "item", label: "Notificações", path: "/app/configuracoes/notificacoes", status: "ready" },
       { type: "item", label: "Sistema / Preferências", path: "/app/configuracoes/sistema", status: "ready" },
     ],

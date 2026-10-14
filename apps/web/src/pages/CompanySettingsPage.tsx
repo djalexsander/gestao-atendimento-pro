@@ -9,6 +9,7 @@ const ROLE_LABEL: Record<CompanyRole, string> = {
   cashier: "Caixa / Balcão",
   attendant: "Atendente",
   production: "Produção",
+  courier: "Entregador",
 };
 
 interface CompanyFormProps {

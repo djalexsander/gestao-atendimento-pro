@@ -54,6 +54,7 @@ const KIND_CHIPS: Array<{ value: KindFilter; label: string }> = [
   { value: "all", label: "Todos" },
   { value: "table", label: "Mesas" },
   { value: "command", label: "Comandas" },
+  { value: "delivery", label: "Delivery" },
 ];
 const SORT_OPTIONS: Array<{ value: SortKey; label: string }> = [
   { value: "newest", label: "Mais recentes" },

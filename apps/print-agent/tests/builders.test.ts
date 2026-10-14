@@ -207,3 +207,62 @@ test("modificadores: cancelamento repete os modificadores do item", () => {
   const j = job("production_cancellation", { service_point: { label: "Comanda CMD005" }, reason: "x", items: [{ quantity: 1, product_name: "X-Salada", modifiers: [{ name: "+ Bacon", type: "add" }] }] });
   assert.ok(text80(j).join("\n").includes("+ BACON"));
 });
+
+// ---- Delivery (bloco "delivery" do payload; comanda/mesa não muda) ----
+const deliveryPayload = {
+  ...order.payload,
+  service_point: { type: null, label: "Delivery" },
+  customer_name: "Ana Souza",
+  order: { origin: "delivery" },
+  items: [{ quantity: 2, product_name: "X-Burger", notes: "sem picles", modifiers: [{ name: "Bacon", type: "add" }], sector: { name: "Cozinha" } }],
+  delivery: {
+    fulfillment: "delivery",
+    customer_name: "Ana Souza",
+    customer_phone: "11987654321",
+    address: { street: "Rua das Palmeiras", number: "1234", complement: "Apto 52 bloco B", neighborhood: "Jardim Paulista", city: "São Paulo", state: "SP", cep: "01452000", reference: "Em frente à padaria do Zé, portão azul" },
+    delivery_fee: 8,
+    payment_timing: "on_delivery",
+    expected_method: "cash",
+    cash_change_for: 100,
+    estimated_delivery_at: "2026-10-14T18:40:00Z",
+    courier: { name: "CARLOS" },
+    notes: "tocar o interfone 2x",
+  },
+};
+
+test("delivery: tipo em destaque, cliente, telefone, endereço, referência, taxa, pagamento, troco, previsão, entregador e observação", () => {
+  const joined = text80(job("production_order", deliveryPayload)).join("\n");
+  for (const s of ["DELIVERY", "Cliente: Ana Souza", "Tel: (11) 98765-4321", "ENDEREÇO DE ENTREGA", "RUA DAS PALMEIRAS, 1234", "Compl.: Apto 52 bloco B", "Bairro: Jardim Paulista", "Cidade: São Paulo/SP", "CEP: 01452-000", "REF.: EM FRENTE À PADARIA DO ZÉ, PORTÃO AZUL", "Taxa de entrega: R$ 8,00", "Pagar na entrega", "Forma prevista: Dinheiro", "TROCO PARA: R$ 100,00", "Previsão de entrega: 15:40", "Entregador: CARLOS", ">> OBS DO PEDIDO: TOCAR O INTERFONE 2X", "2x X-BURGER", "BACON", ">> OBS: SEM PICLES"]) {
+    assert.ok(joined.includes(s), `faltou "${s}"`);
+  }
+  assert.ok(!joined.includes("COMANDA"), "não mostra rótulo de comanda");
+});
+
+test("delivery: retirada mostra RETIRADA, previsão de retirada e não imprime endereço nem taxa", () => {
+  const joined = text80(job("production_order", { ...deliveryPayload, delivery: { fulfillment: "pickup", customer_name: "Zé", customer_phone: "1133334444", payment_timing: "on_pickup", expected_method: "pix", estimated_ready_at: "2026-10-14T18:30:00Z", address: null, delivery_fee: 0 } })).join("\n");
+  assert.ok(joined.includes("RETIRADA") && joined.includes("Previsão de retirada: 15:30") && joined.includes("Pagar na retirada") && joined.includes("Forma prevista: Pix"));
+  assert.ok(joined.includes("Tel: (11) 3333-4444"));
+  assert.ok(!joined.includes("ENDEREÇO") && !joined.includes("Taxa de entrega") && !joined.includes("TROCO"));
+});
+
+test("delivery sem entregador, sem troco e sem referência: omite essas linhas", () => {
+  const dv = { ...deliveryPayload.delivery, courier: undefined, cash_change_for: undefined, expected_method: "pix", notes: undefined, address: { ...deliveryPayload.delivery.address, reference: undefined } };
+  const joined = text80(job("production_order", { ...deliveryPayload, delivery: dv })).join("\n");
+  assert.ok(!joined.includes("Entregador:") && !joined.includes("TROCO") && !joined.includes("REF.:") && !joined.includes("OBS DO PEDIDO"));
+  assert.ok(joined.includes("ENDEREÇO DE ENTREGA") && joined.includes("Forma prevista: Pix"));
+});
+
+test("delivery 58 mm: endereço e referência longos quebram e nada se perde", () => {
+  const long = { ...deliveryPayload.delivery, address: { street: "Avenida Engenheiro Presidente Doutor Fulano de Tal Júnior", number: "99999", complement: "Condomínio Residencial Vista Linda torre 3 apartamento 1203", neighborhood: "Vila Nova Conceição Paulista", city: "São Bernardo do Campo", state: "SP", cep: "09999000", reference: "Atrás do mercado grande depois da igreja azul na esquina com a rua da escola" } };
+  const j = job("production_order", { ...deliveryPayload, delivery: long }, { paper_width: 58 });
+  const cols = columnsFor(58);
+  const lines = layout(buildDocument(j), cols);
+  for (const l of lines) if (l.kind === "text") assert.ok(l.text.length <= (l.size === 2 ? cols / 2 : cols), `"${l.text}" estoura`);
+  const all = lines.map((l) => (l.kind === "text" ? l.text : "")).join(" ");
+  for (const word of ["ENGENHEIRO", "FULANO", "JÚNIOR", "CONDOMÍNIO", "1203", "CONCEIÇÃO", "BERNARDO", "MERCADO", "IGREJA", "ESCOLA", "09999-000"]) assert.ok(all.toUpperCase().includes(word), `perdeu ${word}`);
+});
+
+test("comanda/mesa (sem bloco delivery): ticket idêntico ao de antes", () => {
+  const joined = text80(order).join("\n");
+  assert.ok(joined.includes("COMANDA CMD005") && joined.includes("Cliente: Fulano") && !joined.includes("DELIVERY") && !joined.includes("ENDEREÇO"));
+});

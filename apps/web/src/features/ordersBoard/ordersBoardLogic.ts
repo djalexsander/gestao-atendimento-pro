@@ -18,7 +18,7 @@ export { FILTER_LABEL as PERIOD_LABEL, MAX_RANGE_DAYS, rangeBoundsUtc, rangeFor,
 export const PAGE_SIZE = 50;
 
 export type PointKind = "table" | "command";
-export type KindFilter = "all" | PointKind;
+export type KindFilter = "all" | PointKind | "delivery";
 export type ProductionStatus = "pending" | "preparing" | "ready";
 export type AggStatus = "pending" | "preparing" | "ready" | "partial" | "cancelled";
 export type StatusFilter = "all" | AggStatus;

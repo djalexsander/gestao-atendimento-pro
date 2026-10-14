@@ -16,6 +16,7 @@ export function subscribeToOpenAttendanceChanges(
   companyId: string,
   onChange: () => void,
   tag = "open-attendances",
+  tables: readonly string[] = OPEN_ATTENDANCE_TABLES,
 ): () => void {
   let disposed = false;
   let channel: RealtimeChannelLike | null = null;
@@ -33,7 +34,7 @@ export function subscribeToOpenAttendanceChanges(
     if (disposed) return;
 
     let ch = client.channel(`${tag}:${companyId}:${Math.random().toString(36).slice(2)}`);
-    for (const table of OPEN_ATTENDANCE_TABLES) {
+    for (const table of tables) {
       ch = ch.on("postgres_changes", { event: "*", schema: "public", table, filter: `company_id=eq.${companyId}` }, () => {
         rtLog(`${tag} ${table} change received`);
         onChange();

@@ -402,12 +402,13 @@ export function summaryLines(plan: { name: string; monthly_price_cents: number }
 // --- Entitlement de módulos ---------------------------------------------------------------------------------------------
 // Fonte da verdade: o BANCO (tenant_get_entitlements / assert_company_module). Aqui só se decide o que MOSTRAR; a barreira real
 // das operações exclusivas é do backend. Mapa módulo -> recurso (o mesmo documentado na migration 20261007020000).
-export type ModuleCode = "financeiro" | "producao" | "estoque" | "impressao";
+export type ModuleCode = "financeiro" | "producao" | "estoque" | "impressao" | "delivery";
 export const MODULE_NAME: Record<ModuleCode, string> = {
   financeiro: "Financeiro",
   producao: "Produção / KDS",
   estoque: "Estoque",
   impressao: "Impressão Avançada",
+  delivery: "Delivery",
 };
 /** Rotas exclusivas de módulo (prefixo -> módulo). Tudo o que não está aqui é núcleo do Plano Base. */
 export const MODULE_ROUTES: ReadonlyArray<readonly [string, ModuleCode]> = [
@@ -419,6 +420,8 @@ export const MODULE_ROUTES: ReadonlyArray<readonly [string, ModuleCode]> = [
   ["/operacional/producao", "producao"],
   ["/operacional/etiquetas", "impressao"],
   ["/app/configuracoes/impressao", "impressao"],
+  ["/operacional/delivery", "delivery"],
+  ["/app/configuracoes/delivery", "delivery"],
 ];
 export function moduleForPath(pathname: string): ModuleCode | null {
   const hit = MODULE_ROUTES.find(([prefix]) => pathname === prefix || pathname.startsWith(prefix + "/"));

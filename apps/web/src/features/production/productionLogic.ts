@@ -46,6 +46,9 @@ export interface ProductionItem {
   pointType: "command" | "table";
   pointCode: string;
   pointName: string;
+  // Atendimento de delivery (sem comanda/mesa): ponto vem nulo e o rótulo vira DELIVERY / RETIRADA.
+  sessionKind: "point" | "delivery";
+  fulfillment: "delivery" | "pickup" | null;
   customerName: string | null;
   sentByName: string | null;
 }
@@ -68,6 +71,8 @@ export interface RawProductionItem {
   point_type: "command" | "table";
   point_code: string;
   point_name: string;
+  session_kind?: "point" | "delivery" | null;
+  fulfillment?: "delivery" | "pickup" | null;
   customer_name: string | null;
   sent_by_name: string | null;
 }
@@ -90,6 +95,8 @@ export function toProductionItem(raw: RawProductionItem): ProductionItem {
     pointType: raw.point_type,
     pointCode: raw.point_code,
     pointName: raw.point_name,
+    sessionKind: raw.session_kind === "delivery" ? "delivery" : "point",
+    fulfillment: raw.fulfillment ?? null,
     customerName: raw.customer_name,
     sentByName: raw.sent_by_name,
   };
@@ -104,6 +111,8 @@ export interface OrderGroup {
   pointType: "command" | "table";
   pointCode: string;
   pointName: string;
+  sessionKind: "point" | "delivery";
+  fulfillment: "delivery" | "pickup" | null;
   customerName: string | null;
   sentByName: string | null;
   items: ProductionItem[];
@@ -124,6 +133,8 @@ export function groupByOrder(items: ProductionItem[], status: ProductionStatus):
         pointType: item.pointType,
         pointCode: item.pointCode,
         pointName: item.pointName,
+        sessionKind: item.sessionKind,
+        fulfillment: item.fulfillment,
         customerName: item.customerName,
         sentByName: item.sentByName,
         items: [],
@@ -177,6 +188,7 @@ export interface QueueCancellation {
   name: string;
   pointType: "command" | "table";
   pointCode: string;
+  sessionKind: "point" | "delivery";
   reason: string;
   createdAt: string;
 }
@@ -187,6 +199,7 @@ export interface RawQueueCancellation {
   name: string;
   point_type: "command" | "table";
   point_code: string;
+  session_kind?: "point" | "delivery" | null;
   reason: string;
   created_at: string;
 }
@@ -198,6 +211,7 @@ export function toQueueCancellation(raw: RawQueueCancellation): QueueCancellatio
     name: raw.name,
     pointType: raw.point_type,
     pointCode: raw.point_code,
+    sessionKind: raw.session_kind === "delivery" ? "delivery" : "point",
     reason: raw.reason,
     createdAt: raw.created_at,
   };
@@ -211,10 +225,13 @@ export function newCancellations(events: QueueCancellation[], seen: Set<string> 
 }
 
 export function cancellationText(c: QueueCancellation): string {
-  return `Item cancelado — ${c.quantity}x ${c.name} — ${c.pointType === "table" ? "Mesa" : "Comanda"} ${c.pointCode}`;
+  const where = c.sessionKind === "delivery" ? "DELIVERY" : `${c.pointType === "table" ? "Mesa" : "Comanda"} ${c.pointCode}`;
+  return `Item cancelado — ${c.quantity}x ${c.name} — ${where}`;
 }
 
-export function pointLabel(group: Pick<OrderGroup, "pointType" | "pointCode">): string {
+export function pointLabel(group: Pick<OrderGroup, "pointType" | "pointCode"> & { sessionKind?: "point" | "delivery"; fulfillment?: "delivery" | "pickup" | null }): string {
+  // Badge do KDS: o fluxo de produção é o mesmo; só muda a origem exibida.
+  if (group.sessionKind === "delivery") return group.fulfillment === "pickup" ? "RETIRADA" : "DELIVERY";
   return `${group.pointType === "table" ? "Mesa" : "Comanda"} ${group.pointCode}`;
 }
 
