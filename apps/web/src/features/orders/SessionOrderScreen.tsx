@@ -7,6 +7,7 @@ import { CheckoutDialog, OpenCashDialog } from "../cash/CashDialogs";
 import { Modal } from "../employees/Modal";
 import { supabaseDocumentsSource, type DocumentsSource } from "../printing/documentsApi";
 import { PrintDocumentButton } from "../printing/PrintDocumentButton";
+import { formatReais } from "../../lib/money";
 import { formatOpenedFull } from "../operations/panel";
 import { createCoalescedRunner } from "./coalesce";
 import { CancelItemDialog } from "./CancelItemDialog";
@@ -183,6 +184,12 @@ export function SessionOrderScreen({
   }, [source, sessionId]);
 
   const canOrder = header?.status === "open";
+  const isDelivery = header?.kind === "delivery";
+  const leave = isDelivery ? { path: OPERATIONAL_PATH.delivery, label: "Delivery" } : { path: backPath, label: "Comandas / Mesas" };
+  // Rótulo do atendimento: comanda/mesa, ou Delivery/Retirada (sem ponto).
+  const sessionLabel = header ? (header.point ? `${header.point.displayName} (${header.point.code})` : header.fulfillment === "pickup" ? "Retirada" : "Delivery") : "";
+  // Total a receber: itens + taxa de entrega (a taxa só existe em delivery; o servidor confere o fechamento).
+  const checkoutTotal = sessionTotal(orders) + (header?.deliveryFee ?? 0);
 
   // Qualquer mudança na cesta (adicionar, +/-, remover, observação) limpa o aviso/erro do envio
   // anterior — senão "Pedido enviado com sucesso." ou o erro ficariam pendurados enquanto o
@@ -260,8 +267,8 @@ export function SessionOrderScreen({
     content = (
       <div className="op-state">
         <p>{loadError}</p>
-        <button className="btn-secondary" type="button" onClick={() => navigate(backPath)}>
-          Voltar para Comandas / Mesas
+        <button className="btn-secondary" type="button" onClick={() => navigate(leave.path)}>
+          Voltar para {leave.label}
         </button>
       </div>
     );
@@ -269,8 +276,8 @@ export function SessionOrderScreen({
     content = (
       <div className="op-state">
         <p>Este atendimento não está mais aberto.</p>
-        <button className="btn-secondary" type="button" onClick={() => navigate(backPath)}>
-          Voltar para Comandas / Mesas
+        <button className="btn-secondary" type="button" onClick={() => navigate(leave.path)}>
+          Voltar para {leave.label}
         </button>
       </div>
     );
@@ -285,6 +292,13 @@ export function SessionOrderScreen({
             </button>
           </div>
         )}
+        {isDelivery && (
+          <p className="muted dl-session-note" role="note">
+            Pedido de {header?.fulfillment === "pickup" ? "retirada" : "delivery"}: aqui você confere os itens, cancela item (com motivo) e recebe o pagamento.
+            {header && header.deliveryFee > 0 ? ` Taxa de entrega: ${formatReais(header.deliveryFee)}.` : ""}
+          </p>
+        )}
+        {!isDelivery && (
         <div className="order-body">
           <Catalog categories={categories} products={products} imageUrls={imageUrls} variant={variant} onAdd={handleAdd} />
           <CartPanel
@@ -303,10 +317,12 @@ export function SessionOrderScreen({
             onSubmit={() => void handleSubmit()}
           />
         </div>
+        )}
         <OrderHistory
           orders={orders}
           role={activeMembership?.role}
           sessionOpen={canOrder}
+          deliveryFee={header?.deliveryFee ?? 0}
           onCancelItem={(item) => setCancelTarget(item)}
         />
         {cancelTarget && (
@@ -320,8 +336,8 @@ export function SessionOrderScreen({
             onClose={() => setCancelTarget(null)}
           />
         )}
-        <CartBar cart={cart} onOpen={() => setCartOpen(true)} />
-        {pick && (
+        {!isDelivery && <CartBar cart={cart} onOpen={() => setCartOpen(true)} />}
+        {!isDelivery && pick && (
           <ModifierDialog
             key={pick.line?.lineId ?? pick.product.id}
             productName={pick.product.name}
@@ -343,17 +359,23 @@ export function SessionOrderScreen({
         <div>
           <a
             className="order-header-back"
-            href={backPath}
+            href={leave.path}
             onClick={(e) => {
               e.preventDefault();
-              navigate(backPath);
+              navigate(leave.path);
             }}
           >
-            ← Comandas / Mesas
+            ← {leave.label}
           </a>
           {header && (
             <div className="order-header-title">
-              {header.point.displayName} <span className="muted">({header.point.code})</span>
+              {header.point ? (
+                <>
+                  {header.point.displayName} <span className="muted">({header.point.code})</span>
+                </>
+              ) : (
+                sessionLabel
+              )}
             </div>
           )}
         </div>
@@ -402,8 +424,8 @@ export function SessionOrderScreen({
         <CheckoutDialog
           source={cashSource}
           sessionId={sessionId}
-          pointLabel={`${header.point.displayName} (${header.point.code})`}
-          totalReais={sessionTotal(orders)}
+          pointLabel={sessionLabel}
+          totalReais={checkoutTotal}
           onNeedCash={() => setCheckoutStage("open-cash")}
           onDone={() => setCheckoutStage("done")}
           onClose={() => {
@@ -413,8 +435,8 @@ export function SessionOrderScreen({
         />
       )}
       {checkoutStage === "done" && (
-        <Modal title="Conta fechada" onClose={() => navigate(backPath)}>
-          <p className="modal-text">Pagamento registrado e conta fechada com sucesso. A comanda/mesa está livre.</p>
+        <Modal title="Conta fechada" onClose={() => navigate(leave.path)}>
+          <p className="modal-text">{isDelivery ? "Pagamento registrado e conta fechada com sucesso." : "Pagamento registrado e conta fechada com sucesso. A comanda/mesa está livre."}</p>
           <PrintDocumentButton
             label="Imprimir comprovante"
             successMessage="Comprovante enviado para impressão."
@@ -423,8 +445,8 @@ export function SessionOrderScreen({
             className="btn-secondary"
           />
           <div className="modal-actions">
-            <button className="btn-primary btn-auto" type="button" autoFocus onClick={() => navigate(backPath)}>
-              Voltar para Comandas / Mesas
+            <button className="btn-primary btn-auto" type="button" autoFocus onClick={() => navigate(leave.path)}>
+              Voltar para {leave.label}
             </button>
           </div>
         </Modal>

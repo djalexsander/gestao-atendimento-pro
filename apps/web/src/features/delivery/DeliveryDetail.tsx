@@ -32,8 +32,13 @@ const EVENT_LABEL: Record<string, string> = {
   canceled: "Pedido cancelado",
 };
 
-function describeEvent(e: Detail["events"][number]): string {
+function describeEvent(e: Detail["events"][number], courierName: (id: string) => string | null): string {
   const base = EVENT_LABEL[e.eventType] ?? e.eventType;
+  if (e.eventType === "courier_assigned") {
+    const to = e.newValue?.courier_user_id ? String(e.newValue.courier_user_id) : null;
+    if (!to) return `${base}: removido`;
+    return `${base}: ${courierName(to) ?? "atribuído"}`;
+  }
   if (e.eventType === "status_changed") {
     const from = String(e.oldValue?.status ?? "");
     const to = String(e.newValue?.status ?? "");
@@ -174,7 +179,9 @@ export function DeliveryDetail({
         {!isCourier && (
           <dl className="dl-totals">
             <div><dt>Itens</dt><dd>{formatReais(row.itemsSubtotal)}</dd></div>
-            <div><dt>Taxa de entrega{row.feeSource !== "none" ? ` (${FEE_SOURCE_LABEL[row.feeSource]})` : ""}</dt><dd>{formatReais(row.deliveryFee)}</dd></div>
+            {row.fulfillment === "delivery" && (
+              <div><dt>Taxa de entrega{row.feeSource !== "none" ? ` (${FEE_SOURCE_LABEL[row.feeSource]})` : ""}</dt><dd>{formatReais(row.deliveryFee)}</dd></div>
+            )}
             <div className="dl-total"><dt>Total</dt><dd>{formatReais(row.total)}</dd></div>
           </dl>
         )}
@@ -187,7 +194,7 @@ export function DeliveryDetail({
             <h4 className="dl-h">Linha do tempo</h4>
             <ol className="dl-timeline">
               {detail.events.map((e, idx) => (
-                <li key={idx}><span className="muted">{formatTime(e.createdAt)}</span> {describeEvent(e)}</li>
+                <li key={idx}><span className="muted">{formatTime(e.createdAt)}</span> {describeEvent(e, (id) => couriers?.find((c) => c.userId === id)?.name ?? (id === row.courierUserId ? row.courierName : null))}</li>
               ))}
             </ol>
           </>

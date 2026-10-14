@@ -50,6 +50,9 @@ const STATUS_CHIPS: Array<{ value: StatusFilter; label: string }> = [
   { value: "partial", label: STATUS_LABEL.partial },
   { value: "cancelled", label: STATUS_LABEL.cancelled },
 ];
+function kindLabel(order: BoardOrder): string {
+  return order.kind === "delivery" && order.fulfillment === "pickup" ? "Retirada" : KIND_LABEL[order.kind];
+}
 const KIND_CHIPS: Array<{ value: KindFilter; label: string }> = [
   { value: "all", label: "Todos" },
   { value: "table", label: "Mesas" },
@@ -80,7 +83,7 @@ function OrderCard({ order, onDetails }: { order: BoardOrder; onDetails: (order:
         {s.status === "partial" && s.production && <span className="ob-prod">{PRODUCTION_LABEL[s.production]}</span>}
       </div>
       <div className="ob-main">
-        <span className={`ob-kind ob-kind-${order.kind}`}>{KIND_LABEL[order.kind]}</span>
+        <span className={`ob-kind ob-kind-${order.kind}`}>{kindLabel(order)}</span>
         <span className="ob-title">{title}</span>
         <span className="ob-total">{formatReais(s.total)}</span>
       </div>
@@ -127,7 +130,7 @@ function DetailDialog({
   const s = summarize({ ...order, items });
   const title =
     order.kind === "delivery"
-      ? `Delivery · #${order.shortId}`
+      ? `${kindLabel(order)} · #${order.shortId}`
       : `${KIND_LABEL[order.kind]} ${order.kind === "table" ? order.displayName.replace(/^Mesa\s*/i, "") : order.code} · #${order.shortId}`;
   return (
     <Modal title={title} onClose={onClose}>
@@ -150,14 +153,20 @@ function DetailDialog({
           <dt>Atendente</dt>
           <dd>{order.waiterName ?? "—"}</dd>
         </div>
+        {order.deliveryFee > 0 && (
+          <div>
+            <dt>Taxa de entrega</dt>
+            <dd>{formatReais(order.deliveryFee)}</dd>
+          </div>
+        )}
         <div>
           <dt>Total original</dt>
-          <dd>{formatReais(originalTotal(items))}</dd>
+          <dd>{formatReais(originalTotal(items) + order.deliveryFee)}</dd>
         </div>
         <div>
           <dt>Total atual</dt>
           <dd>
-            <strong>{formatReais(currentTotal(items))}</strong>
+            <strong>{formatReais(currentTotal(items) + (order.orderCancelled ? 0 : order.deliveryFee))}</strong>
           </dd>
         </div>
       </dl>

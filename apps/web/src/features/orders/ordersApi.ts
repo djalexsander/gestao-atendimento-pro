@@ -33,7 +33,11 @@ export interface SessionHeader {
   customerName: string | null;
   openedAt: string;
   openedByName: string | null;
-  point: { id: string; type: "command" | "table"; code: string; displayName: string };
+  // Atendimento de DELIVERY/RETIRADA não tem comanda/mesa: point = null e a taxa entra no total do fechamento.
+  kind: "point" | "delivery";
+  fulfillment: "delivery" | "pickup" | null;
+  deliveryFee: number;
+  point: { id: string; type: "command" | "table"; code: string; displayName: string } | null;
 }
 
 // Fonte de dados do fluxo de pedido. Recebida por parâmetro (a real, abaixo, é o padrão) para
@@ -113,7 +117,7 @@ export const supabaseOrdersSource: OrdersSource = {
   async loadSessionHeader(sessionId) {
     const { data, error } = await supabase
       .from("service_sessions")
-      .select("id, company_id, status, customer_name, opened_at, opened_by, point:service_points(id, type, code, display_name)")
+      .select("id, company_id, kind, status, customer_name, opened_at, opened_by, point:service_points(id, type, code, display_name)")
       .eq("id", sessionId)
       .maybeSingle();
     if (error) {
@@ -125,6 +129,7 @@ export const supabaseOrdersSource: OrdersSource = {
     const row = data as unknown as {
       id: string;
       company_id: string;
+      kind?: "point" | "delivery";
       status: "open" | "closed";
       customer_name: string | null;
       opened_at: string;
@@ -134,13 +139,30 @@ export const supabaseOrdersSource: OrdersSource = {
     // O banco devolve snake_case (display_name); a tela usa camelCase (displayName).
     type RawPoint = { id: string; type: "command" | "table"; code: string; display_name: string };
     const rawPoint = one(row.point);
-    if (!rawPoint) return { data: null, error: SESSION_NOT_FOUND };
-    const point: SessionHeader["point"] = {
-      id: rawPoint.id,
-      type: rawPoint.type,
-      code: rawPoint.code,
-      displayName: rawPoint.display_name,
-    };
+    const kind = row.kind === "delivery" ? "delivery" : "point";
+    if (kind === "point" && !rawPoint) return { data: null, error: SESSION_NOT_FOUND };
+    const point: SessionHeader["point"] = rawPoint
+      ? { id: rawPoint.id, type: rawPoint.type, code: rawPoint.code, displayName: rawPoint.display_name }
+      : null;
+
+    // Delivery: taxa e tipo vêm de delivery_orders (leitura liberada a owner/admin/cashier/attendant com o módulo).
+    let deliveryFee = 0;
+    let fulfillment: SessionHeader["fulfillment"] = null;
+    if (kind === "delivery") {
+      const d = await supabase
+        .from("delivery_orders")
+        .select("delivery_fee, fulfillment, delivery_status")
+        .eq("service_session_id", sessionId)
+        .maybeSingle();
+      if (d.error || !d.data) {
+        console.error("Falha ao carregar o delivery:", d.error?.code);
+        return { data: null, error: LOAD_ERROR };
+      }
+      const dd = d.data as { delivery_fee: number | string; fulfillment: "delivery" | "pickup"; delivery_status: string };
+      // pedido cancelado: a taxa não conta (mesmo critério do fechamento no servidor)
+      deliveryFee = dd.delivery_status === "canceled" ? 0 : Number(dd.delivery_fee);
+      fulfillment = dd.fulfillment;
+    }
 
     const names = await loadProfileNames([row.opened_by]);
     return {
@@ -151,6 +173,9 @@ export const supabaseOrdersSource: OrdersSource = {
         customerName: row.customer_name,
         openedAt: row.opened_at,
         openedByName: names.get(row.opened_by) ?? null,
+        kind,
+        fulfillment,
+        deliveryFee,
         point,
       },
       error: null,

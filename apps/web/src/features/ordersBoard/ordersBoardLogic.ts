@@ -50,9 +50,16 @@ export interface RawBoardOrder {
   session: RawSession | RawSession[] | null;
   items: RawBoardItem[] | null;
 }
+interface RawDeliveryInfo {
+  fulfillment: "delivery" | "pickup";
+  delivery_fee?: number | string | null;
+  delivery_status?: string | null;
+}
 interface RawSession {
   id: string;
   kind?: "point" | "delivery";
+  // Só em atendimento de delivery: tipo (entrega x retirada) para o selo do pedido.
+  delivery?: RawDeliveryInfo | RawDeliveryInfo[] | null;
   status: "open" | "closed";
   customer_name: string | null;
   point: RawPoint | RawPoint[] | null;
@@ -88,6 +95,10 @@ export interface BoardOrder {
   submittedAt: string;
   orderCancelled: boolean; // service_orders.status = 'cancelled' (o banco marca quando não sobra nada cobrável)
   kind: BoardKind;
+  // Retirada fica sob "Delivery" nos filtros, mas com selo próprio.
+  fulfillment: "delivery" | "pickup" | null;
+  // Taxa de entrega do delivery (0 para comanda/mesa ou pedido cancelado): entra no total do pedido.
+  deliveryFee: number;
   code: string;
   displayName: string;
   customerName: string | null;
@@ -106,6 +117,15 @@ export function shortId(id: string): string {
   return id.replace(/-/g, "").slice(0, 6).toUpperCase();
 }
 
+function feeOf(session: RawSession): number {
+  const d = one(session.delivery);
+  return d && d.delivery_status !== "canceled" ? Number(d.delivery_fee ?? 0) : 0;
+}
+
+function fulfillmentOf(session: RawSession): "delivery" | "pickup" {
+  return one(session.delivery)?.fulfillment === "pickup" ? "pickup" : "delivery";
+}
+
 // Pedido sem sessão legível (ou sem ponto e que não seja delivery) é descartado (nunca inventa dados).
 export function toBoardOrders(rows: RawBoardOrder[], names: Map<string, string>): BoardOrder[] {
   const result: BoardOrder[] = [];
@@ -120,8 +140,10 @@ export function toBoardOrders(rows: RawBoardOrder[], names: Map<string, string>)
       submittedAt: row.submitted_at,
       orderCancelled: row.status === "cancelled",
       kind: point ? (point.type === "table" ? "table" : "command") : "delivery",
-      code: point ? point.code : "DELIVERY",
-      displayName: point ? point.display_name : "Delivery",
+      fulfillment: point ? null : (one(session.delivery)?.fulfillment ?? "delivery"),
+      deliveryFee: feeOf(session),
+      code: point ? point.code : fulfillmentOf(session) === "pickup" ? "RETIRADA" : "DELIVERY",
+      displayName: point ? point.display_name : fulfillmentOf(session) === "pickup" ? "Retirada" : "Delivery",
       customerName: session.customer_name,
       waiterName: names.get(row.created_by) ?? null,
       sessionId: session.id,
@@ -197,8 +219,8 @@ export function summarize(order: BoardOrder): OrderSummary {
     status: aggregateStatus(order),
     production: productionOf(order.items),
     itemCount: active.reduce((s, i) => s + activeQty(i), 0),
-    total: currentTotal(order.items),
-    original: originalTotal(order.items),
+    total: currentTotal(order.items) + (order.orderCancelled ? 0 : (order.deliveryFee ?? 0)),
+    original: originalTotal(order.items) + (order.deliveryFee ?? 0),
     sectors,
     itemsText: names.length > 2 ? `${shown}, +${names.length - 2}` : shown,
   };

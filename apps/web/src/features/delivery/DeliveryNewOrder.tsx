@@ -545,7 +545,7 @@ export function DeliveryNewOrder({
               </ul>
               <dl className="dl-totals">
                 <div><dt>Subtotal</dt><dd>{formatReais(subtotal)}</dd></div>
-                <div><dt>Taxa de entrega</dt><dd>{fee === null ? "—" : formatReais(fee)}</dd></div>
+                {draft.fulfillment === "delivery" && <div><dt>Taxa de entrega</dt><dd>{fee === null ? "—" : formatReais(fee)}</dd></div>}
                 <div className="dl-total"><dt>Total estimado</dt><dd>{formatReais(total)}</dd></div>
               </dl>
               <p className="field-hint">Valores conferidos pelo servidor ao confirmar.</p>

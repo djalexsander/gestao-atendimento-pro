@@ -33,7 +33,7 @@ export function DeliverySettings({ companyId, source = supabaseDeliverySource }:
     setSettings(s);
     setDelivery(String(s.deliveryMinutes));
     setPickup(String(s.pickupMinutes));
-    setFee(s.defaultFee === null ? "" : String(s.defaultFee).replace(".", ","));
+    setFee(s.defaultFee === null ? "" : s.defaultFee.toFixed(2).replace(".", ","));
     setInstr(s.defaultInstructions);
   };
 

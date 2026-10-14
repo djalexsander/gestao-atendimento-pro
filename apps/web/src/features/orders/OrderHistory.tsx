@@ -20,6 +20,7 @@ const ORIGIN_LABEL: Record<SubmittedOrder["origin"], string> = {
   attendant: "Atendimento",
   cashier: "Caixa",
   whatsapp: "WhatsApp",
+  delivery: "Delivery",
 };
 
 // Pedidos já enviados da session, mais recente primeiro. Nome, preço e setor vêm dos SNAPSHOTS
@@ -31,20 +32,35 @@ export function OrderHistory({
   orders,
   role,
   sessionOpen = false,
+  deliveryFee = 0,
   onCancelItem,
 }: {
   orders: SubmittedOrder[];
   role?: string | null;
   sessionOpen?: boolean;
+  // Taxa de entrega (delivery): soma ao total exibido; o servidor soma a mesma taxa no fechamento.
+  deliveryFee?: number;
   onCancelItem?: (item: SubmittedOrderItem) => void;
 }) {
   const sorted = sortOrdersByRecent(orders);
 
   return (
     <section className="order-history">
+      {deliveryFee > 0 && (
+        <div className="order-history-total">
+          <span>Itens</span>
+          <span>{formatReais(sessionTotal(orders))}</span>
+        </div>
+      )}
+      {deliveryFee > 0 && (
+        <div className="order-history-total">
+          <span>Taxa de entrega</span>
+          <span>{formatReais(deliveryFee)}</span>
+        </div>
+      )}
       <div className="order-history-total">
         <span>Total do atendimento</span>
-        <span>{formatReais(sessionTotal(orders))}</span>
+        <span>{formatReais(sessionTotal(orders) + deliveryFee)}</span>
       </div>
 
       <h3 className="order-history-heading">Pedidos enviados</h3>

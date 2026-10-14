@@ -234,7 +234,8 @@ export function availableActions(row: DeliveryRow, ctx: ActionContext): Delivery
 
   if (operator && row.fulfillment === "delivery" && (row.status === "confirmed" || row.status === "out_for_delivery")) actions.push("assign");
 
-  if (row.status === "confirmed" && operator) actions.push("cancel");
+  // cashier/attendant só cancelam item ainda pendente (o servidor recusa o resto): não oferece o botão quando já entrou em produção.
+  if (row.status === "confirmed" && (role === "owner" || role === "admin" || (operator && row.production === "pending"))) actions.push("cancel");
   if (row.status === "out_for_delivery" && (role === "owner" || role === "admin")) actions.push("cancel");
 
   // Recebimento é do Caixa (owner/admin/cashier), com a conta ainda aberta e o pedido não cancelado.

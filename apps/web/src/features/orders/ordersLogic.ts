@@ -98,7 +98,7 @@ export interface SubmittedOrderItem {
   cancellations: ItemCancellation[];
 }
 
-export type OrderOrigin = "attendant" | "cashier" | "whatsapp";
+export type OrderOrigin = "attendant" | "cashier" | "whatsapp" | "delivery";
 
 export interface SubmittedOrder {
   id: string;
