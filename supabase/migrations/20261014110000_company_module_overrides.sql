@@ -8,6 +8,7 @@
 --   * company_module_overrides (company_id, module_code): concessão explícita e AUDITÁVEL de um módulo EXISTENTE a uma empresa,
 --     mesmo com modules.is_active = false. Sem policy nem GRANT para clientes: só o operador (service_role / SQL do
 --     projeto) escreve e lê. Remover a linha desfaz a concessão.
+--     expires_at (opcional): vencido, o override deixa de conceder, sem DELETE; created_by/reason documentam a concessão.
 --   * company_entitlement (a função que TODO o resto consulta: assert_company_module, company_has_module(_rls),
 --     tenant_get_entitlements) vira um invólucro: chama o corpo ORIGINAL, renomeado para company_entitlement_base
 --     (inalterado, mesma ACL), e só ACRESCENTA ao array "modules" os módulos concedidos por override. Empresa sem
@@ -21,7 +22,12 @@ create table public.company_module_overrides (
   reason text not null
     constraint company_module_overrides_reason_length check (char_length(btrim(reason)) between 3 and 200),
   created_at timestamptz not null default now(),
-  primary key (company_id, module_code)
+  -- Expiração opcional: depois dela o override NÃO concede mais (a linha fica como histórico, nada é apagado sozinho).
+  expires_at timestamptz,
+  -- Quem concedeu (quando houver usuário no contexto); some com o usuário sem perder o histórico.
+  created_by uuid references auth.users(id) on delete set null,
+  primary key (company_id, module_code),
+  constraint company_module_overrides_expiry_check check (expires_at is null or expires_at > created_at)
 );
 
 comment on table public.company_module_overrides is
@@ -49,7 +55,8 @@ begin
 
   select coalesce(array_agg(o.module_code order by o.module_code), '{}') into v_extra
   from public.company_module_overrides o
-  where o.company_id = p_company_id;
+  where o.company_id = p_company_id
+    and (o.expires_at is null or o.expires_at > now());
 
   if cardinality(v_extra) = 0 or v_base ->> 'mode' = 'pending_payment' then
     return v_base;
