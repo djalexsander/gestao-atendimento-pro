@@ -185,8 +185,14 @@ export function DeliveryDetail({
             <div className="dl-total"><dt>Total</dt><dd>{formatReais(row.total)}</dd></div>
           </dl>
         )}
-        {isCourier && row.paymentTiming !== "on_order" && (
-          <p className="dl-courier-total">Valor a receber na entrega: <strong>{formatReais(row.total)}</strong></p>
+        {isCourier && row.paymentTiming === "on_delivery" && row.status !== "canceled" && (
+          <p className="dl-courier-total">
+            Valor a receber do cliente: <strong>{formatReais(row.total)}</strong>
+            <span className="muted"> · informação operacional (o recebimento é registrado no Caixa).</span>
+          </p>
+        )}
+        {isCourier && row.paymentTiming === "on_order" && (
+          <p className="dl-courier-total">Pagamento já feito no pedido: não há nada a cobrar do cliente.</p>
         )}
 
         {detail && detail.events.length > 0 && (

@@ -215,13 +215,27 @@ function customerBill(job: JobModel): Block[] {
     }
     if (item.notes) blocks.push(text(`     Obs: ${item.notes}`));
   }
+  // Delivery/retirada: subtotal dos produtos, taxa de entrega (só entrega com taxa) e total = subtotal + taxa.
+  // Comanda/mesa não traz "fulfillment": layout idêntico ao de sempre.
+  const fulfillment = str(job.payload.fulfillment);
+  if (fulfillment) {
+    blocks.push(divider(), row("Subtotal", amount(num(job.payload.subtotal))));
+    const fee = num(job.payload.delivery_fee);
+    if (fulfillment === "delivery" && fee > 0) blocks.push(row("Taxa de entrega", amount(fee)));
+  }
   blocks.push(divider(), row("TOTAL", amount(num(job.payload.total)), { bold: true }));
   return [...blocks, ...footer(job)];
 }
 
 function paymentReceipt(job: JobModel): Block[] {
   const pl = job.payload;
-  const blocks = [...sessionHeader(job, "COMPROVANTE DE PAGAMENTO"), divider(), row("Total da conta", money(num(pl.total))), feed(1)];
+  const blocks = [...sessionHeader(job, "COMPROVANTE DE PAGAMENTO"), divider()];
+  // Entrega: subtotal dos produtos + taxa = total da conta. Retirada e comanda/mesa: só o total, como antes.
+  const fee = num(pl.delivery_fee);
+  if (str(pl.fulfillment) === "delivery" && fee > 0) {
+    blocks.push(row("Subtotal produtos", money(num(pl.subtotal))), row("Taxa de entrega", money(fee)));
+  }
+  blocks.push(row("Total da conta", money(num(pl.total))), feed(1));
   for (const entry of Array.isArray(pl.payments) ? pl.payments : []) {
     const pay = rec(entry);
     blocks.push(row(str(pay.label), money(num(pay.amount))));

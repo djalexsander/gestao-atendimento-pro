@@ -266,3 +266,38 @@ test("comanda/mesa (sem bloco delivery): ticket idêntico ao de antes", () => {
   const joined = text80(order).join("\n");
   assert.ok(joined.includes("COMANDA CMD005") && joined.includes("Cliente: Fulano") && !joined.includes("DELIVERY") && !joined.includes("ENDEREÇO"));
 });
+
+// ---- Totais do delivery na pré-conta e no comprovante ----
+const billBase = {
+  company: COMPANY,
+  service_point: { type: null, label: "Delivery" },
+  customer_name: "Ana",
+  title: "CONTA / PRÉ-CONTA",
+  items: [{ quantity: 1, product_name: "X-Burger", unit_price: 25, total: 25, modifiers: [] }],
+  printed_at: "2026-10-14T18:00:00Z",
+};
+test("pré-conta de delivery: Subtotal 25, Taxa de entrega 5, TOTAL 30 (80 e 58 mm)", () => {
+  const p = { ...billBase, total: 30, subtotal: 25, delivery_fee: 5, fulfillment: "delivery" };
+  for (const w of [80, 58] as const) {
+    const out = renderText(buildDocument(job("customer_bill", p, { paper_width: w })), w === 80 ? 48 : 32).join("\n");
+    assert.ok(/Subtotal\s+25,00/.test(out) && /Taxa de entrega\s+5,00/.test(out) && /TOTAL\s+30,00/.test(out), out);
+  }
+});
+test("pré-conta de retirada: Subtotal e TOTAL, sem linha de taxa", () => {
+  const out = text80(job("customer_bill", { ...billBase, total: 25, subtotal: 25, delivery_fee: 0, fulfillment: "pickup" })).join("\n");
+  assert.ok(/Subtotal\s+25,00/.test(out) && /TOTAL\s+25,00/.test(out) && !/Taxa/.test(out), out);
+});
+test("pré-conta de comanda (sem fulfillment): layout de sempre, sem Subtotal", () => {
+  const out = text80(job("customer_bill", { ...billBase, service_point: { label: "Comanda CMD001" }, total: 25 })).join("\n");
+  assert.ok(/TOTAL\s+25,00/.test(out) && !/Subtotal|Taxa/.test(out), out);
+});
+const receiptBase = { company: COMPANY, service_point: { type: null, label: "Delivery" }, title: "COMPROVANTE DE PAGAMENTO", total: 30, payments: [{ label: "Dinheiro", method: "cash", amount: 30, amount_received: 100, change_amount: 70 }], paid_total: 30, refunds: [], refunded_total: 0, net_total: 30, printed_at: "2026-10-14T18:00:00Z" };
+test("comprovante de delivery: Subtotal produtos + Taxa de entrega = Total da conta; troco preservado", () => {
+  const out = text80(job("payment_receipt", { ...receiptBase, fulfillment: "delivery", delivery_fee: 5, subtotal: 25 })).join("\n");
+  assert.ok(/Subtotal produtos\s+R\$ 25,00/.test(out) && /Taxa de entrega\s+R\$ 5,00/.test(out) && /Total da conta\s+R\$ 30,00/.test(out) && /Troco: R\$ 70,00/.test(out), out);
+});
+test("comprovante de retirada e de comanda: sem linha de taxa/subtotal", () => {
+  const pick = text80(job("payment_receipt", { ...receiptBase, total: 25, paid_total: 25, net_total: 25, fulfillment: "pickup", delivery_fee: 0, subtotal: 25 })).join("\n");
+  const pt = text80(job("payment_receipt", { ...receiptBase, service_point: { label: "Comanda CMD001" } })).join("\n");
+  assert.ok(!/Taxa|Subtotal/.test(pick) && !/Taxa|Subtotal/.test(pt) && /Total da conta/.test(pt));
+});
