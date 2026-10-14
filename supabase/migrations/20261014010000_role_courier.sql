@@ -1,0 +1,12 @@
+-- Papel de funcionário ENTREGADOR (módulo Delivery, Fase 1): acrescenta 'courier' ao enum company_role.
+--
+-- ADD VALUE: o valor novo só pode ser USADO depois do commit da transação que o criou (regra do
+-- PostgreSQL), por isso esta migration só o cria — mesmo padrão de 'cashier' (20260925010000) e
+-- 'production' (20260930040000). A matriz de gestão (can_manage_company_user) vem na migration seguinte
+-- (20261014020000_delivery_structure.sql).
+--
+-- Não altera nenhuma linha. Nenhuma policy/função existente lista 'courier': quem tiver esse papel
+-- continua SEM acesso a pedidos, atendimentos, caixa, financeiro e produção, que listam
+-- explicitamente owner/admin/cashier/attendant/production. As telas e RPCs do entregador vêm em bloco
+-- posterior.
+alter type public.company_role add value if not exists 'courier';

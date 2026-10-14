@@ -24,6 +24,7 @@ export const supabaseOpenSessionsSource: OpenSessionsSource = {
           "orders:service_orders(status, items:service_order_items(quantity, cancelled_quantity, unit_price))",
       )
       .eq("company_id", companyId)
+      .eq("kind", "point") // delivery não é comanda/mesa: tem tela própria
       .eq("status", "open");
     if (error) {
       console.error("Falha ao carregar os atendimentos abertos:", error.code);

@@ -69,7 +69,7 @@ function StatusBadge({ status }: { status: AggStatus }) {
 
 function OrderCard({ order, onDetails }: { order: BoardOrder; onDetails: (order: BoardOrder) => void }) {
   const s = summarize(order);
-  const title = order.kind === "table" ? order.displayName : order.code;
+  const title = order.kind === "table" || order.kind === "delivery" ? order.displayName : order.code;
   return (
     <li className={`ob-card ob-${s.status}`}>
       <div className="ob-top">
@@ -124,7 +124,10 @@ function DetailDialog({
 }) {
   const items = detail?.items ?? order.items;
   const s = summarize({ ...order, items });
-  const title = `${KIND_LABEL[order.kind]} ${order.kind === "table" ? order.displayName.replace(/^Mesa\s*/i, "") : order.code} · #${order.shortId}`;
+  const title =
+    order.kind === "delivery"
+      ? `Delivery · #${order.shortId}`
+      : `${KIND_LABEL[order.kind]} ${order.kind === "table" ? order.displayName.replace(/^Mesa\s*/i, "") : order.code} · #${order.shortId}`;
   return (
     <Modal title={title} onClose={onClose}>
       <dl className="op-detail">

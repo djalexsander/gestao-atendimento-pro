@@ -24,7 +24,9 @@ export type AggStatus = "pending" | "preparing" | "ready" | "partial" | "cancell
 export type StatusFilter = "all" | AggStatus;
 export type SortKey = "newest" | "oldest" | "value";
 
-export const KIND_LABEL: Record<PointKind, string> = { table: "Mesa", command: "Comanda" };
+// "delivery": sessão sem comanda/mesa (módulo Delivery). Fica só em "Todos" nos filtros de ponto.
+export type BoardKind = PointKind | "delivery";
+export const KIND_LABEL: Record<BoardKind, string> = { table: "Mesa", command: "Comanda", delivery: "Delivery" };
 export const STATUS_LABEL: Record<AggStatus, string> = {
   pending: "Aguardando",
   preparing: "Em produção",
@@ -50,6 +52,7 @@ export interface RawBoardOrder {
 }
 interface RawSession {
   id: string;
+  kind?: "point" | "delivery";
   status: "open" | "closed";
   customer_name: string | null;
   point: RawPoint | RawPoint[] | null;
@@ -84,7 +87,7 @@ export interface BoardOrder {
   shortId: string;
   submittedAt: string;
   orderCancelled: boolean; // service_orders.status = 'cancelled' (o banco marca quando não sobra nada cobrável)
-  kind: PointKind;
+  kind: BoardKind;
   code: string;
   displayName: string;
   customerName: string | null;
@@ -103,21 +106,22 @@ export function shortId(id: string): string {
   return id.replace(/-/g, "").slice(0, 6).toUpperCase();
 }
 
-// Pedido sem sessão/ponto legível é descartado (nunca inventa dados).
+// Pedido sem sessão legível (ou sem ponto e que não seja delivery) é descartado (nunca inventa dados).
 export function toBoardOrders(rows: RawBoardOrder[], names: Map<string, string>): BoardOrder[] {
   const result: BoardOrder[] = [];
   for (const row of rows) {
     const session = one(row.session);
     const point = session ? one(session.point) : null;
-    if (!session || !point) continue;
+    const isDelivery = !!session && !point && session.kind === "delivery";
+    if (!session || (!point && !isDelivery)) continue;
     result.push({
       id: row.id,
       shortId: shortId(row.id),
       submittedAt: row.submitted_at,
       orderCancelled: row.status === "cancelled",
-      kind: point.type === "table" ? "table" : "command",
-      code: point.code,
-      displayName: point.display_name,
+      kind: point ? (point.type === "table" ? "table" : "command") : "delivery",
+      code: point ? point.code : "DELIVERY",
+      displayName: point ? point.display_name : "Delivery",
       customerName: session.customer_name,
       waiterName: names.get(row.created_by) ?? null,
       sessionId: session.id,
