@@ -14,7 +14,8 @@ export function ModuleGate({ module, children }: { module: ModuleCode; children:
   const access = moduleAccess(entitlements, module);
   if (access === "loading") return <FullPageLoader />;
   if (access === "allowed") return <>{children}</>;
-  const isOwner = activeMembership?.role === "owner";
+  // Módulo sem oferta comercial (whatsapp): sem botão de contratação.
+  const isOwner = activeMembership?.role === "owner" && module !== "whatsapp";
   return (
     <div className="module-locked" role="status">
       <h2>{MODULE_NAME[module]}</h2>

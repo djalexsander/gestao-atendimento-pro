@@ -33,6 +33,7 @@ import { OnboardingPage } from "./pages/OnboardingPage";
 import {
   OperationalCashierOrderPage,
   OperationalDeliveryPage,
+  OperationalWhatsappPage,
   OperationalOpenAttendancesPage,
   OperationalLabelsPage,
   OperationalOrdersPage,
@@ -179,6 +180,16 @@ function App() {
           <OperationalRoute area="delivery">
             <ModuleGate module="delivery">
               <OperationalDeliveryPage />
+            </ModuleGate>
+          </OperationalRoute>
+        }
+      />
+      <Route
+        path="/operacional/whatsapp"
+        element={
+          <OperationalRoute area="whatsapp">
+            <ModuleGate module="whatsapp">
+              <OperationalWhatsappPage />
             </ModuleGate>
           </OperationalRoute>
         }

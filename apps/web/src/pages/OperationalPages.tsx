@@ -16,6 +16,8 @@ import { LabelsPage } from "../features/labels/LabelsPage";
 import { OrdersBoard } from "../features/ordersBoard/OrdersBoard";
 import { DeliveryBoard } from "../features/delivery/DeliveryBoard";
 import type { DeliverySource } from "../features/delivery/deliveryApi";
+import { WhatsappInbox } from "../features/whatsapp/WhatsappInbox";
+import type { WhatsappSource } from "../features/whatsapp/whatsappApi";
 import { moduleAccess } from "../features/commercial/commercialLogic";
 import { useCommercial } from "../features/commercial/CommercialProvider";
 import type { OrdersBoardApi } from "../features/ordersBoard/ordersBoardApi";
@@ -44,6 +46,9 @@ function OperationalShell({ title, children }: { title: string; children: ReactN
   const isAdminRole = role === "owner" || role === "admin";
   const { entitlements } = useCommercial();
   const onDelivery = pathname === OPERATIONAL_PATH.delivery;
+  const onWhatsapp = pathname === OPERATIONAL_PATH.whatsapp;
+  // WhatsApp só aparece com o módulo liberado (sem oferta comercial: nunca vira "contratar").
+  const canSeeWhatsapp = role !== null && canOpenOperationalArea(role, "whatsapp") && moduleAccess(entitlements, "whatsapp") === "allowed";
   // Delivery só aparece quando o módulo está liberado (módulo ainda sem oferta comercial: nada de "contratar").
   const canSeeDelivery = role !== null && canOpenOperationalArea(role, "delivery") && moduleAccess(entitlements, "delivery") === "allowed";
   const { cash: myCash } = useMyOpenCash(isCashier);
@@ -111,12 +116,17 @@ function OperationalShell({ title, children }: { title: string; children: ReactN
               Delivery
             </Link>
           )}
+          {canSeeWhatsapp && !onWhatsapp && (
+            <Link to={OPERATIONAL_PATH.whatsapp} className="btn-secondary btn-small" style={{ textDecoration: "none" }}>
+              WhatsApp
+            </Link>
+          )}
           {canSeeLabels && !onLabels && (
             <Link to={OPERATIONAL_PATH.etiquetas} className="btn-secondary btn-small" style={{ textDecoration: "none" }}>
               Etiquetas
             </Link>
           )}
-          {(onOpenBoard || onOrdersBoard || onLabels || onDelivery) && role && !isAdminRole && role !== "courier" && (
+          {(onOpenBoard || onOrdersBoard || onLabels || onDelivery || onWhatsapp) && role && !isAdminRole && role !== "courier" && (
             <Link to={homePathForRole(role)} className="btn-secondary btn-small" style={{ textDecoration: "none" }}>
               Voltar
             </Link>
@@ -251,6 +261,15 @@ export function OperationalOrdersPage({ source }: { source?: OrdersBoardApi }) {
   return (
     <OperationalShell title="Pedidos">
       <OrdersBoard source={source} />
+    </OperationalShell>
+  );
+}
+
+// WhatsApp: inbox somente leitura (Fase 2A-1). `source` só existe para exercitar a tela com dados simulados.
+export function OperationalWhatsappPage({ source }: { source?: WhatsappSource }) {
+  return (
+    <OperationalShell title="WhatsApp">
+      <WhatsappInbox source={source} />
     </OperationalShell>
   );
 }

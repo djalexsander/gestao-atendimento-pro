@@ -5,7 +5,7 @@ import type { CompanyRole } from "../lib/types";
 // guards em routeGuards.tsx só as aplicam. A proteção dos DADOS é do backend (RLS); estas
 // regras só decidem para onde a tela vai.
 
-export type OperationalArea = "atendimento" | "caixa" | "producao" | "abertos" | "pedidos" | "etiquetas" | "delivery";
+export type OperationalArea = "atendimento" | "caixa" | "producao" | "abertos" | "pedidos" | "etiquetas" | "delivery" | "whatsapp";
 
 export type GuardedRoute =
   | "guest" // /login, /cadastro, /funcionario: só para quem NÃO tem sessão
@@ -23,6 +23,7 @@ export const OPERATIONAL_PATH: Record<OperationalArea, string> = {
   pedidos: "/operacional/pedidos",
   etiquetas: "/operacional/etiquetas",
   delivery: "/operacional/delivery",
+  whatsapp: "/operacional/whatsapp",
 };
 export const DISABLED_ACCESS_PATH = "/acesso-desativado";
 export const EMPLOYEE_LOGIN_PATH = "/funcionario";
@@ -62,6 +63,8 @@ const AREA_ROLES: Record<OperationalArea, readonly CompanyRole[]> = {
   etiquetas: ["attendant", "cashier", "owner", "admin"],
   // Delivery (módulo): operação da equipe e entregador (este só enxerga os próprios pedidos — RLS/RPC).
   delivery: ["attendant", "cashier", "owner", "admin", "courier"],
+  // WhatsApp (módulo): conversas da empresa; production e courier ficam de fora (o banco confere de novo).
+  whatsapp: ["attendant", "cashier", "owner", "admin"],
 };
 
 export function canOpenOperationalArea(role: CompanyRole, area: OperationalArea): boolean {
@@ -103,7 +106,7 @@ export function landingPath(s: AuthSnapshot): string {
 // Quem chega sem sessão numa rota operacional (ou na tela de acesso desativado) volta para
 // o login do funcionário; nas demais, para o login de proprietário/administrador.
 function signedOutPath(route: GuardedRoute): string {
-  return route === "atendimento" || route === "caixa" || route === "producao" || route === "abertos" || route === "pedidos" || route === "etiquetas" || route === "delivery" || route === "disabled"
+  return route === "atendimento" || route === "caixa" || route === "producao" || route === "abertos" || route === "pedidos" || route === "etiquetas" || route === "delivery" || route === "whatsapp" || route === "disabled"
     ? EMPLOYEE_LOGIN_PATH
     : ADMIN_LOGIN_PATH;
 }
@@ -134,6 +137,7 @@ export function decide(route: GuardedRoute, s: AuthSnapshot): Decision {
     case "pedidos":
     case "etiquetas":
     case "delivery":
+    case "whatsapp":
       return s.role !== null && canOpenOperationalArea(s.role, route) ? RENDER : redirect(landing);
   }
 }
@@ -150,6 +154,7 @@ const OPERATIONAL_SEGMENT_AREA: Record<string, OperationalArea> = {
   pedidos: "pedidos",
   etiquetas: "etiquetas",
   delivery: "delivery",
+  whatsapp: "whatsapp",
 };
 
 function pathOnly(path: string): string {

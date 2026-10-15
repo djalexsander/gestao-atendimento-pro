@@ -14,7 +14,7 @@ export interface NavLeaf {
   path: string;
   status: NavStatus;
   // Item exclusivo de um módulo pago: a sidebar o mostra como "Contratar" quando a empresa não tem o módulo.
-  module?: "financeiro" | "producao" | "estoque" | "impressao" | "delivery";
+  module?: "financeiro" | "producao" | "estoque" | "impressao" | "delivery" | "whatsapp";
   // Some do menu enquanto o módulo não estiver liberado (em vez de mostrar "contratar"): módulo ainda sem oferta comercial.
   hideWhenLocked?: boolean;
   // Só para placeholders que merecem uma explicação melhor que o texto genérico
@@ -71,6 +71,7 @@ export const ADMIN_NAV: NavEntry[] = [
       { type: "item", label: "Produção", path: "/operacional/producao", status: "ready", module: "producao" },
       { type: "item", label: "Caixa / Balcão", path: "/operacional/caixa", status: "ready" },
       { type: "item", label: "Delivery", path: "/operacional/delivery", status: "ready", module: "delivery", hideWhenLocked: true },
+      { type: "item", label: "WhatsApp", path: "/operacional/whatsapp", status: "ready", module: "whatsapp", hideWhenLocked: true },
     ],
   },
   {
