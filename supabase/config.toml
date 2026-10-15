@@ -63,3 +63,8 @@ verify_jwt = false
 # Chamada SÓ pelo banco (pg_net) com o segredo compartilhado no header x-internal-secret (>= 32 caracteres, tempo
 # constante); não há JWT de usuário nessa chamada.
 verify_jwt = false
+
+[functions.whatsapp-webhook]
+# Webhook da WhatsApp Business Platform (público). Autenticação = assinatura X-Hub-Signature-256 (WHATSAPP_APP_SECRET,
+# tempo constante) no POST e WHATSAPP_VERIFY_TOKEN no GET de verificação; a empresa vem de metadata.phone_number_id.
+verify_jwt = false
