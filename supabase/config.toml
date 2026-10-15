@@ -18,7 +18,7 @@ port = 54323
 [auth]
 enabled = true
 site_url = "http://localhost:5173"
-additional_redirect_urls = ["http://localhost:5173"]
+additional_redirect_urls = ["http://localhost:5173", "http://localhost:5173/redefinir-senha", "https://atendimento.alexproapps.com.br", "https://atendimento.alexproapps.com.br/redefinir-senha"]
 jwt_expiry = 3600
 enable_signup = true
 

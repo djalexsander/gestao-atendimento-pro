@@ -17,6 +17,8 @@ import { AccessDisabledPage } from "./pages/AccessDisabledPage";
 import { DashboardPage } from "./features/dashboard/DashboardPage";
 import { CompanySettingsPage } from "./pages/CompanySettingsPage";
 import { EmployeeLoginPage } from "./pages/EmployeeLoginPage";
+import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
+import { ResetPasswordPage } from "./pages/ResetPasswordPage";
 import { LoginPage } from "./pages/LoginPage";
 import { MasterCompaniesPage } from "./pages/MasterCompaniesPage";
 import { MasterCompanyDetailPage } from "./pages/MasterCompanyDetailPage";
@@ -77,6 +79,16 @@ function App() {
           </GuestOnlyRoute>
         }
       />
+      <Route
+        path="/esqueci-senha"
+        element={
+          <GuestOnlyRoute>
+            <ForgotPasswordPage />
+          </GuestOnlyRoute>
+        }
+      />
+      {/* Pública de propósito: o link do e-mail abre uma sessão de recuperação, que não pode ser redirecionada. */}
+      <Route path="/redefinir-senha" element={<ResetPasswordPage />} />
       <Route
         path="/cadastro"
         element={

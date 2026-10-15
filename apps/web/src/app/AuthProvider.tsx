@@ -1,5 +1,6 @@
 import { friendlyResendError, normalizeEmail, signupRedirectUrl } from "../lib/authEmail";
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
+import { friendlyLoginError, friendlyResetRequestError, friendlyUpdatePasswordError, resetPasswordRedirectUrl } from "../lib/passwordRecovery";
 import { isManagedAccount } from "../lib/managedAccount";
 import { randomSlugSuffix, slugify } from "../lib/slug";
 import { staffEmail } from "../lib/staffAuth";
@@ -200,7 +201,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function signIn(email: string, password: string) {
     const { error } = await supabase.auth.signInWithPassword({ email, password });
-    return { error: error?.message ?? null };
+    return { error: friendlyLoginError(error) };
+  }
+
+  async function requestPasswordReset(email: string) {
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(normalizeEmail(email), {
+        redirectTo: resetPasswordRedirectUrl(window.location.hostname, window.location.origin),
+      });
+      return { error: friendlyResetRequestError(error) };
+    } catch {
+      return { error: friendlyResetRequestError({ name: "TypeError", message: "Failed to fetch" }) };
+    }
+  }
+
+  async function completePasswordReset(password: string) {
+    try {
+      const { error } = await supabase.auth.updateUser({ password });
+      if (error) return { error: friendlyUpdatePasswordError(error) };
+    } catch {
+      return { error: friendlyUpdatePasswordError({ name: "TypeError", message: "Failed to fetch" }) };
+    }
+    // Encerra o estado de recuperação: a pessoa entra de novo com a senha nova.
+    await supabase.auth.signOut({ scope: "local" });
+    return { error: null };
   }
 
   // Login operacional: código da empresa + login + PIN/senha. O e-mail técnico só existe
@@ -300,6 +324,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     signUp,
     resendSignupConfirmation,
     signIn,
+    requestPasswordReset,
+    completePasswordReset,
     signInEmployee,
     signOut,
     createCompany,

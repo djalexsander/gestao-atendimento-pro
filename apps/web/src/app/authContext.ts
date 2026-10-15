@@ -23,6 +23,10 @@ export interface AuthContextValue {
   // Reenvio do e-mail de confirmação do cadastro (método oficial do Supabase Auth). O cooldown é da tela.
   resendSignupConfirmation: (email: string) => Promise<{ error: string | null }>;
   signIn: (email: string, password: string) => Promise<{ error: string | null }>;
+  // Recuperação de senha (Supabase Auth oficial). requestPasswordReset nunca revela se o e-mail existe.
+  requestPasswordReset: (email: string) => Promise<{ error: string | null }>;
+  // Define a nova senha da sessão de recuperação e ENCERRA a sessão (volta ao login normal).
+  completePasswordReset: (password: string) => Promise<{ error: string | null }>;
   // Login operacional (código da empresa + login + PIN/senha), separado do login por e-mail.
   signInEmployee: (
     accessCode: string,

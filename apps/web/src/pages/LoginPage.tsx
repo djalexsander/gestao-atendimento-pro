@@ -1,9 +1,10 @@
 import { useState, type FormEvent } from "react";
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../app/useAuth";
 
 export function LoginPage() {
   const { signIn } = useAuth();
+  const notice = (useLocation().state as { notice?: string } | null)?.notice ?? null;
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -27,6 +28,7 @@ export function LoginPage() {
         <h1 style={{ fontSize: 22 }}>Entrar</h1>
         <p style={{ color: "var(--text-muted)", fontSize: 14 }}>Proprietário ou administrador da empresa.</p>
 
+        {notice && !error && <div className="form-success" role="status">{notice}</div>}
         {error && <div className="form-error">{error}</div>}
 
         <form onSubmit={handleSubmit}>
@@ -51,6 +53,9 @@ export function LoginPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
             />
+          </div>
+          <div style={{ textAlign: "right", fontSize: 13, margin: "-4px 0 10px" }}>
+            <Link to="/esqueci-senha">Esqueci minha senha</Link>
           </div>
           <button className="btn-primary" type="submit" disabled={submitting}>
             {submitting ? "Entrando…" : "Entrar"}
