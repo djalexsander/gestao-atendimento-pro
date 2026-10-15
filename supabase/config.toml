@@ -64,6 +64,11 @@ verify_jwt = false
 # constante); não há JWT de usuário nessa chamada.
 verify_jwt = false
 
+[functions.whatsapp-send]
+# Envio manual de mensagem de WhatsApp. JWT obrigatório na borda; o handler repassa o JWT do usuário às RPCs (papel, módulo,
+# janela de 24 h e modo de teste são decididos no banco). O token da Meta só é lido pelo service_role, a partir do Vault.
+verify_jwt = true
+
 [functions.whatsapp-webhook]
 # Webhook da WhatsApp Business Platform (público). Autenticação = assinatura X-Hub-Signature-256 (WHATSAPP_APP_SECRET,
 # tempo constante) no POST e WHATSAPP_VERIFY_TOKEN no GET de verificação; a empresa vem de metadata.phone_number_id.

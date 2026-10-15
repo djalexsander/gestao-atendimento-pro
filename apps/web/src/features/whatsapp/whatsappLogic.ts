@@ -6,7 +6,7 @@ export type ConversationStatus = "open" | "waiting" | "closed";
 export type MessageType = "text" | "image" | "audio" | "document" | "location" | "interactive" | "template" | "unknown";
 export type MessageStatus = "received" | "queued" | "sent" | "delivered" | "read" | "failed";
 export type Direction = "inbound" | "outbound";
-export type ConversationFilter = "open" | "all" | "unread";
+export type ConversationFilter = "open" | "mine" | "unassigned" | "waiting" | "closed" | "unread" | "all";
 
 export interface RawConversation {
   id: string;
@@ -14,9 +14,11 @@ export interface RawConversation {
   contact_display_name: string | null;
   customer_id: string | null;
   status: ConversationStatus;
+  assigned_user_id: string | null;
   unread_count: number;
   last_message_preview: string | null;
   last_message_at: string | null;
+  last_inbound_at: string | null;
 }
 export interface ConversationRow {
   id: string;
@@ -24,9 +26,11 @@ export interface ConversationRow {
   name: string | null;
   customerId: string | null;
   status: ConversationStatus;
+  assignedUserId: string | null;
   unread: number;
   preview: string | null;
   lastMessageAt: string | null;
+  lastInboundAt: string | null;
 }
 export interface RawMessage {
   id: string;
@@ -64,7 +68,16 @@ export interface ConnectionSummary {
   businessName: string | null;
 }
 
-export const FILTER_LABEL: Record<ConversationFilter, string> = { open: "Abertas", all: "Todas", unread: "Não lidas" };
+export const FILTER_LABEL: Record<ConversationFilter, string> = {
+  open: "Abertas",
+  mine: "Minhas",
+  unassigned: "Não atribuídas",
+  waiting: "Aguardando",
+  closed: "Fechadas",
+  unread: "Não lidas",
+  all: "Todas",
+};
+export const FILTER_ORDER: readonly ConversationFilter[] = ["open", "mine", "unassigned", "unread", "waiting", "closed", "all"];
 export const STATUS_LABEL: Record<ConversationStatus, string> = { open: "Aberta", waiting: "Aguardando", closed: "Fechada" };
 
 /** Papéis que enxergam o WhatsApp (espelha o banco: production e courier ficam de fora). */
@@ -78,9 +91,11 @@ export function toConversation(r: RawConversation): ConversationRow {
     name: r.contact_display_name,
     customerId: r.customer_id,
     status: r.status,
+    assignedUserId: r.assigned_user_id ?? null,
     unread: Number(r.unread_count) || 0,
     preview: r.last_message_preview,
     lastMessageAt: r.last_message_at,
+    lastInboundAt: r.last_inbound_at ?? null,
   };
 }
 
@@ -113,11 +128,30 @@ export function conversationTitle(c: Pick<ConversationRow, "name" | "phone">): s
   return c.name?.trim() || formatWaPhone(c.phone);
 }
 
-export function applyFilter(rows: readonly ConversationRow[], filter: ConversationFilter, search = ""): ConversationRow[] {
+export function matchesFilter(c: ConversationRow, filter: ConversationFilter, currentUserId: string | null): boolean {
+  switch (filter) {
+    case "open":
+      return c.status !== "closed"; // "abertas" = tudo que ainda não foi fechado (inclui aguardando)
+    case "waiting":
+      return c.status === "waiting";
+    case "closed":
+      return c.status === "closed";
+    case "unread":
+      return c.unread > 0;
+    case "mine":
+      return currentUserId !== null && c.assignedUserId === currentUserId && c.status !== "closed";
+    case "unassigned":
+      return c.assignedUserId === null && c.status !== "closed";
+    default:
+      return true;
+  }
+}
+
+export function applyFilter(rows: readonly ConversationRow[], filter: ConversationFilter, search = "", currentUserId: string | null = null): ConversationRow[] {
   const q = search.trim().toLowerCase();
   const digits = q.replace(/\D/g, "");
   return rows
-    .filter((c) => (filter === "open" ? c.status !== "closed" : filter === "unread" ? c.unread > 0 : true))
+    .filter((c) => matchesFilter(c, filter, currentUserId))
     .filter((c) => {
       if (!q) return true;
       return (c.name ?? "").toLowerCase().includes(q) || (digits !== "" && c.phone.includes(digits));
@@ -203,4 +237,81 @@ export function toConnectionSummary(raw: unknown): ConnectionSummary {
     displayPhoneNumber: typeof o.display_phone_number === "string" ? o.display_phone_number : null,
     businessName: typeof o.business_name === "string" ? o.business_name : null,
   };
+}
+
+// ---- Janela de atendimento (espelha whatsapp_can_send_freeform; o servidor é quem decide de verdade) ----
+export const WINDOW_HOURS = 24;
+export interface WindowState {
+  open: boolean;
+  expiresAt: string | null;
+  reason: "no_inbound" | "window_closed" | null;
+}
+export function windowState(lastInboundAt: string | null | undefined, now: Date = new Date()): WindowState {
+  if (!lastInboundAt) return { open: false, expiresAt: null, reason: "no_inbound" };
+  const t = Date.parse(lastInboundAt);
+  if (Number.isNaN(t)) return { open: false, expiresAt: null, reason: "no_inbound" };
+  const end = t + WINDOW_HOURS * 3600 * 1000;
+  const expiresAt = new Date(end).toISOString();
+  return now.getTime() <= end ? { open: true, expiresAt, reason: null } : { open: false, expiresAt, reason: "window_closed" };
+}
+
+export const OUTSIDE_WINDOW_TEXT = "Fora da janela de atendimento. Será necessário usar um template aprovado.";
+export const MAX_BODY_LENGTH = 4096;
+
+export type ComposerBlock = "closed" | "window" | "empty" | "too_long" | null;
+/** Por que o composer não pode enviar agora (null = pode). */
+export function composerBlock(c: Pick<ConversationRow, "status" | "lastInboundAt">, body: string, now: Date = new Date()): ComposerBlock {
+  if (c.status === "closed") return "closed";
+  if (!windowState(c.lastInboundAt, now).open) return "window";
+  const text = body.trim();
+  if (text.length === 0) return "empty";
+  if (text.length > MAX_BODY_LENGTH) return "too_long";
+  return null;
+}
+
+export function windowLabel(w: WindowState): string {
+  return w.open && w.expiresAt ? `Janela aberta até ${formatClock(w.expiresAt)}` : "Janela de atendimento encerrada";
+}
+
+// ---- Ações da conversa ----
+export interface AgentOption {
+  userId: string;
+  name: string;
+  role: string;
+}
+const ROLE_LABEL: Record<string, string> = { owner: "Proprietário", admin: "Administrador", attendant: "Atendente", cashier: "Caixa" };
+export const agentLabel = (a: AgentOption): string => `${a.name} (${ROLE_LABEL[a.role] ?? a.role})`;
+
+export function toAgents(raw: unknown): AgentOption[] {
+  if (!Array.isArray(raw)) return [];
+  const out: AgentOption[] = [];
+  for (const x of raw) {
+    if (!x || typeof x !== "object") continue;
+    const o = x as { user_id?: unknown; name?: unknown; role?: unknown };
+    if (typeof o.user_id === "string" && typeof o.name === "string" && typeof o.role === "string") out.push({ userId: o.user_id, name: o.name, role: o.role });
+  }
+  return out;
+}
+
+export interface StatusAction {
+  to: ConversationStatus;
+  label: string;
+}
+/** Ações de situação permitidas a partir do estado atual (espelha as transições do banco). */
+export function statusActions(status: ConversationStatus): StatusAction[] {
+  switch (status) {
+    case "open":
+      return [{ to: "waiting", label: "Aguardar" }, { to: "closed", label: "Fechar" }];
+    case "waiting":
+      return [{ to: "open", label: "Retomar" }, { to: "closed", label: "Fechar" }];
+    default:
+      return [{ to: "open", label: "Reabrir" }];
+  }
+}
+
+/** Mensagem do erro do envio sem expor nada técnico. */
+export function friendlySendError(message: string | null | undefined): string {
+  const m = (message ?? "").trim();
+  if (m && !/^(Edge Function|FunctionsHttpError|FunctionsFetchError|Failed to|TypeError|AuthApiError)/i.test(m) && m.length <= 200) return m;
+  return "Não foi possível enviar a mensagem agora. Tente novamente.";
 }

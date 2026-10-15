@@ -2,12 +2,16 @@ import { supabase } from "../../lib/supabaseClient";
 import type { RealtimeClientLike } from "../../lib/productsRealtime";
 import { subscribeToOpenAttendanceChanges } from "../operations/openSessionsRealtime";
 import {
+  friendlySendError,
+  toAgents,
   toConnectionSummary,
   toConversation,
   toMessage,
   toSuggestions,
+  type AgentOption,
   type ConnectionSummary,
   type ConversationRow,
+  type ConversationStatus,
   type MessageRow,
   type RawConversation,
   type RawMessage,
@@ -16,13 +20,23 @@ import {
 
 export type Result<T> = { data: T; error: null } | { data: null; error: string };
 
-// Fase 2A-1: SOMENTE leitura (+ marcar como lida). Nenhum envio.
+export interface SendOutcome {
+  messageId: string | null;
+  status: string;
+}
+
+// Fase 2A-2: leitura + operação da conversa (RPCs) + envio manual de texto (Edge whatsapp-send).
 export interface WhatsappSource {
   summary(companyId: string): Promise<Result<ConnectionSummary>>;
   conversations(companyId: string): Promise<Result<ConversationRow[]>>;
   messages(companyId: string, conversationId: string): Promise<Result<MessageRow[]>>;
   suggestions(conversationId: string): Promise<Result<Suggestions>>;
   markRead(conversationId: string): Promise<Result<null>>;
+  agents(companyId: string): Promise<Result<AgentOption[]>>;
+  assign(conversationId: string, userId: string | null): Promise<Result<null>>;
+  setStatus(conversationId: string, status: ConversationStatus): Promise<Result<null>>;
+  linkCustomer(conversationId: string, customerId: string | null): Promise<Result<null>>;
+  send(conversationId: string, body: string, clientRequestId: string): Promise<Result<SendOutcome>>;
   subscribe(companyId: string, onChange: () => void): () => void;
 }
 
@@ -35,8 +49,32 @@ function fail<T>(error: { code?: string | null; message?: string | null }): Resu
   return { data: null, error: GENERIC };
 }
 
+// Ações do atendente: as mensagens PT400/403/404/409 do banco são amigáveis e seguem para a tela.
+function failAction<T>(error: { code?: string | null; message?: string | null }): Result<T> {
+  console.error("Falha na ação do WhatsApp:", error.code ?? "sem código");
+  if (error.code && /^PT40\d$/.test(error.code) && error.message) return { data: null, error: error.message };
+  return { data: null, error: "Não foi possível concluir a ação agora. Tente novamente." };
+}
+
+// Corpo de erro da Edge (FunctionsHttpError.context é a Response): { error, message_id?, status? }.
+async function edgeError(error: unknown): Promise<{ message: string | null; messageId: string | null }> {
+  try {
+    const ctx = (error as { context?: { json?: () => Promise<unknown> } }).context;
+    if (ctx?.json) {
+      const body = (await ctx.json()) as { error?: unknown; message_id?: unknown } | null;
+      return {
+        message: typeof body?.error === "string" ? body.error : null,
+        messageId: typeof body?.message_id === "string" ? body.message_id : null,
+      };
+    }
+  } catch {
+    // corpo ilegível: cai no genérico
+  }
+  return { message: null, messageId: null };
+}
+
 const CONVERSATION_COLUMNS =
-  "id, contact_phone, contact_display_name, customer_id, status, unread_count, last_message_preview, last_message_at";
+  "id, contact_phone, contact_display_name, customer_id, status, assigned_user_id, unread_count, last_message_preview, last_message_at, last_inbound_at";
 const MESSAGE_COLUMNS = "id, conversation_id, direction, type, body, status, provider_timestamp, created_at";
 const MESSAGE_LIMIT = 200;
 
@@ -79,6 +117,38 @@ export const supabaseWhatsappSource: WhatsappSource = {
     const { error } = await supabase.rpc("mark_whatsapp_conversation_read", { p_conversation_id: conversationId });
     if (error) return fail(error);
     return { data: null, error: null };
+  },
+  async agents(companyId) {
+    const { data, error } = await supabase.rpc("whatsapp_list_agents", { p_company_id: companyId });
+    if (error) return fail(error);
+    return { data: toAgents(data), error: null };
+  },
+  async assign(conversationId, userId) {
+    const { error } = await supabase.rpc("assign_whatsapp_conversation", { p_conversation_id: conversationId, p_user_id: userId });
+    if (error) return failAction(error);
+    return { data: null, error: null };
+  },
+  async setStatus(conversationId, status) {
+    const { error } = await supabase.rpc("set_whatsapp_conversation_status", { p_conversation_id: conversationId, p_status: status });
+    if (error) return failAction(error);
+    return { data: null, error: null };
+  },
+  async linkCustomer(conversationId, customerId) {
+    const { error } = await supabase.rpc("link_whatsapp_conversation_customer", { p_conversation_id: conversationId, p_customer_id: customerId });
+    if (error) return failAction(error);
+    return { data: null, error: null };
+  },
+  async send(conversationId, body, clientRequestId) {
+    const { data, error } = await supabase.functions.invoke("whatsapp-send", {
+      body: { conversation_id: conversationId, client_request_id: clientRequestId, body },
+    });
+    if (error) {
+      const e = await edgeError(error);
+      console.error("Falha no envio do WhatsApp");
+      return { data: null, error: friendlySendError(e.message) };
+    }
+    const o = (data ?? {}) as { message_id?: unknown; status?: unknown };
+    return { data: { messageId: typeof o.message_id === "string" ? o.message_id : null, status: typeof o.status === "string" ? o.status : "queued" }, error: null };
   },
   subscribe(companyId, onChange) {
     return subscribeToOpenAttendanceChanges(supabase as unknown as RealtimeClientLike, companyId, onChange, "whatsapp-inbox", [
