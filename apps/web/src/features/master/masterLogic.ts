@@ -3,7 +3,7 @@
 
 // Únicos módulos comerciais opcionais desta versão. O núcleo (Atendimento, Comandas/Mesas, Pedidos, Caixa básico,
 // Clientes, Dashboard, Configurações) está no Plano Base e NUNCA é módulo pago.
-export const COMMERCIAL_MODULE_CODES = ["financeiro", "producao", "estoque", "impressao"] as const;
+export const COMMERCIAL_MODULE_CODES = ["financeiro", "producao", "estoque", "impressao", "delivery"] as const;
 
 export const CORE_INCLUDED = ["Atendimento", "Comandas/Mesas", "Pedidos", "Caixa básico", "Clientes", "Dashboard", "Configurações"];
 
@@ -12,6 +12,7 @@ export const MODULE_FEATURES: Record<string, string[]> = {
   producao: ["Painel de produção", "Setores", "Fila", "Histórico", "Métricas de preparo"],
   estoque: ["Estoque", "Disponibilidade", "Movimentações", "Relatórios"],
   impressao: ["Print Agent", "Impressão avançada", "Etiquetas de produto, livre e comanda/mesa"],
+  delivery: ["Delivery", "Retirada", "Endereços", "Zonas e taxas", "Produção/KDS", "Entregadores", "Integração com Caixa e Estoque"],
 };
 
 export const isCommercialModule = (code: string): boolean => (COMMERCIAL_MODULE_CODES as readonly string[]).includes(code);
