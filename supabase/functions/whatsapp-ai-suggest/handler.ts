@@ -6,9 +6,11 @@
 // Fluxo:
 //   1. JWT do usuário -> RPC whatsapp_ai_prepare_suggestion: valida papel, módulo, empresa, modo (só 'suggest'; 'auto' =
 //      bloqueado), janela, conversa aberta e COTA; devolve só o contexto mínimo (já redigido). company_id vem do banco.
-//   2. AiSuggester (provedor injetado; chave só em Edge Secret). Timeout 12 s, sem retry.
-//   3. service_role -> whatsapp_ai_record_usage: SÓ métricas (provider, model, status, tokens, latência).
-//   4. Resposta: { suggestion }.
+//   2. service_role -> whatsapp_ai_reserve_usage: RESERVA ATÔMICA da cota (10/min usuário, 300/dia empresa) antes do
+//      provedor. Bloqueada por cota => 429 e o provedor NÃO é chamado.
+//   3. AiSuggester (provedor injetado; chave só em Edge Secret). Timeout 12 s, sem retry.
+//   4. service_role -> whatsapp_ai_finalize_usage: fecha a reserva com SÓ métricas (status, tokens, latência).
+//   5. Resposta: { suggestion }.
 // Nada de mensagem, prompt, telefone ou sugestão é logado (só etapa e código).
 import {
   AI_SUGGEST_MAX_CHARS,
@@ -86,28 +88,32 @@ function isContext(v: unknown): v is SuggestionContext & { company_id: string; c
   );
 }
 
-async function recordUsage(
+type FinalStatus = "ok" | "timeout" | "provider_error" | "rate_limited" | "invalid_output";
+
+// Fecha a reserva (linha nova; append-only): só métricas. Falha aqui não derruba a resposta ao usuário: a reserva
+// sem finalização continua contando como tentativa.
+async function finalizeUsage(
   deps: SuggestDeps,
-  ctx: { company_id: string; conversation_id: string; user_id: string | null },
-  s: AiSuggester,
-  status: "ok" | "timeout" | "provider_error" | "rate_limited" | "invalid_output",
+  usageId: string,
+  status: FinalStatus,
   inputTokens: number | null,
   outputTokens: number | null,
   latencyMs: number,
 ): Promise<void> {
-  const r = await call(deps.admin, "whatsapp_ai_record_usage", {
-    p_company_id: ctx.company_id,
-    p_conversation_id: ctx.conversation_id,
-    p_user_id: ctx.user_id,
-    p_provider: s.provider,
-    p_model: s.model,
+  const r = await call(deps.admin, "whatsapp_ai_finalize_usage", {
+    p_usage_id: usageId,
     p_status: status,
     p_input_tokens: inputTokens,
     p_output_tokens: outputTokens,
     p_latency_ms: Math.max(0, Math.round(latencyMs)),
   });
-  if (r.error) console.error("whatsapp-ai-suggest: não registrou o uso", { code: r.error.code ?? null });
+  if (r.error) console.error("whatsapp-ai-suggest: não finalizou o uso", { code: r.error.code ?? null });
 }
+
+const QUOTA_MESSAGE: Record<string, string> = {
+  user_minute: "Muitas sugestões em pouco tempo. Aguarde um instante e tente de novo.",
+  company_day: "O limite diário de sugestões por IA da empresa foi atingido.",
+};
 
 export async function handleWhatsappAiSuggest(req: Request, deps: SuggestDeps): Promise<Response> {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS });
@@ -144,7 +150,27 @@ export async function handleWhatsappAiSuggest(req: Request, deps: SuggestDeps): 
     return json({ error: "A sugestão por IA está indisponível no momento." }, 503);
   }
 
-  // 2) provedor (timeout, sem retry)
+  // 2) RESERVA ATÔMICA da cota (no banco, sob lock da empresa) ANTES de chamar o provedor. Bloqueada = provedor não é chamado.
+  const rsv = await call(deps.admin, "whatsapp_ai_reserve_usage", {
+    p_company_id: ctx.company_id,
+    p_conversation_id: ctx.conversation_id,
+    p_user_id: ctx.user_id,
+    p_provider: suggester.provider,
+    p_model: suggester.model,
+  });
+  const rd = isObj(rsv.data) ? rsv.data : {};
+  if (rsv.error || (rd.result !== "reserved" && rd.result !== "blocked")) {
+    console.error("whatsapp-ai-suggest: reserva de cota falhou", { code: rsv.error?.code ?? null, result: typeof rd.result === "string" ? rd.result : null });
+    return json({ error: GENERIC_ERROR }, 500); // falha fechada: sem reserva, sem provedor
+  }
+  if (rd.result === "blocked") {
+    const reason = typeof rd.reason === "string" ? rd.reason : "user_minute";
+    return json({ error: QUOTA_MESSAGE[reason] ?? QUOTA_MESSAGE.user_minute }, 429);
+  }
+  const usageId = typeof rd.usage_id === "string" ? rd.usage_id : null;
+  if (!usageId) return json({ error: GENERIC_ERROR }, 500);
+
+  // 3) provedor (timeout, sem retry)
   const now = deps.now ?? Date.now;
   const started = now();
   const controller = new AbortController();
@@ -176,7 +202,7 @@ export async function handleWhatsappAiSuggest(req: Request, deps: SuggestDeps): 
   const latency = now() - started;
 
   if (!result.ok) {
-    await recordUsage(deps, ctx, suggester, result.kind, null, null, latency);
+    await finalizeUsage(deps, usageId, result.kind, null, null, latency);
     console.error("whatsapp-ai-suggest: geração falhou", { kind: result.kind });
     if (result.kind === "rate_limited") {
       return json({ error: "O serviço de sugestões está ocupado. Tente novamente em instantes." }, 429);
@@ -187,11 +213,11 @@ export async function handleWhatsappAiSuggest(req: Request, deps: SuggestDeps): 
 
   const suggestion = sanitizeSuggestion(result.text, AI_SUGGEST_MAX_CHARS);
   if (!suggestion) {
-    await recordUsage(deps, ctx, suggester, "invalid_output", result.inputTokens, result.outputTokens, latency);
+    await finalizeUsage(deps, usageId, "invalid_output", result.inputTokens, result.outputTokens, latency);
     return json({ error: GENERIC_ERROR }, 502);
   }
 
-  // 3) uso (só métricas) e 4) resposta
-  await recordUsage(deps, ctx, suggester, "ok", result.inputTokens, result.outputTokens, latency);
+  // 4) finaliza a reserva (só métricas) e responde
+  await finalizeUsage(deps, usageId, "ok", result.inputTokens, result.outputTokens, latency);
   return json({ suggestion });
 }
