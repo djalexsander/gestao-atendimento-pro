@@ -3,6 +3,15 @@ import { useAuth } from "../../app/useAuth";
 import { createCoalescedRunner } from "../orders/coalesce";
 import { supabaseWhatsappSource, type WhatsappSource } from "./whatsappApi";
 import {
+  AI_BADGE_EDITED_TEXT,
+  AI_BADGE_TEXT,
+  AI_IDLE,
+  AI_SUGGEST_ERROR,
+  aiBadge,
+  aiFailed,
+  aiLoading,
+  aiReady,
+  aiSuggestAvailable,
   FILTER_LABEL,
   FILTER_ORDER,
   MAX_BODY_LENGTH,
@@ -24,6 +33,8 @@ import {
   windowLabel,
   windowState,
   type AgentOption,
+  type AiDraftState,
+  type AiMode,
   type ConnectionSummary,
   type ConversationFilter,
   type ConversationRow,
@@ -59,6 +70,11 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // IA (Fase 1): só sugere texto; o envio continua exclusivamente pelo botão Enviar.
+  const [aiMode, setAiMode] = useState<AiMode>("off");
+  const [aiState, setAiState] = useState<AiDraftState>(AI_IDLE);
+  const [aiError, setAiError] = useState<string | null>(null);
+  const aiRunning = useRef(false);
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selectedId;
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -99,6 +115,7 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
     if (!companyId) return;
     void source.summary(companyId).then((r) => setSummary(r.data));
     void source.agents(companyId).then((r) => setAgents(r.data ?? []));
+    void source.aiMode?.(companyId).then((r) => setAiMode(r.data ?? "off"));
     void requestConversations();
   }, [companyId, source, requestConversations]);
 
@@ -135,6 +152,9 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
     setDraft("");
     setSendError(null);
     setActionError(null);
+    setAiState(AI_IDLE);
+    setAiError(null);
+    aiRunning.current = false;
     pendingRequest.current = null;
     if (!companyId || !selectedId) return;
     void requestMessages();
@@ -178,9 +198,37 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
     } else {
       pendingRequest.current = null;
       setDraft("");
+      setAiState(AI_IDLE);
+      setAiError(null);
     }
     requestMessages();
     requestConversations();
+  }
+
+  async function doSuggest() {
+    if (!selected || aiRunning.current || sending || !source.aiSuggest) return;
+    const forId = selected.id;
+    aiRunning.current = true;
+    setAiError(null);
+    const before = aiState;
+    setAiState(aiLoading(before, draft));
+    const r = await source.aiSuggest(forId);
+    if (selectedRef.current !== forId) return; // trocou de conversa: o efeito de abertura já limpou tudo
+    aiRunning.current = false;
+    if (r.data) {
+      setDraft(r.data);
+      setAiState((s) => aiReady(s, r.data as string));
+    } else {
+      // falha: o rascunho NÃO é apagado e o envio manual segue normal
+      setAiState(aiFailed(before));
+      setAiError(r.error || AI_SUGGEST_ERROR);
+    }
+  }
+
+  function discardSuggestion() {
+    setDraft(aiState.previousDraft);
+    setAiState(AI_IDLE);
+    setAiError(null);
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -333,7 +381,7 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
                       {statusText(m) ? ` · ${statusText(m)}` : ""}
                     </span>
                     {m.direction === "outbound" && m.status === "failed" && m.body && (
-                      <button type="button" className="btn-secondary btn-small wa-retry" disabled={sending || block === "window" || block === "closed"} onClick={() => void doSend(m.body ?? "")}>
+                      <button type="button" className="btn-secondary btn-small wa-retry" disabled={sending || aiState.status === "loading" || block === "window" || block === "closed"} onClick={() => void doSend(m.body ?? "")}>
                         Reenviar
                       </button>
                     )}
@@ -349,6 +397,18 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
                 {block === "window" && <p className="wa-readonly">{OUTSIDE_WINDOW_TEXT}</p>}
                 {block === "closed" && <p className="wa-readonly">Reabra a conversa para responder.</p>}
                 {sendError && <div className="form-error" role="alert">{sendError}</div>}
+                {aiError && <div className="form-error" role="alert">{aiError}</div>}
+                {aiBadge(aiState, draft) !== "none" && (
+                  <div className="wa-ai-badge" role="status">
+                    <span>{aiBadge(aiState, draft) === "edited" ? AI_BADGE_EDITED_TEXT : AI_BADGE_TEXT}</span>
+                    <button type="button" className="btn-secondary btn-auto" onClick={discardSuggestion} disabled={aiState.status === "loading" || sending}>
+                      Descartar
+                    </button>
+                    <button type="button" className="btn-secondary btn-auto" onClick={() => void doSuggest()} disabled={aiState.status === "loading" || sending}>
+                      Gerar outra
+                    </button>
+                  </div>
+                )}
                 <div className="wa-composer-row">
                   <textarea
                     className="wa-input"
@@ -361,7 +421,17 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
                     onChange={(e) => setDraft(e.target.value)}
                     onKeyDown={onKeyDown}
                   />
-                  <button type="button" className="btn-primary btn-auto" disabled={block !== null || sending} onClick={() => void doSend(draft)}>
+                  {aiSuggestAvailable(aiMode, block) && source.aiSuggest && (
+                    <button
+                      type="button"
+                      className="btn-secondary btn-auto wa-ai-button"
+                      disabled={sending || aiState.status === "loading"}
+                      onClick={() => void doSuggest()}
+                    >
+                      {aiState.status === "loading" ? "Gerando sugestão..." : "Sugerir resposta com IA"}
+                    </button>
+                  )}
+                  <button type="button" className="btn-primary btn-auto" disabled={block !== null || sending || aiState.status === "loading"} onClick={() => void doSend(draft)}>
                     {sending ? "Enviando…" : "Enviar"}
                   </button>
                 </div>

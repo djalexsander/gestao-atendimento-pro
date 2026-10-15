@@ -85,6 +85,7 @@ export const ADMIN_NAV: NavEntry[] = [
       { type: "item", label: "Modo de atendimento", path: "/app/configuracoes/modo-atendimento", status: "ready" },
       { type: "item", label: "Impressão", path: "/app/configuracoes/impressao", status: "ready", module: "impressao" },
       { type: "item", label: "Delivery", path: "/app/configuracoes/delivery", status: "ready", module: "delivery", hideWhenLocked: true },
+      { type: "item", label: "IA do WhatsApp", path: "/app/configuracoes/whatsapp-ia", status: "ready", module: "whatsapp", hideWhenLocked: true },
       { type: "item", label: "Notificações", path: "/app/configuracoes/notificacoes", status: "ready" },
       { type: "item", label: "Sistema / Preferências", path: "/app/configuracoes/sistema", status: "ready" },
     ],

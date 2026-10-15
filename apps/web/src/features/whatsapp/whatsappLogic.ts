@@ -315,3 +315,100 @@ export function friendlySendError(message: string | null | undefined): string {
   if (m && !/^(Edge Function|FunctionsHttpError|FunctionsFetchError|Failed to|TypeError|AuthApiError)/i.test(m) && m.length <= 200) return m;
   return "Não foi possível enviar a mensagem agora. Tente novamente.";
 }
+
+// ---- IA do WhatsApp (Fase 1: SÓ sugestão; o envio continua manual) ----
+export const AI_SUGGEST_ERROR = "Não foi possível gerar a sugestão agora. Você pode continuar respondendo manualmente.";
+export const AI_BADGE_TEXT = "Sugestão da IA — ainda não enviada";
+export const AI_BADGE_EDITED_TEXT = "Sugestão da IA — editada";
+
+/** Modo efetivo vindo do banco: só 'suggest' liga a função; qualquer outra coisa (inclusive 'auto') = desligado. */
+export type AiMode = "off" | "suggest";
+export function toAiMode(raw: unknown): AiMode {
+  const o = typeof raw === "object" && raw !== null ? (raw as { effective_mode?: unknown }) : {};
+  return o.effective_mode === "suggest" ? "suggest" : "off";
+}
+
+/** Mostra/habilita o botão: modo suggest, conversa selecionada, aberta e dentro da janela. Não interfere no composerBlock. */
+export function aiSuggestAvailable(mode: AiMode, block: ComposerBlock): boolean {
+  return mode === "suggest" && block !== "closed" && block !== "window";
+}
+
+export interface AiDraftState {
+  status: "idle" | "loading" | "ready";
+  /** Última sugestão colocada no composer. */
+  suggestion: string | null;
+  /** Rascunho que existia antes da primeira sugestão (restaurado em Descartar). */
+  previousDraft: string;
+}
+export const AI_IDLE: AiDraftState = { status: "idle", suggestion: null, previousDraft: "" };
+
+export function aiLoading(prev: AiDraftState, currentDraft: string): AiDraftState {
+  // gerar outra mantém o rascunho ORIGINAL (não a sugestão anterior)
+  return { status: "loading", suggestion: prev.suggestion, previousDraft: prev.suggestion === null ? currentDraft : prev.previousDraft };
+}
+export function aiReady(prev: AiDraftState, suggestion: string): AiDraftState {
+  return { status: "ready", suggestion, previousDraft: prev.previousDraft };
+}
+/** Falha: volta ao estado anterior ao pedido (o rascunho nunca é apagado). */
+export function aiFailed(prev: AiDraftState): AiDraftState {
+  return prev.suggestion === null ? AI_IDLE : { ...prev, status: "ready" };
+}
+/** Selo: some quando não há sugestão; muda para "editada" se o texto do composer deixou de ser o sugerido. */
+export function aiBadge(state: AiDraftState, draft: string): "none" | "suggested" | "edited" {
+  if (state.suggestion === null) return "none";
+  return draft === state.suggestion ? "suggested" : "edited";
+}
+export function friendlyAiError(message: string | null | undefined): string {
+  const m = (message ?? "").trim();
+  if (m && !/^(Edge Function|FunctionsHttpError|FunctionsFetchError|Failed to|TypeError|AuthApiError)/i.test(m) && m.length <= 200) return m;
+  return AI_SUGGEST_ERROR;
+}
+
+export interface AiSettings {
+  effectiveMode: AiMode;
+  enabled: boolean;
+  mode: "off" | "suggest" | "auto";
+  businessName: string;
+  tone: string;
+  customInstructions: string;
+  businessHours: string;
+  fallbackToHuman: boolean;
+  maxContextMessages: number;
+  acknowledgedAt: string | null;
+}
+
+export const AI_DEFAULT_SETTINGS: AiSettings = {
+  effectiveMode: "off", enabled: false, mode: "off", businessName: "", tone: "", customInstructions: "", businessHours: "",
+  fallbackToHuman: true, maxContextMessages: 12, acknowledgedAt: null,
+};
+
+export function toAiSettings(raw: unknown): AiSettings {
+  if (typeof raw !== "object" || raw === null) return AI_DEFAULT_SETTINGS;
+  const o = raw as Record<string, unknown>;
+  const str = (v: unknown) => (typeof v === "string" ? v : "");
+  const hours = typeof o.business_hours === "object" && o.business_hours !== null ? str((o.business_hours as { text?: unknown }).text) : "";
+  const max = typeof o.max_context_messages === "number" ? o.max_context_messages : 12;
+  return {
+    effectiveMode: toAiMode(o),
+    enabled: o.enabled === true,
+    mode: o.mode === "suggest" || o.mode === "auto" ? o.mode : "off",
+    businessName: str(o.business_name),
+    tone: str(o.tone),
+    customInstructions: str(o.custom_instructions),
+    businessHours: hours,
+    fallbackToHuman: o.fallback_to_human !== false,
+    maxContextMessages: Math.min(30, Math.max(1, Math.round(max))),
+    acknowledgedAt: typeof o.acknowledged_at === "string" ? o.acknowledged_at : null,
+  };
+}
+
+/** Erros de validação da tela de configuração (o banco confere de novo). */
+export function aiSettingsError(s: Pick<AiSettings, "businessName" | "tone" | "customInstructions" | "businessHours" | "maxContextMessages" | "enabled">, acknowledged: boolean): string | null {
+  if (s.businessName.length > 120) return "O nome do estabelecimento pode ter no máximo 120 caracteres.";
+  if (s.tone.length > 80) return "O tom de voz pode ter no máximo 80 caracteres.";
+  if (s.businessHours.length > 300) return "O horário de atendimento pode ter no máximo 300 caracteres.";
+  if (s.customInstructions.length > 2000) return "As instruções podem ter no máximo 2000 caracteres.";
+  if (!Number.isInteger(s.maxContextMessages) || s.maxContextMessages < 1 || s.maxContextMessages > 30) return "O contexto deve ter entre 1 e 30 mensagens.";
+  if (s.enabled && !acknowledged) return "Confirme a ciência sobre o tratamento dos dados para ativar.";
+  return null;
+}

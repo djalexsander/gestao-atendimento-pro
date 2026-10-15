@@ -73,3 +73,9 @@ verify_jwt = true
 # Webhook da WhatsApp Business Platform (público). Autenticação = assinatura X-Hub-Signature-256 (WHATSAPP_APP_SECRET,
 # tempo constante) no POST e WHATSAPP_VERIFY_TOKEN no GET de verificação; a empresa vem de metadata.phone_number_id.
 verify_jwt = false
+
+[functions.whatsapp-ai-suggest]
+# Sugestão de resposta por IA (Fase 1: só texto; nunca envia mensagem). JWT obrigatório na borda; o handler repassa o JWT do
+# usuário à RPC (papel, módulo, modo 'suggest', janela, cota e contexto mínimo são decididos no banco). A chave do provedor
+# de IA fica só em Edge Secret.
+verify_jwt = true

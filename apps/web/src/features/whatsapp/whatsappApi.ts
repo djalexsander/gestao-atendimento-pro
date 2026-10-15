@@ -2,7 +2,10 @@ import { supabase } from "../../lib/supabaseClient";
 import type { RealtimeClientLike } from "../../lib/productsRealtime";
 import { subscribeToOpenAttendanceChanges } from "../operations/openSessionsRealtime";
 import {
+  friendlyAiError,
   friendlySendError,
+  toAiMode,
+  type AiMode,
   toAgents,
   toConnectionSummary,
   toConversation,
@@ -37,6 +40,9 @@ export interface WhatsappSource {
   setStatus(conversationId: string, status: ConversationStatus): Promise<Result<null>>;
   linkCustomer(conversationId: string, customerId: string | null): Promise<Result<null>>;
   send(conversationId: string, body: string, clientRequestId: string): Promise<Result<SendOutcome>>;
+  /** IA (Fase 1): modo efetivo da empresa e SUGESTÃO de texto. Opcionais: fontes simuladas antigas continuam válidas. */
+  aiMode?(companyId: string): Promise<Result<AiMode>>;
+  aiSuggest?(conversationId: string): Promise<Result<string>>;
   subscribe(companyId: string, onChange: () => void): () => void;
 }
 
@@ -149,6 +155,23 @@ export const supabaseWhatsappSource: WhatsappSource = {
     }
     const o = (data ?? {}) as { message_id?: unknown; status?: unknown };
     return { data: { messageId: typeof o.message_id === "string" ? o.message_id : null, status: typeof o.status === "string" ? o.status : "queued" }, error: null };
+  },
+  async aiMode(companyId) {
+    const { data, error } = await supabase.rpc("whatsapp_ai_get_settings", { p_company_id: companyId });
+    if (error) return { data: "off", error: null }; // sem acesso/indisponível: o recurso simplesmente não aparece
+    return { data: toAiMode(data), error: null };
+  },
+  async aiSuggest(conversationId) {
+    // Só TEXTO volta: a Edge nunca envia, nunca grava mensagem e nunca altera a conversa.
+    const { data, error } = await supabase.functions.invoke("whatsapp-ai-suggest", { body: { conversation_id: conversationId } });
+    if (error) {
+      const e = await edgeError(error);
+      console.error("Falha na sugestão de IA do WhatsApp");
+      return { data: null, error: friendlyAiError(e.message) };
+    }
+    const s = (data as { suggestion?: unknown } | null)?.suggestion;
+    if (typeof s !== "string" || s.trim() === "") return { data: null, error: friendlyAiError(null) };
+    return { data: s, error: null };
   },
   subscribe(companyId, onChange) {
     return subscribeToOpenAttendanceChanges(supabase as unknown as RealtimeClientLike, companyId, onChange, "whatsapp-inbox", [
