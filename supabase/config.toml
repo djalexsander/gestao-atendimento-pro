@@ -79,3 +79,9 @@ verify_jwt = false
 # usuário à RPC (papel, módulo, modo 'suggest', janela, cota e contexto mínimo são decididos no banco). A chave do provedor
 # de IA fica só em Edge Secret.
 verify_jwt = true
+
+[functions.whatsapp-ai-auto]
+# Worker da resposta AUTOMÁTICA por IA (Fase 2). Chamado SÓ pelo banco (pg_cron -> pg_net) com o segredo compartilhado no header
+# x-internal-secret (>= 32 caracteres, tempo constante); não há JWT de usuário. Só age com WHATSAPP_AI_AUTO_ENABLED="true"
+# (kill switch em Edge Secret). O envio usa o fluxo OFICIAL (_shared/whatsapp-dispatch.ts); chaves só em Edge Secrets.
+verify_jwt = false

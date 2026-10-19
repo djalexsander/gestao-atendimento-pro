@@ -8,10 +8,12 @@ import {
   AI_IDLE,
   AI_SUGGEST_ERROR,
   aiBadge,
+  aiConversationState,
   aiFailed,
   aiLoading,
   aiReady,
   aiSuggestAvailable,
+  aiTakeoverAction,
   FILTER_LABEL,
   FILTER_ORDER,
   MAX_BODY_LENGTH,
@@ -171,6 +173,9 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
   const selected = conversations?.find((c) => c.id === selectedId) ?? null;
   const win = selected ? windowState(selected.lastInboundAt) : null;
   const block = selected ? composerBlock(selected, draft) : null;
+  // IA automática (Fase 2): estado por conversa (só aparece com a empresa em 'auto') e a ação Assumir/Devolver
+  const aiState2 = selected ? aiConversationState(aiMode, selected) : null;
+  const takeover = aiState2 ? aiTakeoverAction(aiState2) : null;
 
   async function runAction(fn: () => Promise<{ error: string | null }>) {
     setActionError(null);
@@ -312,6 +317,10 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
                       {c.status !== "open" && c.assignedUserId ? " · " : ""}
                       {c.assignedUserId ? (owner?.name ?? "Atribuída") : ""}
                     </span>
+                    {aiMode === "auto" && (() => {
+                      const st = aiConversationState(aiMode, c);
+                      return st.kind === "none" ? null : <span className={`wa-ai-tag wa-ai-tag-${st.kind}`}>{st.kind === "active" ? "IA ativa" : st.kind === "handoff" ? "Para humano" : "IA pausada"}</span>;
+                    })()}
                   </button>
                 </li>
               );
@@ -368,6 +377,21 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
                   ))}
                 </div>
               </div>
+              {aiState2 && aiState2.kind !== "none" && (
+                <div className={`wa-ai-state wa-ai-state-${aiState2.kind}`} role="status" data-testid="wa-ai-state">
+                  <span>{aiState2.label}</span>
+                  {takeover && source.setAiControl && (
+                    <button
+                      type="button"
+                      className="btn-secondary btn-small"
+                      disabled={busy}
+                      onClick={() => void runAction(() => source.setAiControl!(selected.id, takeover.to))}
+                    >
+                      {takeover.label}
+                    </button>
+                  )}
+                </div>
+              )}
               {actionError && <div className="form-error" role="alert">{actionError}</div>}
 
               <div className="wa-messages" role="log" aria-live="polite">
@@ -377,6 +401,7 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
                   <div key={m.id} className={`wa-msg wa-msg-${m.direction}${isMediaType(m.type) ? " wa-msg-media" : ""}${m.status === "failed" ? " wa-msg-failed" : ""}`}>
                     <span className="wa-msg-body">{messageText(m)}</span>
                     <span className="wa-msg-meta">
+                      {m.origin === "ai_auto" ? "IA · " : ""}
                       {formatClock(m.at)}
                       {statusText(m) ? ` · ${statusText(m)}` : ""}
                     </span>

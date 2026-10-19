@@ -142,7 +142,9 @@ export async function handleWhatsappAiSuggest(req: Request, deps: SuggestDeps): 
   }
   const ctx = prep.data;
   // defesa em profundidade: só o modo 'suggest' passa ('off' e 'auto' falham fechados)
-  if (ctx.mode !== "suggest") return json({ error: "A sugestão por IA não está ativada para esta empresa." }, 409);
+  // (em 'auto' o atendente pede sugestão em conversa assumida por humano; esta função NUNCA envia, em nenhum modo —
+  //  o envio automático é do worker whatsapp-ai-auto)
+  if (ctx.mode !== "suggest" && ctx.mode !== "auto") return json({ error: "A sugestão por IA não está ativada para esta empresa." }, 409);
 
   const suggester = deps.suggester;
   if (!suggester) {

@@ -5,7 +5,7 @@ export type AiResult<T> = { data: T; error: null } | { data: null; error: string
 
 export interface AiSettingsInput {
   enabled: boolean;
-  mode: "off" | "suggest";
+  mode: "off" | "suggest" | "auto";
   businessName: string;
   tone: string;
   customInstructions: string;
@@ -13,6 +13,12 @@ export interface AiSettingsInput {
   fallbackToHuman: boolean;
   maxContextMessages: number;
   acknowledge: boolean;
+  /** Confirmação específica do modo automático (exigida na primeira ativação; o banco confere de novo). */
+  acknowledgeAuto: boolean;
+  /** Repassados como estão (ainda sem tela própria): salvar nunca pode apagar horário/política configurados. */
+  afterHoursPolicy: "ai_continues" | "silent" | "message";
+  afterHoursMessage: string;
+  businessSchedule: unknown;
 }
 
 // Configuração da IA do WhatsApp (owner/admin). Provider/modelo NÃO são configuráveis aqui (vêm de Edge Secrets).
@@ -44,6 +50,10 @@ export const supabaseAiSettingsSource: AiSettingsSource = {
       p_fallback_to_human: input.fallbackToHuman,
       p_max_context_messages: input.maxContextMessages,
       p_acknowledge: input.acknowledge,
+      p_acknowledge_auto: input.acknowledgeAuto,
+      p_after_hours_policy: input.afterHoursPolicy,
+      p_after_hours_message: input.afterHoursMessage,
+      p_business_schedule: input.businessSchedule ?? null,
     });
     if (error) {
       console.error("Falha ao salvar a IA do WhatsApp:", error.code ?? "sem código");

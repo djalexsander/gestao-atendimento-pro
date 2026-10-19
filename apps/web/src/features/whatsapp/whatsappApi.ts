@@ -43,6 +43,8 @@ export interface WhatsappSource {
   /** IA (Fase 1): modo efetivo da empresa e SUGESTÃO de texto. Opcionais: fontes simuladas antigas continuam válidas. */
   aiMode?(companyId: string): Promise<Result<AiMode>>;
   aiSuggest?(conversationId: string): Promise<Result<string>>;
+  /** IA automática (Fase 2): 'human' = Assumir atendimento (pausa a IA); 'inherit' = Devolver para IA (também desatribui). */
+  setAiControl?(conversationId: string, control: "human" | "inherit"): Promise<Result<null>>;
   subscribe(companyId: string, onChange: () => void): () => void;
 }
 
@@ -80,8 +82,8 @@ async function edgeError(error: unknown): Promise<{ message: string | null; mess
 }
 
 const CONVERSATION_COLUMNS =
-  "id, contact_phone, contact_display_name, customer_id, status, assigned_user_id, unread_count, last_message_preview, last_message_at, last_inbound_at";
-const MESSAGE_COLUMNS = "id, conversation_id, direction, type, body, status, provider_timestamp, created_at";
+  "id, contact_phone, contact_display_name, customer_id, status, assigned_user_id, unread_count, last_message_preview, last_message_at, last_inbound_at, ai_control, ai_handoff_reason";
+const MESSAGE_COLUMNS = "id, conversation_id, direction, type, body, status, provider_timestamp, created_at, origin";
 const MESSAGE_LIMIT = 200;
 
 export const supabaseWhatsappSource: WhatsappSource = {
@@ -172,6 +174,11 @@ export const supabaseWhatsappSource: WhatsappSource = {
     const s = (data as { suggestion?: unknown } | null)?.suggestion;
     if (typeof s !== "string" || s.trim() === "") return { data: null, error: friendlyAiError(null) };
     return { data: s, error: null };
+  },
+  async setAiControl(conversationId, control) {
+    const { error } = await supabase.rpc("whatsapp_set_conversation_ai_control", { p_conversation_id: conversationId, p_control: control });
+    if (error) return failAction(error);
+    return { data: null, error: null };
   },
   subscribe(companyId, onChange) {
     return subscribeToOpenAttendanceChanges(supabase as unknown as RealtimeClientLike, companyId, onChange, "whatsapp-inbox", [

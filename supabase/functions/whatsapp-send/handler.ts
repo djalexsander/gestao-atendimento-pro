@@ -4,10 +4,12 @@
 //   1. JWT do usuário -> RPC whatsapp_prepare_outbound_message: valida papel, módulo, conexão ativa, conversa aberta,
 //      janela de 24 h e, no modo 'test', a lista de destinatários; grava a mensagem 'queued' (idempotente por
 //      client_request_id). Nada de conexão ou segredo volta ao usuário.
-//   2. service_role -> whatsapp_get_send_context: ÚNICA leitura do token (Vault). Revalida conexão/destinatário.
-//   3. Graph API (adapter). Sucesso -> whatsapp_mark_message_sent; falha -> whatsapp_mark_message_failed (código sanitizado).
+//   2. e 3. (contexto do envio, Graph API e status final) vivem em _shared/whatsapp-dispatch.ts, compartilhado com
+//      whatsapp-ai-auto: service_role -> whatsapp_get_send_context (ÚNICA leitura do token no Vault) -> Graph ->
+//      whatsapp_mark_message_sent | whatsapp_mark_message_failed (código sanitizado).
 //   O corpo recebido é só { conversation_id, client_request_id, body }: o token NUNCA vem do cliente nem volta a ele.
 //   Nenhum token, Authorization, telefone ou texto é logado (só nome da etapa e códigos).
+import { dispatchQueuedMessage, markMessageFailed, SEND_GENERIC_ERROR } from "../_shared/whatsapp-dispatch.ts";
 import { type GraphSender, isValidGraphVersion } from "../_shared/whatsapp-graph.ts";
 
 export interface RpcError {
@@ -42,7 +44,7 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 // Mensagem 'queued' além disto sem resposta = envio interrompido: libera para o usuário tentar de novo.
 export const STALE_QUEUED_SECONDS = 120;
 
-const GENERIC_ERROR = "Não foi possível enviar a mensagem agora. Tente novamente em instantes.";
+const GENERIC_ERROR = SEND_GENERIC_ERROR;
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), { status, headers: { ...CORS_HEADERS, "Content-Type": "application/json" } });
@@ -68,10 +70,7 @@ function userRpcFailure(e: RpcError): Response {
   return json({ error: GENERIC_ERROR }, 500);
 }
 
-async function markFailed(admin: RpcClient, messageId: string, code: string): Promise<void> {
-  const r = await call(admin, "whatsapp_mark_message_failed", { p_message_id: messageId, p_error_code: code });
-  if (r.error) console.error("whatsapp-send: não registrou a falha", { code: r.error.code ?? null });
-}
+const markFailed = (admin: RpcClient, messageId: string, code: string): Promise<void> => markMessageFailed(admin, messageId, code);
 
 export async function handleWhatsappSend(req: Request, deps: SendDeps): Promise<Response> {
   if (req.method === "OPTIONS") return new Response(null, { status: 204, headers: CORS_HEADERS });
@@ -121,67 +120,8 @@ export async function handleWhatsappSend(req: Request, deps: SendDeps): Promise<
     return json({ message_id: messageId, status: "queued", idempotent: true });
   }
 
-  // 2) contexto do envio (token só aqui)
-  const ctxRes = await call(deps.admin, "whatsapp_get_send_context", { p_message_id: messageId });
-  const ctx = isObj(ctxRes.data) ? ctxRes.data : null;
-  if (ctxRes.error || !ctx) {
-    console.error("whatsapp-send: contexto indisponível", { code: ctxRes.error?.code ?? null });
-    await markFailed(deps.admin, messageId, "context_error");
-    return json({ error: GENERIC_ERROR, message_id: messageId, status: "failed" }, 502);
-  }
-  if (ctx.ok !== true) {
-    const reason = typeof ctx.error === "string" ? ctx.error : "context_error";
-    await markFailed(deps.admin, messageId, reason);
-    if (reason === "test_recipient_blocked") {
-      return json({ error: "Destinatário não autorizado no modo de teste.", message_id: messageId, status: "failed" }, 403);
-    }
-    if (reason === "connection_inactive") {
-      return json({ error: "O WhatsApp desta empresa não está conectado.", message_id: messageId, status: "failed" }, 409);
-    }
-    return json({ error: "A conexão do WhatsApp não está disponível. Procure o administrador.", message_id: messageId, status: "failed" }, 503);
-  }
-  const phoneNumberId = typeof ctx.phone_number_id === "string" ? ctx.phone_number_id : "";
-  const recipient = typeof ctx.recipient_phone === "string" ? ctx.recipient_phone : "";
-  const text = typeof ctx.body === "string" ? ctx.body : "";
-  const token = typeof ctx.access_token === "string" ? ctx.access_token : "";
-  if (!phoneNumberId || !recipient || !text || !token) {
-    await markFailed(deps.admin, messageId, "context_error");
-    return json({ error: GENERIC_ERROR, message_id: messageId, status: "failed" }, 502);
-  }
-
-  // 3) Graph API
-  const result = await deps.graph.sendText({ version: deps.graphVersion, phoneNumberId, accessToken: token, to: recipient, body: text });
-
-  if (result.ok) {
-    let mark = await call(deps.admin, "whatsapp_mark_message_sent", { p_message_id: messageId, p_provider_message_id: result.messageId });
-    if (mark.error) mark = await call(deps.admin, "whatsapp_mark_message_sent", { p_message_id: messageId, p_provider_message_id: result.messageId });
-    if (mark.error) console.error("whatsapp-send: enviada, mas não registrou o id", { code: mark.error.code ?? null });
-    return json({ message_id: messageId, status: "sent", idempotent: false });
-  }
-
-  let errorCode: string;
-  let http = 502;
-  let friendly = "O WhatsApp recusou a mensagem. Tente novamente.";
-  if (result.kind === "timeout") {
-    errorCode = "timeout";
-    http = 504;
-    friendly = "O WhatsApp demorou para responder. Confira o status da mensagem antes de reenviar.";
-  } else if (result.kind === "network") {
-    errorCode = "network";
-    friendly = "Não foi possível falar com o WhatsApp agora. Tente novamente.";
-  } else if (result.kind === "invalid_response") {
-    errorCode = "invalid_response";
-  } else if (result.status === 401 || result.code === "190") {
-    errorCode = "graph_auth";
-    friendly = "A conexão do WhatsApp precisa ser reconectada. Procure o administrador.";
-  } else if (result.status === 429 || result.code === "130429" || result.code === "80007") {
-    errorCode = "graph_rate_limit";
-    http = 429;
-    friendly = "Muitas mensagens em pouco tempo. Aguarde um instante e tente de novo.";
-  } else {
-    errorCode = `graph_${result.code ?? result.status ?? "error"}`;
-  }
-  console.error("whatsapp-send: envio falhou", { kind: result.kind, status: result.status ?? null, code: errorCode });
-  await markFailed(deps.admin, messageId, errorCode);
-  return json({ error: friendly, message_id: messageId, status: "failed" }, http);
+  // 2) e 3) contexto do envio (token só aqui) + Graph + status final: fluxo OFICIAL compartilhado (_shared/whatsapp-dispatch.ts)
+  const sent = await dispatchQueuedMessage({ admin: deps.admin, graph: deps.graph, graphVersion: deps.graphVersion }, messageId);
+  if (sent.ok) return json({ message_id: messageId, status: "sent", idempotent: false });
+  return json({ error: sent.friendly, message_id: messageId, status: "failed" }, sent.http);
 }

@@ -19,6 +19,8 @@ export interface RawConversation {
   last_message_preview: string | null;
   last_message_at: string | null;
   last_inbound_at: string | null;
+  ai_control?: "inherit" | "human" | null;
+  ai_handoff_reason?: string | null;
 }
 export interface ConversationRow {
   id: string;
@@ -31,6 +33,9 @@ export interface ConversationRow {
   preview: string | null;
   lastMessageAt: string | null;
   lastInboundAt: string | null;
+  /** IA (Fase 2): 'human' = IA pausada nesta conversa (assumida por humano ou encaminhada pela IA). */
+  aiControl: "inherit" | "human";
+  aiHandoffReason: string | null;
 }
 export interface RawMessage {
   id: string;
@@ -41,6 +46,7 @@ export interface RawMessage {
   status: MessageStatus;
   provider_timestamp: string | null;
   created_at: string;
+  origin?: "human" | "ai_auto" | "system" | null;
 }
 export interface MessageRow {
   id: string;
@@ -50,6 +56,8 @@ export interface MessageRow {
   body: string | null;
   status: MessageStatus;
   at: string;
+  /** 'ai_auto' = enviada pela IA automática (selo "IA" no balão). */
+  origin: "human" | "ai_auto" | "system";
 }
 export interface CustomerHint {
   id: string;
@@ -96,6 +104,8 @@ export function toConversation(r: RawConversation): ConversationRow {
     preview: r.last_message_preview,
     lastMessageAt: r.last_message_at,
     lastInboundAt: r.last_inbound_at ?? null,
+    aiControl: r.ai_control === "human" ? "human" : "inherit",
+    aiHandoffReason: r.ai_handoff_reason ?? null,
   };
 }
 
@@ -108,6 +118,7 @@ export function toMessage(r: RawMessage): MessageRow {
     body: r.body,
     status: r.status,
     at: r.provider_timestamp ?? r.created_at,
+    origin: r.origin === "ai_auto" || r.origin === "system" ? r.origin : "human",
   };
 }
 
@@ -321,16 +332,69 @@ export const AI_SUGGEST_ERROR = "Não foi possível gerar a sugestão agora. Voc
 export const AI_BADGE_TEXT = "Sugestão da IA — ainda não enviada";
 export const AI_BADGE_EDITED_TEXT = "Sugestão da IA — editada";
 
-/** Modo efetivo vindo do banco: só 'suggest' liga a função; qualquer outra coisa (inclusive 'auto') = desligado. */
-export type AiMode = "off" | "suggest";
+/** Modo efetivo vindo do banco ('auto' só com todos os requisitos). Qualquer outra coisa = desligado. */
+export type AiMode = "off" | "suggest" | "auto";
 export function toAiMode(raw: unknown): AiMode {
   const o = typeof raw === "object" && raw !== null ? (raw as { effective_mode?: unknown }) : {};
-  return o.effective_mode === "suggest" ? "suggest" : "off";
+  return o.effective_mode === "suggest" || o.effective_mode === "auto" ? o.effective_mode : "off";
 }
 
-/** Mostra/habilita o botão: modo suggest, conversa selecionada, aberta e dentro da janela. Não interfere no composerBlock. */
+/** Mostra/habilita o botão: modo suggest OU auto (em conversa assumida por humano), conversa aberta e dentro da janela. O botão só SUGERE. */
 export function aiSuggestAvailable(mode: AiMode, block: ComposerBlock): boolean {
-  return mode === "suggest" && block !== "closed" && block !== "window";
+  return (mode === "suggest" || mode === "auto") && block !== "closed" && block !== "window";
+}
+
+// ---- IA automática por conversa (Fase 2) ----
+export const AI_AUTO_ACTIVE_TEXT = "IA ativa";
+export const AI_PAUSED_TEXT = "IA pausada — atendimento humano";
+export const AI_HANDOFF_REASON_LABEL: Record<string, string> = {
+  human_requested: "o cliente pediu um atendente",
+  complaint: "reclamação do cliente",
+  legal: "assunto jurídico ou sensível",
+  billing_sensitive: "cobrança sensível",
+  out_of_scope: "assunto fora das instruções",
+  missing_info: "faltou informação para responder",
+  low_confidence: "a IA não teve certeza",
+  prompt_injection: "mensagem suspeita",
+  action_required: "o pedido exige uma ação no sistema",
+  unsupported_media: "mensagem de áudio, imagem ou arquivo",
+  unauthorized_offer: "a resposta continha oferta não autorizada",
+  invented_value: "a resposta continha valor não autorizado",
+  invalid_output: "a IA não conseguiu responder",
+  timeout: "a IA demorou para responder",
+  provider_error: "erro no serviço de IA",
+  rate_limited: "serviço de IA ocupado",
+  too_many_changes: "o cliente continuou escrevendo",
+  other: "motivo não informado",
+};
+export function aiHandoffReasonLabel(code: string | null | undefined): string {
+  return (code && AI_HANDOFF_REASON_LABEL[code]) || AI_HANDOFF_REASON_LABEL.other;
+}
+
+export type AiConversationState =
+  | { kind: "none" }
+  | { kind: "active"; label: string }
+  | { kind: "paused"; label: string }
+  | { kind: "handoff"; label: string };
+
+/**
+ * Situação da IA numa conversa. Só existe com a empresa em 'auto'. Conversa atribuída a alguém conta como atendimento humano
+ * (a IA não responde); 'Devolver para IA' também desatribui, então o estado exibido nunca contradiz o que o banco faz.
+ */
+export function aiConversationState(mode: AiMode, c: Pick<ConversationRow, "aiControl" | "aiHandoffReason" | "assignedUserId">): AiConversationState {
+  if (mode !== "auto") return { kind: "none" };
+  if (c.aiControl === "human" && c.aiHandoffReason) {
+    return { kind: "handoff", label: `Encaminhada para humano: ${aiHandoffReasonLabel(c.aiHandoffReason)}` };
+  }
+  if (c.aiControl === "human" || c.assignedUserId) return { kind: "paused", label: AI_PAUSED_TEXT };
+  return { kind: "active", label: AI_AUTO_ACTIVE_TEXT };
+}
+
+/** Ação do atendente: 'take' (Assumir atendimento) quando a IA está ativa; 'return' (Devolver para IA) quando está pausada. */
+export function aiTakeoverAction(state: AiConversationState): { to: "human" | "inherit"; label: string } | null {
+  if (state.kind === "active") return { to: "human", label: "Assumir atendimento" };
+  if (state.kind === "paused" || state.kind === "handoff") return { to: "inherit", label: "Devolver para IA" };
+  return null;
 }
 
 export interface AiDraftState {
@@ -375,12 +439,22 @@ export interface AiSettings {
   fallbackToHuman: boolean;
   maxContextMessages: number;
   acknowledgedAt: string | null;
+  /** Fase 2: ciência específica do modo automático. */
+  autoAcknowledgedAt: string | null;
+  /** Fase 2: repassados sem alteração ao salvar (a tela ainda não os edita; não podem ser apagados). */
+  afterHoursPolicy: "ai_continues" | "silent" | "message";
+  afterHoursMessage: string;
+  businessSchedule: unknown;
 }
 
 export const AI_DEFAULT_SETTINGS: AiSettings = {
   effectiveMode: "off", enabled: false, mode: "off", businessName: "", tone: "", customInstructions: "", businessHours: "",
   fallbackToHuman: true, maxContextMessages: 12, acknowledgedAt: null,
+  autoAcknowledgedAt: null, afterHoursPolicy: "ai_continues", afterHoursMessage: "", businessSchedule: null,
 };
+
+export const AI_AUTO_WARNING =
+  "A IA poderá responder seus clientes automaticamente com base nas instruções configuradas. Conversas que exigirem atendimento humano poderão ser encaminhadas para sua equipe.";
 
 export function toAiSettings(raw: unknown): AiSettings {
   if (typeof raw !== "object" || raw === null) return AI_DEFAULT_SETTINGS;
@@ -399,16 +473,28 @@ export function toAiSettings(raw: unknown): AiSettings {
     fallbackToHuman: o.fallback_to_human !== false,
     maxContextMessages: Math.min(30, Math.max(1, Math.round(max))),
     acknowledgedAt: typeof o.acknowledged_at === "string" ? o.acknowledged_at : null,
+    autoAcknowledgedAt: typeof o.auto_acknowledged_at === "string" ? o.auto_acknowledged_at : null,
+    afterHoursPolicy: o.after_hours_policy === "silent" || o.after_hours_policy === "message" ? o.after_hours_policy : "ai_continues",
+    afterHoursMessage: str(o.after_hours_message),
+    businessSchedule: typeof o.business_schedule === "object" && o.business_schedule !== null ? o.business_schedule : null,
   };
 }
 
 /** Erros de validação da tela de configuração (o banco confere de novo). */
-export function aiSettingsError(s: Pick<AiSettings, "businessName" | "tone" | "customInstructions" | "businessHours" | "maxContextMessages" | "enabled">, acknowledged: boolean): string | null {
+export function aiSettingsError(
+  s: Pick<AiSettings, "businessName" | "tone" | "customInstructions" | "businessHours" | "maxContextMessages" | "enabled">,
+  acknowledged: boolean,
+  auto?: { mode: "off" | "suggest" | "auto"; autoAcknowledged: boolean },
+): string | null {
   if (s.businessName.length > 120) return "O nome do estabelecimento pode ter no máximo 120 caracteres.";
   if (s.tone.length > 80) return "O tom de voz pode ter no máximo 80 caracteres.";
   if (s.businessHours.length > 300) return "O horário de atendimento pode ter no máximo 300 caracteres.";
   if (s.customInstructions.length > 2000) return "As instruções podem ter no máximo 2000 caracteres.";
   if (!Number.isInteger(s.maxContextMessages) || s.maxContextMessages < 1 || s.maxContextMessages > 30) return "O contexto deve ter entre 1 e 30 mensagens.";
   if (s.enabled && !acknowledged) return "Confirme a ciência sobre o tratamento dos dados para ativar.";
+  if (s.enabled && auto?.mode === "auto") {
+    if (!s.customInstructions.trim()) return "Preencha as instruções da IA (produtos, preços e regras) antes de ativar o modo automático.";
+    if (!auto.autoAcknowledged) return "Confirme que a IA poderá responder seus clientes automaticamente para ativar o modo automático.";
+  }
   return null;
 }

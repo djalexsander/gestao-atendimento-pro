@@ -1,0 +1,372 @@
+// Edge Function whatsapp-ai-auto (verify_jwt = false; chamada SÓ pelo banco via pg_cron/pg_net com x-internal-secret):
+// WORKER do modo AUTOMÁTICO da IA do WhatsApp (Fase 2).
+//
+// Separada de whatsapp-ai-suggest (que continua só sugerindo). Fluxo por job:
+//   claim (lease, SKIP LOCKED) -> prepare (barreiras determinísticas + contexto mínimo) -> pré-filtros em código ->
+//   reserva de cota AUTO (antes do provedor) -> IA com decisão estruturada -> validação ESTRUTURAL -> checagens de segurança
+//   da resposta -> commit_send (REVALIDAÇÃO FINAL sob lock + mensagem 'queued', client_request_id = job) -> dispatch OFICIAL
+//   (_shared/whatsapp-dispatch.ts: send context, Graph, mark_sent/failed) -> complete_job.
+//
+// Chave de segurança: WHATSAPP_AI_AUTO_ENABLED precisa ser exatamente "true". Qualquer outro valor => NADA é claimado,
+// NADA é gerado e NADA é enviado (os jobs apenas envelhecem e expiram sem resposta).
+// Nunca é logado: prompt, mensagem, resposta, telefone, token, chave, Authorization. Só códigos e IDs técnicos.
+import {
+  AUTO_REPLY_MAX_CHARS,
+  AUTO_TIMEOUT_MS,
+  buildAutoConversationBlock,
+  buildAutoSystemPrompt,
+  checkReplySafety,
+  preFilter,
+  validateDecision,
+  type AiDecider,
+  type AutoContext,
+} from "../_shared/ai-auto.ts";
+import { authorizeInternalRequest } from "../_shared/push-core.ts";
+import { dispatchQueuedMessage, markMessageFailed, type DispatchRpcClient } from "../_shared/whatsapp-dispatch.ts";
+import { isValidGraphVersion, type GraphSender } from "../_shared/whatsapp-graph.ts";
+
+export type RpcClient = DispatchRpcClient;
+
+export interface AutoDeps {
+  /** Secret compartilhado com o banco (x-internal-secret). */
+  internalSecret: string | undefined;
+  /** WHATSAPP_AI_AUTO_ENABLED: só "true" liga. */
+  killSwitch: string | undefined;
+  admin: RpcClient;
+  /** null = provedor não configurado (falha fechada). */
+  decider: AiDecider | null;
+  graph: GraphSender;
+  graphVersion: string | undefined;
+  now?: () => number;
+  maxJobs?: number;
+}
+
+const JSON_HEADERS = { "Content-Type": "application/json" };
+const MAX_JOBS = 5;
+const CONCURRENCY = 3;
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), { status, headers: JSON_HEADERS });
+}
+const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+
+async function call(client: RpcClient, fn: string, args: Record<string, unknown>): Promise<{ data: unknown; error: { code?: string; message: string } | null }> {
+  try {
+    return await client.rpc(fn, args);
+  } catch (e) {
+    console.error("whatsapp-ai-auto: rpc lançou exceção", { fn, name: e instanceof Error ? e.name : null });
+    return { data: null, error: { message: "falha de comunicação" } };
+  }
+}
+
+function isAutoContext(v: unknown): v is AutoContext & { latest_message_id: string; after_hours_message?: string } {
+  return (
+    isObj(v) &&
+    typeof v.latest_message_id === "string" &&
+    (Array.isArray(v.messages) || typeof v.after_hours_message === "string") &&
+    (v.messages === undefined || (Array.isArray(v.messages) && v.messages.every((m) => isObj(m) && typeof m.text === "string" && (m.direction === "inbound" || m.direction === "outbound"))))
+  );
+}
+
+type FinalStatus = "ok" | "timeout" | "provider_error" | "rate_limited" | "invalid_output";
+
+interface JobRow {
+  id: string;
+}
+
+interface Ctx {
+  deps: AutoDeps;
+}
+
+async function completeJob(
+  c: Ctx,
+  jobId: string,
+  outcome: string,
+  reason: string | null,
+  opts: { usageId?: string | null; handled?: string | null; handoff?: boolean } = {},
+): Promise<void> {
+  const r = await call(c.deps.admin, "whatsapp_ai_complete_job", {
+    p_job_id: jobId,
+    p_outcome: outcome,
+    p_reason_code: reason,
+    p_usage_id: opts.usageId ?? null,
+    p_handled_latest_message_id: opts.handled ?? null,
+    p_handoff: opts.handoff === true,
+  });
+  if (r.error) console.error("whatsapp-ai-auto: não encerrou o job", { code: r.error.code ?? null, outcome });
+}
+
+async function finalizeUsage(c: Ctx, usageId: string, status: FinalStatus, input: number | null, output: number | null, latency: number): Promise<void> {
+  const r = await call(c.deps.admin, "whatsapp_ai_finalize_usage", {
+    p_usage_id: usageId,
+    p_status: status,
+    p_input_tokens: input,
+    p_output_tokens: output,
+    p_latency_ms: Math.max(0, Math.round(latency)),
+  });
+  if (r.error) console.error("whatsapp-ai-auto: não finalizou o uso", { code: r.error.code ?? null });
+}
+
+/** Handoff (conversa vai para o humano) quando fallback_to_human=true; senão apenas não responde (ignored). */
+async function handoffOrIgnore(
+  c: Ctx,
+  jobId: string,
+  fallback: boolean,
+  reason: string,
+  opts: { usageId?: string | null; handled?: string | null; failureOutcome?: string } = {},
+): Promise<string> {
+  if (opts.failureOutcome) {
+    // erro do provedor/timeout/saída inválida: o desfecho é a própria falha; a conversa só vai ao humano se permitido
+    await completeJob(c, jobId, opts.failureOutcome, reason, { usageId: opts.usageId, handled: opts.handled, handoff: fallback });
+    return opts.failureOutcome;
+  }
+  if (fallback) {
+    await completeJob(c, jobId, "handoff", reason, { usageId: opts.usageId, handled: opts.handled, handoff: true });
+    return "handoff";
+  }
+  await completeJob(c, jobId, "ignored", reason, { usageId: opts.usageId, handled: opts.handled });
+  return "ignored";
+}
+
+async function commitAndDispatch(
+  c: Ctx,
+  jobId: string,
+  latest: string,
+  body: string,
+  opts: { usageId: string | null; okOutcome: string; okReason: string; fallback: boolean },
+): Promise<string> {
+  const commit = await call(c.deps.admin, "whatsapp_ai_auto_commit_send", { p_job_id: jobId, p_context_latest_message_id: latest, p_body: body });
+  const res = isObj(commit.data) ? commit.data : null;
+  if (commit.error || !res || typeof res.result !== "string") {
+    console.error("whatsapp-ai-auto: commit falhou", { code: commit.error?.code ?? null });
+    return "left_for_retry"; // lease expira e o job é recuperado; a mensagem (se existir) é única por job
+  }
+  if (res.result === "not_active") return "not_active";
+  if (res.result === "rescheduled") return "rescheduled"; // entrou inbound novo: a resposta antiga NÃO é enviada
+  if (res.result === "abort") {
+    const outcome = typeof res.outcome === "string" ? res.outcome : "aborted_mode";
+    const reason = typeof res.reason === "string" ? res.reason : "aborted";
+    await completeJob(c, jobId, outcome, reason, { usageId: opts.usageId, handoff: outcome === "handoff" && opts.fallback });
+    return outcome;
+  }
+  const messageId = typeof res.message_id === "string" ? res.message_id : null;
+  if (!messageId) return "left_for_retry";
+
+  if (res.result === "existing") {
+    // retry de worker: NUNCA reenviar. Se ficou 'queued', o envio foi interrompido: falha explícita (igual ao envio manual).
+    const st = typeof res.status === "string" ? res.status : "";
+    if (st === "queued") {
+      await markMessageFailed(c.deps.admin, messageId, "send_interrupted");
+      await completeJob(c, jobId, "failed_send", "send_interrupted", { usageId: opts.usageId });
+      return "failed_send";
+    }
+    if (st === "failed") {
+      await completeJob(c, jobId, "failed_send", "send_failed", { usageId: opts.usageId });
+      return "failed_send";
+    }
+    await completeJob(c, jobId, opts.okOutcome, opts.okReason, { usageId: opts.usageId, handled: latest });
+    return opts.okOutcome;
+  }
+
+  // result === 'queued' => fluxo OFICIAL de despacho
+  const graphVersion = c.deps.graphVersion as string; // validado antes de claimar
+  const sent = await dispatchQueuedMessage({ admin: c.deps.admin, graph: c.deps.graph, graphVersion }, messageId);
+  if (sent.ok) {
+    await completeJob(c, jobId, opts.okOutcome, opts.okReason, { usageId: opts.usageId, handled: latest });
+    return opts.okOutcome;
+  }
+  await completeJob(c, jobId, "failed_send", sent.errorCode, { usageId: opts.usageId });
+  return "failed_send";
+}
+
+async function processJob(c: Ctx, job: JobRow): Promise<string> {
+  const { deps } = c;
+  const decider = deps.decider as AiDecider;
+
+  const prep = await call(deps.admin, "whatsapp_ai_prepare_auto", { p_job_id: job.id });
+  const p = isObj(prep.data) ? prep.data : null;
+  if (prep.error || !p) {
+    console.error("whatsapp-ai-auto: prepare falhou", { code: prep.error?.code ?? null });
+    return "left_for_retry";
+  }
+  if (p.resume === true && typeof p.message_id === "string") {
+    // RETOMADA: o job já tem saída (worker caiu depois do commit). NUNCA gera nem reenvia; só resolve o estado dela,
+    // exatamente como o envio manual trata um 'queued' parado (falha explícita 'send_interrupted').
+    const st = typeof p.status === "string" ? p.status : "";
+    if (st === "queued") {
+      await markMessageFailed(deps.admin, p.message_id, "send_interrupted");
+      await completeJob(c, job.id, "failed_send", "send_interrupted");
+      return "failed_send";
+    }
+    if (st === "failed") {
+      await completeJob(c, job.id, "failed_send", "send_failed");
+      return "failed_send";
+    }
+    if (p.after_hours === true) {
+      await completeJob(c, job.id, "out_of_hours", "after_hours_message_sent");
+      return "out_of_hours";
+    }
+    await completeJob(c, job.id, "replied", "answered");
+    return "replied";
+  }
+  if (p.proceed !== true) {
+    const outcome = typeof p.outcome === "string" ? p.outcome : null;
+    if (!outcome) return "not_active";
+    await completeJob(c, job.id, outcome, typeof p.reason === "string" ? p.reason : null);
+    return outcome;
+  }
+  if (!isAutoContext(p)) {
+    console.error("whatsapp-ai-auto: contexto inesperado");
+    return "left_for_retry";
+  }
+  const latest = p.latest_message_id;
+
+  // fora do expediente com mensagem fixa: SEM IA
+  if (typeof p.after_hours_message === "string" && !Array.isArray(p.messages)) {
+    return await commitAndDispatch(c, job.id, latest, p.after_hours_message, {
+      usageId: null,
+      okOutcome: "out_of_hours",
+      okReason: "after_hours_message_sent",
+      fallback: false,
+    });
+  }
+
+  const ctx = p as AutoContext & { latest_message_id: string };
+  const fallback = ctx.fallback_to_human === true;
+
+  // pré-filtros determinísticos: sem custo de IA
+  const pre = preFilter(ctx);
+  if (pre) {
+    if (pre.action === "ignore") {
+      await completeJob(c, job.id, "ignored", pre.reason_code, { handled: latest });
+      return "ignored";
+    }
+    return await handoffOrIgnore(c, job.id, fallback, pre.reason_code, { handled: latest });
+  }
+
+  // reserva atômica da cota ANTES do provedor
+  const rsv = await call(deps.admin, "whatsapp_ai_reserve_auto_usage", { p_job_id: job.id, p_provider: decider.provider, p_model: decider.model });
+  const rd = isObj(rsv.data) ? rsv.data : {};
+  if (rsv.error || (rd.result !== "reserved" && rd.result !== "blocked")) {
+    console.error("whatsapp-ai-auto: reserva de cota falhou", { code: rsv.error?.code ?? null, result: typeof rd.result === "string" ? rd.result : null });
+    return "left_for_retry"; // falha fechada: sem reserva, sem provedor
+  }
+  if (rd.result === "blocked") {
+    await completeJob(c, job.id, "blocked_quota", typeof rd.reason === "string" ? rd.reason : "auto_minute");
+    return "blocked_quota";
+  }
+  const usageId = typeof rd.usage_id === "string" ? rd.usage_id : null;
+  if (!usageId) return "left_for_retry";
+
+  // provedor (timeout, sem retry)
+  const now = deps.now ?? Date.now;
+  const started = now();
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<{ ok: false; kind: "timeout" }>((resolve) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      resolve({ ok: false, kind: "timeout" });
+    }, AUTO_TIMEOUT_MS);
+  });
+  let result;
+  try {
+    result = await Promise.race([
+      decider.decide({ system: buildAutoSystemPrompt(ctx), user: buildAutoConversationBlock(ctx), timeoutMs: AUTO_TIMEOUT_MS, signal: controller.signal }),
+      timeout,
+    ]);
+  } catch (e) {
+    console.error("whatsapp-ai-auto: provedor lançou exceção", { name: e instanceof Error ? e.name : null });
+    result = { ok: false as const, kind: "provider_error" as const };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+  const latency = now() - started;
+
+  if (!result.ok) {
+    await finalizeUsage(c, usageId, result.kind, null, null, latency);
+    console.error("whatsapp-ai-auto: geração falhou", { kind: result.kind });
+    return await handoffOrIgnore(c, job.id, fallback, result.kind, { usageId, handled: latest, failureOutcome: result.kind });
+  }
+
+  const v = validateDecision(result.text);
+  if (!v.ok) {
+    await finalizeUsage(c, usageId, "invalid_output", result.inputTokens, result.outputTokens, latency);
+    console.error("whatsapp-ai-auto: decisão inválida", { why: v.why });
+    return await handoffOrIgnore(c, job.id, fallback, "invalid_output", { usageId, handled: latest, failureOutcome: "invalid_output" });
+  }
+  await finalizeUsage(c, usageId, "ok", result.inputTokens, result.outputTokens, latency);
+  const d = v.decision;
+
+  if (d.action === "ignore") {
+    await completeJob(c, job.id, "ignored", d.reason_code, { usageId, handled: latest });
+    return "ignored";
+  }
+  if (d.action === "handoff") {
+    return await handoffOrIgnore(c, job.id, fallback, d.reason_code, { usageId, handled: latest });
+  }
+
+  // action === 'reply': só com confiança alta e dentro das checagens de segurança
+  if (d.confidence !== "high") {
+    return await handoffOrIgnore(c, job.id, fallback, "low_confidence", { usageId, handled: latest });
+  }
+  const reply = d.reply as string;
+  if (reply.length > AUTO_REPLY_MAX_CHARS) {
+    return await handoffOrIgnore(c, job.id, fallback, "invalid_output", { usageId, handled: latest, failureOutcome: "invalid_output" });
+  }
+  const safe = checkReplySafety(reply, ctx);
+  if (!safe.ok) {
+    return await handoffOrIgnore(c, job.id, fallback, safe.reason_code ?? "other", { usageId, handled: latest });
+  }
+
+  return await commitAndDispatch(c, job.id, latest, reply, { usageId, okOutcome: "replied", okReason: "answered", fallback });
+}
+
+export async function handleWhatsappAiAuto(req: Request, deps: AutoDeps): Promise<Response> {
+  if (req.method !== "POST") return json({ error: "Método não permitido." }, 405);
+
+  const auth = authorizeInternalRequest(deps.internalSecret, req.headers.get("x-internal-secret"));
+  if (auth === "misconfigured") {
+    console.error("whatsapp-ai-auto: segredo interno ausente ou curto");
+    return json({ error: "Indisponível." }, 503);
+  }
+  if (auth !== "authorized") return json({ error: "Não autorizado." }, 401);
+
+  // KILL SWITCH: só "true" liga. Desligada, nada é claimado, gerado ou enviado.
+  if (deps.killSwitch !== "true") return json({ processed: 0, disabled: true });
+
+  if (!deps.decider) {
+    console.error("whatsapp-ai-auto: provedor de IA não configurado");
+    return json({ error: "Indisponível." }, 503);
+  }
+  if (!isValidGraphVersion(deps.graphVersion)) {
+    console.error("whatsapp-ai-auto: WHATSAPP_GRAPH_API_VERSION ausente ou inválida");
+    return json({ error: "Indisponível." }, 503);
+  }
+
+  const claim = await call(deps.admin, "whatsapp_ai_claim_jobs", { p_limit: deps.maxJobs ?? MAX_JOBS, p_lease_seconds: 120 });
+  if (claim.error) {
+    console.error("whatsapp-ai-auto: claim falhou", { code: claim.error.code ?? null });
+    return json({ error: "Falha ao processar." }, 500);
+  }
+  const jobs = (Array.isArray(claim.data) ? claim.data : []).filter((j): j is JobRow => isObj(j) && typeof j.id === "string");
+
+  const c: Ctx = { deps };
+  const outcomes: string[] = [];
+  for (let i = 0; i < jobs.length; i += CONCURRENCY) {
+    const batch = jobs.slice(i, i + CONCURRENCY);
+    const done = await Promise.all(
+      batch.map(async (job) => {
+        try {
+          return await processJob(c, job);
+        } catch (e) {
+          // exceção inesperada: o job fica 'processing' e o lease expira (no máx. 3 tentativas)
+          console.error("whatsapp-ai-auto: exceção no job", { name: e instanceof Error ? e.name : null });
+          return "error";
+        }
+      }),
+    );
+    outcomes.push(...done);
+  }
+  return json({ processed: jobs.length, outcomes });
+}
