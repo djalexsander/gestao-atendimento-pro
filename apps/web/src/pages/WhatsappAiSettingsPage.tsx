@@ -1,5 +1,6 @@
 import { useAuth } from "../app/useAuth";
 import { WhatsappAiSettings } from "../features/whatsapp/WhatsappAiSettings";
+import { WhatsappKnowledgeSettings } from "../features/whatsapp/WhatsappKnowledgeSettings";
 
 // Configurações → IA do WhatsApp. Só owner e admin (o Administrativo já barra os demais; segunda checagem aqui).
 export function WhatsappAiSettingsPage() {
@@ -10,7 +11,10 @@ export function WhatsappAiSettingsPage() {
     <div>
       <h2>IA do WhatsApp</h2>
       {canEdit ? (
-        <WhatsappAiSettings companyId={activeMembership.companyId} />
+        <>
+          <WhatsappAiSettings companyId={activeMembership.companyId} />
+          <WhatsappKnowledgeSettings companyId={activeMembership.companyId} />
+        </>
       ) : (
         <p style={{ color: "var(--text-muted)" }}>Somente donos(as) e administradores(as) podem configurar a IA do WhatsApp.</p>
       )}
