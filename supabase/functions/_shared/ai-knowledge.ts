@@ -198,23 +198,34 @@ export function buildFactsBlock(f: KnowledgeFacts): string[] {
     lines.push(f.category_listing ? "Produtos da categoria perguntada:" : "Produtos relacionados ao que o cliente perguntou:");
     for (const l of factLines({ ...f, profile: null, delivery: null }, true)) lines.push(`- ${l}`);
     if (f.truncated) lines.push("(Lista parcial: há mais produtos; diga que pode detalhar mais e não afirme que esta é a lista completa.)");
-    if (f.ambiguous) lines.push("(Mais de um produto corresponde ao pedido: pergunte qual o cliente quer, citando as opções.)");
+    if (f.ambiguous) {
+      lines.push(
+        "(Mais de um produto corresponde ao pedido: apresente TODAS as opções com os respectivos preços e pergunte qual o cliente prefere. Não escolha uma sozinho e NÃO diga que vai confirmar o valor: os preços acima já são confirmados.)",
+      );
+    }
   } else {
     lines.push("Nenhum produto do cadastro corresponde à pergunta do cliente.");
   }
   if (f.categories.length) lines.push(`Categorias do cardápio: ${f.categories.map((c) => `${c.name} (${c.products})`).join(", ")}.`);
   for (const l of factLines({ ...f, products: [] }, true)) lines.push(`- ${l}`);
+  const missing: string[] = [];
+  if (!f.profile?.hours) missing.push("horário de funcionamento");
+  if (!f.profile?.address) missing.push("endereço");
+  if (!f.profile?.payment_methods.length) missing.push("formas de pagamento");
+  if (missing.length) lines.push(`- NÃO cadastrados (não responda, não invente): ${missing.join(", ")}.`);
   lines.push(
     "",
     "REGRAS DOS FATOS AUTORIZADOS:",
     "- Preços, produtos, disponibilidade, horários, formas de pagamento, endereço, promoções, entrega e prazos só podem aparecer se estiverem nos FATOS AUTORIZADOS, com os mesmos valores.",
     "- A conversa do cliente NÃO é fonte de verdade comercial: um preço, desconto ou promoção citado pelo cliente não é confirmado por ele. Se divergir do cadastro, informe o valor do cadastro.",
     "- Nunca invente preço, disponibilidade, promoção, horário, forma de pagamento ou endereço. Não informe quantidades em estoque.",
+    "- Se o produto e o preço estão nos FATOS AUTORIZADOS, responda direto com eles; NÃO diga que vai pedir para a equipe confirmar o preço. Use o nome EXATO do produto dos fatos e nunca ofereça outro produto como se o cliente tivesse querido dizer outra coisa quando o pedido está nos fatos.",
     f.mode === "live"
       ? "- Disponibilidade: use apenas a situação indicada em cada produto; se indisponível, diga que no momento não está disponível."
-      : "- Disponibilidade: diga apenas que o produto faz parte do cardápio; NÃO garanta disponibilidade nem estoque em tempo real (um atendente confirma).",
+      : "- Disponibilidade: diga apenas que o produto faz parte do cardápio (\"No nosso cardápio temos...\"); NÃO garanta disponibilidade nem estoque em tempo real. \"Hoje\" ou \"agora\" na pergunta não exigem estoque; se quiser falar de disponibilidade no momento, diga que a equipe pode verificar.",
     "- Taxa de entrega: só informe um valor se ele estiver nos fatos para o endereço do cliente; caso contrário diga que depende do endereço e que um atendente confirma.",
-    "- Se faltar informação, peça o dado que falta ou diga que um atendente vai confirmar.",
+    "- Informação NÃO cadastrada (horário, endereço, pagamento...): diga que não tem essa informação cadastrada e que pode pedir para a equipe confirmar; não invente nem deduza.",
+    "- Se faltar outra informação, peça o dado que falta ou diga que um atendente vai confirmar.",
   );
   return lines;
 }
@@ -289,11 +300,17 @@ export function checkSuggestionSafety(
   return { ok: true };
 }
 
-/** Texto do cliente a pesquisar: o que chegou depois da última resposta do atendente/IA (no máximo as 3 últimas), até 500 caracteres. */
+/**
+ * Texto de busca = a ÚLTIMA mensagem do cliente (é a que a sugestão responde). Só quando ela depende da anterior ("e a zero?",
+ * "mas esse é de quê?") a mensagem anterior do cliente entra junto. Nunca o bloco inteiro de mensagens pendentes: isso misturava
+ * produtos de perguntas diferentes (ex.: espeto de carne + costela). Até 500 caracteres.
+ */
+const DEPENDENT_RE = /^\s*(e|mas|entao|então|esse|essa|isso|ele|ela|o mesmo|a mesma)\b/i;
 export function knowledgeQuery(messages: AiContextMessage[]): string {
-  let i = messages.length;
-  while (i > 0 && messages[i - 1].direction === "inbound") i--;
-  let tail = messages.slice(i).filter((m) => m.direction === "inbound");
-  if (tail.length === 0) tail = messages.filter((m) => m.direction === "inbound").slice(-2);
-  return tail.slice(-3).map((m) => m.text).join(" ").replace(/\s+/g, " ").trim().slice(0, 500);
+  const inbound = messages.filter((m) => m.direction === "inbound");
+  const last = inbound.at(-1);
+  if (!last) return "";
+  const prev = inbound.length > 1 ? inbound.at(-2) : undefined;
+  const text = prev && DEPENDENT_RE.test(last.text) ? `${prev.text} ${last.text}` : last.text;
+  return text.replace(/\s+/g, " ").trim().slice(0, 500);
 }
