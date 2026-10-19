@@ -423,6 +423,44 @@ export function aiBadge(state: AiDraftState, draft: string): "none" | "suggested
   if (state.suggestion === null) return "none";
   return draft === state.suggestion ? "suggested" : "edited";
 }
+// ---------------------------------------------------------------------------
+// Erro de ENVIO do WhatsApp (separado do erro da sugestão por IA e do erro de ações)
+// ---------------------------------------------------------------------------
+/** Recusa da tentativa de envio mais recente, presa à conversa em que aconteceu. */
+export interface SendErrorState {
+  conversationId: string;
+  message: string;
+  /** Saídas já aceitas (sent/delivered/read) quando a falha ocorreu: qualquer outra que apareça depois supera o erro. */
+  acceptedIds: string[];
+}
+
+const ACCEPTED: ReadonlySet<MessageStatus> = new Set(["sent", "delivered", "read"]);
+export const acceptedOutboundIds = (messages: MessageRow[] | null): string[] =>
+  (messages ?? []).filter((m) => m.direction === "outbound" && ACCEPTED.has(m.status)).map((m) => m.id);
+
+export function makeSendError(conversationId: string, message: string, messages: MessageRow[] | null): SendErrorState {
+  return { conversationId, message, acceptedIds: acceptedOutboundIds(messages) };
+}
+
+/**
+ * Banner vermelho de envio: só enquanto a tentativa é a atual. Some se a conversa aberta é outra ou se, depois da falha, uma saída
+ * foi aceita pelo WhatsApp (envio bem-sucedido por qualquer caminho). Um 'failed' antigo no histórico NUNCA recria o banner:
+ * a falha vive na própria mensagem ("Falhou" + Reenviar).
+ */
+export function visibleSendError(err: SendErrorState | null, selectedId: string | null, messages: MessageRow[] | null): string | null {
+  if (!err || err.conversationId !== selectedId) return null;
+  const known = new Set(err.acceptedIds);
+  return acceptedOutboundIds(messages).some((id) => !known.has(id)) ? null : err.message;
+}
+
+/**
+ * Enter envia apenas texto DIGITADO. Rascunho vindo de "Sugerir resposta com IA" (sugerido ou editado) só sai pelo botão Enviar,
+ * como o próprio fluxo promete ("a IA só sugere; o envio é pelo botão"): Enter nele é quebra de linha, nunca envio.
+ */
+export function enterSends(state: AiDraftState): boolean {
+  return state.suggestion === null && state.status !== "loading";
+}
+
 export function friendlyAiError(message: string | null | undefined): string {
   const m = (message ?? "").trim();
   if (m && !/^(Edge Function|FunctionsHttpError|FunctionsFetchError|Failed to|TypeError|AuthApiError)/i.test(m) && m.length <= 200) return m;

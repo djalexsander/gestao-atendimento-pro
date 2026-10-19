@@ -31,7 +31,10 @@ import {
   messageText,
   statusActions,
   statusText,
+  enterSends,
+  makeSendError,
   totalUnread,
+  visibleSendError,
   windowLabel,
   windowState,
   type AgentOption,
@@ -42,6 +45,7 @@ import {
   type ConversationRow,
   type ConversationStatus,
   type MessageRow,
+  type SendErrorState,
   type Suggestions,
 } from "./whatsappLogic";
 
@@ -70,9 +74,10 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
   const [suggestions, setSuggestions] = useState<Suggestions | null>(null);
   const [draft, setDraft] = useState("");
   const [sending, setSending] = useState(false);
-  const [sendError, setSendError] = useState<string | null>(null);
+  // Recusa do ÚLTIMO envio, presa à conversa onde ocorreu (ver visibleSendError). Não se mistura com aiError (sugestão) nem actionError.
+  const [sendError, setSendError] = useState<SendErrorState | null>(null);
   const [busy, setBusy] = useState(false);
-  // IA (Fase 1): só sugere texto; o envio continua exclusivamente pelo botão Enviar.
+  // IA (Fase 1): só sugere texto; o envio de uma sugestão é exclusivamente pelo botão Enviar (Enter nela só quebra a linha).
   const [aiMode, setAiMode] = useState<AiMode>("off");
   const [aiState, setAiState] = useState<AiDraftState>(AI_IDLE);
   const [aiError, setAiError] = useState<string | null>(null);
@@ -174,6 +179,7 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
   const win = selected ? windowState(selected.lastInboundAt) : null;
   const block = selected ? composerBlock(selected, draft) : null;
   // IA automática (Fase 2): estado por conversa (só aparece com a empresa em 'auto') e a ação Assumir/Devolver
+  const shownSendError = visibleSendError(sendError, selectedId, messages);
   const aiState2 = selected ? aiConversationState(aiMode, selected) : null;
   const takeover = aiState2 ? aiTakeoverAction(aiState2) : null;
 
@@ -194,12 +200,13 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
     pendingRequest.current = { text: trimmed, id: requestId };
     setSending(true);
     setSendError(null);
-    const r = await source.send(selected.id, trimmed, requestId);
+    const forId = selected.id;
+    const r = await source.send(forId, trimmed, requestId);
     setSending(false);
     if (r.error) {
       // resposta do servidor (inclusive recusas): a mensagem pode existir como 'failed'; novo pedido na próxima tentativa
       pendingRequest.current = null;
-      setSendError(r.error);
+      if (selectedRef.current === forId) setSendError(makeSendError(forId, r.error, messages));
     } else {
       pendingRequest.current = null;
       setDraft("");
@@ -215,6 +222,7 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
     const forId = selected.id;
     aiRunning.current = true;
     setAiError(null);
+    setSendError(null); // nova ação de IA: um erro de envio anterior não pertence a esta tentativa
     const before = aiState;
     setAiState(aiLoading(before, draft));
     const r = await source.aiSuggest(forId);
@@ -234,10 +242,13 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
     setDraft(aiState.previousDraft);
     setAiState(AI_IDLE);
     setAiError(null);
+    setSendError(null);
   }
 
   function onKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
     if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+      // Texto digitado: Enter envia. Sugestão da IA (sugerida/editada): só o botão Enviar; Enter vira quebra de linha.
+      if (!enterSends(aiState)) return;
       e.preventDefault();
       if (block === null) void doSend(draft);
     }
@@ -421,7 +432,7 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
                 </div>
                 {block === "window" && <p className="wa-readonly">{OUTSIDE_WINDOW_TEXT}</p>}
                 {block === "closed" && <p className="wa-readonly">Reabra a conversa para responder.</p>}
-                {sendError && <div className="form-error" role="alert">{sendError}</div>}
+                {shownSendError && <div className="form-error" role="alert">{shownSendError}</div>}
                 {aiError && <div className="form-error" role="alert">{aiError}</div>}
                 {aiBadge(aiState, draft) !== "none" && (
                   <div className="wa-ai-badge" role="status">
@@ -443,7 +454,15 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
                     value={draft}
                     maxLength={MAX_BODY_LENGTH}
                     disabled={sending || block === "window" || block === "closed"}
-                    onChange={(e) => setDraft(e.target.value)}
+                    onChange={(e) => {
+                      setDraft(e.target.value);
+                      setSendError(null); // texto novo = nova tentativa: o aviso da anterior não vale mais
+                      // composer esvaziado: a sugestão foi abandonada; o que for digitado depois é texto manual (Enter volta a enviar)
+                      if (e.target.value.trim() === "" && aiState.suggestion !== null && aiState.status !== "loading") {
+                        setAiState(AI_IDLE);
+                        setAiError(null);
+                      }
+                    }}
                     onKeyDown={onKeyDown}
                   />
                   {aiSuggestAvailable(aiMode, block) && source.aiSuggest && (
