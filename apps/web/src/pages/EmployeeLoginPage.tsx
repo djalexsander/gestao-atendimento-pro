@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../app/useAuth";
+import { PasswordInput } from "../components/PasswordInput";
 import { companyAccessCodeExists } from "../features/employees/api";
 import { ACCESS_CODE_MAX_LENGTH, validateAccessCode } from "../lib/accessCode";
 import { LOGIN_MAX_LENGTH, validateLogin } from "../lib/employeeRules";
@@ -99,7 +100,6 @@ function CredentialsStep({ accessCode, onChangeCompany }: { accessCode: string; 
   const { signInEmployee } = useAuth();
   const [login, setLogin] = useState("");
   const [credential, setCredential] = useState("");
-  const [visible, setVisible] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -150,21 +150,15 @@ function CredentialsStep({ accessCode, onChangeCompany }: { accessCode: string; 
         </div>
         <div className="field">
           <label htmlFor="emp-credential">PIN ou senha</label>
-          <div className="input-with-action">
-            <input
-              id="emp-credential"
-              type={visible ? "text" : "password"}
-              required
-              autoComplete="current-password"
-              autoCapitalize="none"
-              spellCheck={false}
-              value={credential}
-              onChange={(e) => setCredential(e.target.value)}
-            />
-            <button className="btn-secondary btn-small" type="button" onClick={() => setVisible((v) => !v)}>
-              {visible ? "Ocultar" : "Mostrar"}
-            </button>
-          </div>
+          <PasswordInput
+            id="emp-credential"
+            required
+            autoComplete="current-password"
+            autoCapitalize="none"
+            spellCheck={false}
+            value={credential}
+            onChange={(e) => setCredential(e.target.value)}
+          />
         </div>
         <button className="btn-primary" type="submit" disabled={submitting}>
           {submitting ? "Entrando…" : "Entrar"}

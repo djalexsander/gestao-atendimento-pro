@@ -6,6 +6,7 @@ import {
   validateEmployeeName,
   validateLogin,
 } from "../../lib/employeeRules";
+import { PasswordInput } from "../../components/PasswordInput";
 import type { CompanyMember } from "../../lib/types";
 import {
   createEmployee,
@@ -64,25 +65,18 @@ function CredentialField({
   value: string;
   onChange: (value: string) => void;
 }) {
-  const [visible, setVisible] = useState(false);
   return (
     <div className="field">
       <label htmlFor={id}>{label}</label>
-      <div className="input-with-action">
-        <input
-          id={id}
-          type={visible ? "text" : "password"}
-          autoComplete="new-password"
-          autoCapitalize="none"
-          spellCheck={false}
-          required
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-        />
-        <button className="btn-secondary btn-small" type="button" onClick={() => setVisible((v) => !v)}>
-          {visible ? "Ocultar" : "Mostrar"}
-        </button>
-      </div>
+      <PasswordInput
+        id={id}
+        autoComplete="new-password"
+        autoCapitalize="none"
+        spellCheck={false}
+        required
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
       <span className="field-hint">{CREDENTIAL_HELP}</span>
     </div>
   );
@@ -279,9 +273,8 @@ export function CredentialDialog({ companyId, member, onClose, onDone }: DialogP
         <CredentialField id="emp-new-credential" label="Novo PIN ou senha" value={credential} onChange={setCredential} />
         <div className="field">
           <label htmlFor="emp-confirm-credential">Confirmar PIN ou senha</label>
-          <input
+          <PasswordInput
             id="emp-confirm-credential"
-            type="password"
             autoComplete="new-password"
             required
             value={confirmation}

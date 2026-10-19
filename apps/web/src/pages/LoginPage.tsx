@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../app/useAuth";
+import { PasswordInput } from "../components/PasswordInput";
 
 export function LoginPage() {
   const { signIn } = useAuth();
@@ -45,9 +46,8 @@ export function LoginPage() {
           </div>
           <div className="field">
             <label htmlFor="password">Senha</label>
-            <input
+            <PasswordInput
               id="password"
-              type="password"
               autoComplete="current-password"
               required
               value={password}

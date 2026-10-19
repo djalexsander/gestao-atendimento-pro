@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../app/useAuth";
+import { PasswordInput } from "../components/PasswordInput";
 import {
   RESEND_COOLDOWN_SECONDS,
   RESEND_SUCCESS_MESSAGE,
@@ -135,9 +136,8 @@ export function SignupPage() {
           </div>
           <div className="field">
             <label htmlFor="password">Senha</label>
-            <input
+            <PasswordInput
               id="password"
-              type="password"
               autoComplete="new-password"
               minLength={6}
               required
@@ -147,9 +147,8 @@ export function SignupPage() {
           </div>
           <div className="field">
             <label htmlFor="confirm-password">Confirmar senha</label>
-            <input
+            <PasswordInput
               id="confirm-password"
-              type="password"
               autoComplete="new-password"
               minLength={6}
               required

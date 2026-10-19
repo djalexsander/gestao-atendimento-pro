@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../app/useAuth";
+import { PasswordInput } from "../components/PasswordInput";
 import {
   RESET_LINK_EXPIRED_MESSAGE,
   RESET_SUCCESS_MESSAGE,
@@ -60,9 +61,8 @@ export function ResetPasswordPage() {
             <form onSubmit={handleSubmit}>
               <div className="field">
                 <label htmlFor="new-password">Nova senha</label>
-                <input
+                <PasswordInput
                   id="new-password"
-                  type="password"
                   autoComplete="new-password"
                   minLength={6}
                   required
@@ -72,9 +72,8 @@ export function ResetPasswordPage() {
               </div>
               <div className="field">
                 <label htmlFor="confirm-password">Confirmar nova senha</label>
-                <input
+                <PasswordInput
                   id="confirm-password"
-                  type="password"
                   autoComplete="new-password"
                   minLength={6}
                   required

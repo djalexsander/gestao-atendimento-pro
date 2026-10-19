@@ -621,6 +621,36 @@ button {
   gap: 8px;
 }
 
+/* Campo de senha com botão de olho (components/PasswordInput.tsx) */
+.password-input {
+  position: relative;
+  display: block;
+}
+.password-input input {
+  width: 100%;
+  padding-right: 44px;
+}
+.password-toggle {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+.password-toggle:hover { color: var(--text); }
+.password-toggle:focus-visible { outline: 2px solid var(--accent, #863bff); outline-offset: 1px; }
+.password-toggle:disabled { opacity: 0.5; cursor: not-allowed; }
+
 .input-with-action input {
   flex: 1;
   min-width: 0;
