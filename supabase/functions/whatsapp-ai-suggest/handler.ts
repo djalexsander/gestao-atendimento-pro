@@ -21,6 +21,14 @@ import {
   type AiSuggester,
   type SuggestionContext,
 } from "../_shared/ai-suggester.ts";
+import {
+  KNOWLEDGE_LOOKUP_LIMIT,
+  checkSuggestionSafety,
+  knowledgeKinds,
+  knowledgeQuery,
+  parseKnowledge,
+  type KnowledgeFacts,
+} from "../_shared/ai-knowledge.ts";
 
 export interface RpcError {
   code?: string;
@@ -110,6 +118,19 @@ async function finalizeUsage(
   if (r.error) console.error("whatsapp-ai-suggest: não finalizou o uso", { code: r.error.code ?? null });
 }
 
+// Rastreio SEM conteúdo da base de conhecimento (usado?, nº de produtos, tipos, consultas, código de bloqueio). Falha só é logada.
+async function recordKnowledge(deps: SuggestDeps, usageId: string, facts: KnowledgeFacts, safetyReason: string | null): Promise<void> {
+  const r = await call(deps.admin, "whatsapp_ai_record_knowledge_usage", {
+    p_usage_id: usageId,
+    p_knowledge_used: true,
+    p_product_count: facts.products.length,
+    p_kinds: knowledgeKinds(facts),
+    p_lookup_count: 1,
+    p_safety_reason: safetyReason,
+  });
+  if (r.error) console.error("whatsapp-ai-suggest: não registrou o uso do conhecimento", { code: r.error.code ?? null });
+}
+
 const QUOTA_MESSAGE: Record<string, string> = {
   user_minute: "Muitas sugestões em pouco tempo. Aguarde um instante e tente de novo.",
   company_day: "O limite diário de sugestões por IA da empresa foi atingido.",
@@ -152,6 +173,17 @@ export async function handleWhatsappAiSuggest(req: Request, deps: SuggestDeps): 
     return json({ error: "A sugestão por IA está indisponível no momento." }, 503);
   }
 
+  // 1b) Base de conhecimento (só com knowledge_enabled=true; senão a RPC devolve {enabled:false} e nada muda). UMA consulta, com o
+  //     JWT do usuário; company_id vem da conversa no banco. Falha na consulta NÃO derruba a sugestão (segue como antes).
+  let facts: KnowledgeFacts | null = null;
+  const lookup = await call(user, "whatsapp_ai_lookup_knowledge", {
+    p_conversation_id: conversationId,
+    p_query: knowledgeQuery(ctx.messages),
+    p_limit: KNOWLEDGE_LOOKUP_LIMIT,
+  });
+  if (lookup.error) console.error("whatsapp-ai-suggest: consulta de conhecimento falhou", { code: lookup.error.code ?? null });
+  else facts = parseKnowledge(lookup.data);
+
   // 2) RESERVA ATÔMICA da cota (no banco, sob lock da empresa) ANTES de chamar o provedor. Bloqueada = provedor não é chamado.
   const rsv = await call(deps.admin, "whatsapp_ai_reserve_usage", {
     p_company_id: ctx.company_id,
@@ -187,7 +219,7 @@ export async function handleWhatsappAiSuggest(req: Request, deps: SuggestDeps): 
   try {
     result = await Promise.race([
       suggester.suggest({
-        system: buildSystemPrompt(ctx),
+        system: buildSystemPrompt(ctx, facts),
         user: buildConversationBlock(ctx),
         maxOutputChars: AI_SUGGEST_MAX_CHARS,
         timeoutMs: AI_SUGGEST_TIMEOUT_MS,
@@ -219,7 +251,18 @@ export async function handleWhatsappAiSuggest(req: Request, deps: SuggestDeps): 
     return json({ error: GENERIC_ERROR }, 502);
   }
 
+  // 3b) Com fatos autorizados, a sugestão é validada contra eles. Fora dos fatos => bloqueada (o atendente responde manualmente).
+  if (facts) {
+    const safety = checkSuggestionSafety(suggestion, facts, ctx);
+    if (!safety.ok) {
+      await finalizeUsage(deps, usageId, "invalid_output", result.inputTokens, result.outputTokens, latency);
+      await recordKnowledge(deps, usageId, facts, safety.reason_code ?? "unsupported_commercial_claim");
+      return json({ error: "A sugestão continha uma informação comercial que não pôde ser confirmada e foi bloqueada. Responda manualmente ou tente gerar de novo." }, 422);
+    }
+  }
+
   // 4) finaliza a reserva (só métricas) e responde
   await finalizeUsage(deps, usageId, "ok", result.inputTokens, result.outputTokens, latency);
+  if (facts) await recordKnowledge(deps, usageId, facts, null);
   return json({ suggestion });
 }
