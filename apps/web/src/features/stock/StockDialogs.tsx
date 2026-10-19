@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { Modal } from "../employees/Modal";
 import type { StockMovement, StockSource } from "./stockApi";
 import { isOutgoing, MOVEMENT_LABEL, parseQuantity, resultingBalance } from "./stockLogic";
@@ -29,6 +29,7 @@ export function StockMovementDialog({
   const [reason, setReason] = useState(mode === "entry" ? "Reposição" : "");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const inFlight = useRef(false);
 
   const type = mode === "entry" ? "entry" : direction;
   const value = parseQuantity(quantity);
@@ -37,11 +38,16 @@ export function StockMovementDialog({
   const valid = value !== null && !negative && (mode === "entry" || reason.trim() !== "");
 
   async function handleSubmit(event: FormEvent) {
+    // Este diálogo pode ser aberto dentro do <form> de "Editar produto": o submit NÃO pode subir até
+    // lá (salvaria/fecharia o produto no meio do ajuste) nem virar um submit nativo da página.
     event.preventDefault();
-    if (submitting || !valid || value === null) return;
+    event.stopPropagation();
+    if (inFlight.current || submitting || !valid || value === null) return;
+    inFlight.current = true;
     setError(null);
     setSubmitting(true);
     const response = await source.move(productId, type, value, reason.trim());
+    inFlight.current = false;
     setSubmitting(false);
     if (response.error) {
       setError(response.error);

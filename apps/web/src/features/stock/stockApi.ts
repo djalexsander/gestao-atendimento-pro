@@ -5,6 +5,7 @@ import type { MovementKind, StockRow } from "./stockLogic";
 
 const LOAD_ERROR = "Não foi possível carregar o estoque agora. Tente novamente.";
 const SAVE_ERROR = "Não foi possível salvar agora. Tente novamente.";
+const MOVE_ERROR = "Não foi possível ajustar o estoque. Tente novamente.";
 
 // Estado de estoque/disponibilidade de UM produto (devolvido pelas RPCs).
 export interface ProductStockState {
@@ -39,6 +40,8 @@ export interface StockMovement {
 export interface StockSource {
   listControlled(companyId: string): Promise<{ data: StockRow[] | null; error: string | null }>;
   setControl(productId: string, mode: "none" | "quantity", minimum: number): Promise<{ data: ProductStockState | null; error: string | null }>;
+  // Saldo/controle OFICIAIS de um produto, lidos do banco (nunca calculados no cliente).
+  state(productId: string): Promise<{ data: ProductStockState | null; error: string | null }>;
   move(productId: string, type: "entry" | "adjustment_in" | "adjustment_out", quantity: number, reason: string): Promise<{ error: string | null }>;
   setAvailability(productId: string, available: boolean): Promise<{ data: ProductStockState | null; error: string | null }>;
   history(productId: string): Promise<{ data: StockMovement[] | null; error: string | null }>;
@@ -90,6 +93,19 @@ export const supabaseStockSource: StockSource = {
     return { data: toState(data as ProductStockState), error: null };
   },
 
+  async state(productId) {
+    const { data, error } = await supabase
+      .from("products")
+      .select("stock_control, stock_quantity, minimum_stock_quantity, available_for_sale")
+      .eq("id", productId)
+      .maybeSingle();
+    if (error || !data) {
+      if (error) console.error("Falha ao ler o estoque do produto:", error.code);
+      return { data: null, error: LOAD_ERROR };
+    }
+    return { data: toState(data as ProductStockState), error: null };
+  },
+
   async move(productId, type, quantity, reason) {
     const { error } = await supabase.rpc("add_stock_movement", {
       p_product_id: productId,
@@ -99,7 +115,7 @@ export const supabaseStockSource: StockSource = {
     });
     if (error) {
       console.error("Falha ao movimentar o estoque:", error.code);
-      return { error: describeOrderError(error, SAVE_ERROR) };
+      return { error: describeOrderError(error, MOVE_ERROR) };
     }
     return { error: null };
   },

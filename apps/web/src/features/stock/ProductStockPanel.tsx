@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { StockMovementDialog } from "./StockDialogs";
 import { supabaseStockSource, type ProductStockState, type StockSource } from "./stockApi";
 import { STOCK_STATUS_LABEL, stockStatus } from "./stockLogic";
@@ -44,10 +45,11 @@ export function ProductStockPanel({
     onChanged?.();
   }
 
-  async function saveControl() {
+  // Grava o modo/mínimo pela RPC oficial. Devolve true se o produto já está (ou ficou) com controle por quantidade.
+  async function persistControl(): Promise<boolean> {
     if (mode === "quantity" && minimumValue === null) {
       setError("Informe o estoque mínimo (número inteiro, pode ser 0).");
-      return;
+      return false;
     }
     setBusy(true);
     setError(null);
@@ -56,12 +58,41 @@ export function ProductStockPanel({
     setBusy(false);
     if (result.error || !result.data) {
       setError(result.error);
-      return;
+      return false;
     }
     setState(result.data);
     setMode(result.data.stock_control);
     setMinimum(String(result.data.minimum_stock_quantity));
     setNotice(result.data.stock_control === "quantity" ? "Controle de estoque salvo." : "Controle de estoque desativado.");
+    onChanged?.();
+    return true;
+  }
+
+  async function saveControl() {
+    await persistControl();
+  }
+
+  // Entrada/Ajuste: o servidor só movimenta produto JÁ controlado por quantidade. Se o usuário acabou de escolher
+  // "Controlar quantidade" (ainda não salvo), grava o controle primeiro, sem exigir um "Salvar" separado.
+  async function openMovement(kind: "entry" | "adjust") {
+    if (busy) return;
+    if (state.stock_control !== "quantity" || dirty) {
+      if (!(await persistControl())) return;
+    }
+    setError(null);
+    setDialog(kind);
+  }
+
+  // Depois de um movimento: o saldo exibido é SEMPRE o lido do banco (nunca calculado aqui).
+  async function afterMovement(message: string) {
+    setDialog(null);
+    const fresh = await source.state(productId);
+    if (fresh.data) {
+      setState(fresh.data);
+      setNotice(message);
+    } else {
+      setError("O ajuste foi registrado, mas não foi possível atualizar o saldo na tela. Feche e abra o produto para conferir.");
+    }
     onChanged?.();
   }
 
@@ -102,16 +133,16 @@ export function ProductStockPanel({
         </div>
       )}
 
-      {state.stock_control === "quantity" && (
+      {mode === "quantity" && (
         <div className="product-stock-row">
           <span>
             Estoque atual: <strong>{state.stock_quantity}</strong>
           </span>
           <span className={`status-badge stock-${status}`}>{STOCK_STATUS_LABEL[status]}</span>
-          <button type="button" className="btn-secondary btn-small" onClick={() => setDialog("entry")}>
+          <button type="button" className="btn-secondary btn-small" disabled={busy} onClick={() => void openMovement("entry")}>
             Entrada
           </button>
-          <button type="button" className="btn-secondary btn-small" onClick={() => setDialog("adjust")}>
+          <button type="button" className="btn-secondary btn-small" disabled={busy} onClick={() => void openMovement("adjust")}>
             Ajustar estoque
           </button>
         </div>
@@ -129,25 +160,19 @@ export function ProductStockPanel({
         </div>
       )}
 
-      {dialog && (
-        <StockMovementDialog
-          source={source}
-          productId={productId}
-          productName={productName}
-          current={state.stock_quantity}
-          mode={dialog}
-          onDone={(message) => {
-            setDialog(null);
-            setNotice(message);
-            // saldo novo: o painel relê pelas RPCs na próxima ação; aqui recarrega a lista do produto
-            void source.setControl(productId, "quantity", state.minimum_stock_quantity).then((r) => {
-              if (r.data) setState(r.data);
-            });
-            onChanged?.();
-          }}
-          onClose={() => setDialog(null)}
-        />
-      )}
+      {dialog &&
+        createPortal(
+          <StockMovementDialog
+            source={source}
+            productId={productId}
+            productName={productName}
+            current={state.stock_quantity}
+            mode={dialog}
+            onDone={(message) => void afterMovement(message)}
+            onClose={() => setDialog(null)}
+          />,
+          document.body,
+        )}
     </section>
   );
 }
