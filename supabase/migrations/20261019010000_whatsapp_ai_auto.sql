@@ -749,6 +749,34 @@ create trigger whatsapp_messages_ai_pause
   execute function public.whatsapp_ai_pause_on_human_outbound();
 
 -- ---------------------------------------------------------------------------
+-- 6a) Falhas de enfileiramento RASTREÁVEIS (sem conteúdo, sem telefone)
+-- ---------------------------------------------------------------------------
+-- Se o gatilho de enfileiramento falhar, o inbound continua sendo gravado (nunca quebra o webhook), mas a mensagem é
+-- registrada aqui: "esta inbound foi persistida e NÃO entrou na fila". O reconciliador (6c) a recupera dentro de uma janela.
+create table public.whatsapp_ai_enqueue_failures (
+  message_id uuid primary key,
+  company_id uuid not null references public.companies(id) on delete cascade,
+  conversation_id uuid not null,
+  sqlstate text not null constraint whatsapp_ai_enqueue_failures_sqlstate_len check (char_length(sqlstate) between 1 and 5),
+  status text not null default 'open'
+    constraint whatsapp_ai_enqueue_failures_status_check check (status in ('open', 'recovered', 'ineligible', 'expired')),
+  created_at timestamptz not null default now(),
+  resolved_at timestamptz,
+  constraint whatsapp_ai_enqueue_failures_conversation_fkey
+    foreign key (conversation_id, company_id) references public.whatsapp_conversations (id, company_id) on delete cascade,
+  constraint whatsapp_ai_enqueue_failures_message_fkey
+    foreign key (message_id, company_id) references public.whatsapp_messages (id, company_id) on delete cascade
+);
+create index whatsapp_ai_enqueue_failures_open_idx on public.whatsapp_ai_enqueue_failures (created_at) where status = 'open';
+create index whatsapp_ai_enqueue_failures_company_idx on public.whatsapp_ai_enqueue_failures (company_id, created_at desc);
+alter table public.whatsapp_ai_enqueue_failures enable row level security;
+revoke all on public.whatsapp_ai_enqueue_failures from public, anon, authenticated;
+grant select on public.whatsapp_ai_enqueue_failures to service_role;
+
+-- busca do reconciliador (só inbound recente)
+create index whatsapp_messages_inbound_recent_idx on public.whatsapp_messages (created_at desc) where direction = 'inbound';
+
+-- ---------------------------------------------------------------------------
 -- 6) Enfileiramento / debounce (gatilho no INSERT do inbound)
 -- ---------------------------------------------------------------------------
 -- Só direction='inbound'. Já existe job ativo na conversa? Reagenda (latest_message_id = a nova, run_after = agora + 8 s,
@@ -780,6 +808,15 @@ begin
        set latest_message_id = excluded.latest_message_id,
            run_after = least(excluded.run_after, public.whatsapp_ai_jobs.created_at + interval '45 seconds');
   exception when others then
+    -- rastreável: registra a mensagem que NÃO entrou na fila (só IDs + SQLSTATE). Se nem isto der, só o warning resta e o
+    -- reconciliador ainda encontra a inbound elegível sem job.
+    begin
+      insert into public.whatsapp_ai_enqueue_failures (message_id, company_id, conversation_id, sqlstate)
+      values (new.id, new.company_id, new.conversation_id, left(sqlstate, 5))
+      on conflict (message_id) do nothing;
+    exception when others then
+      raise warning 'whatsapp_ai_enqueue_inbound: falha nao registrada: %', sqlstate;
+    end;
     raise warning 'whatsapp_ai_enqueue_inbound falhou: %', sqlstate;
   end;
   return new;
@@ -793,6 +830,107 @@ create trigger whatsapp_messages_ai_enqueue
   execute function public.whatsapp_ai_enqueue_inbound();
 
 -- ---------------------------------------------------------------------------
+-- 6c) Reconciliador: inbound elegível SEM job (idempotente, multi-tenant, janela curta)
+-- ---------------------------------------------------------------------------
+-- Considera só a ÚLTIMA inbound de cada conversa, com idade entre 30 s e a janela (padrão 10 min, no máximo 60), em empresa
+-- com o modo 'auto' efetivo, desde ANTES da última edição da configuração (nunca responde mensagem anterior à ativação),
+-- conversa sem pausa/atribuição, sem saída posterior e sem NENHUM job (de qualquer status) que já cubra essa mensagem.
+-- Cria no máximo um job por conversa (índice de job ativo). Falhas registradas viram recovered/ineligible/expired.
+create function public.whatsapp_ai_reconcile_inbound(p_window interval default interval '10 minutes')
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  r record;
+  v_win interval := least(greatest(coalesce(p_window, interval '10 minutes'), interval '1 minute'), interval '60 minutes');
+  v_s public.company_whatsapp_ai_settings;
+  v_conv public.whatsapp_conversations;
+  v_recovered integer := 0;
+  v_expired integer := 0;
+begin
+  update public.whatsapp_ai_enqueue_failures
+     set status = 'expired', resolved_at = now()
+   where status = 'open' and created_at < now() - v_win;
+  get diagnostics v_expired = row_count;
+
+  for r in
+    select distinct on (m.conversation_id) m.id, m.company_id, m.conversation_id, m.created_at
+      from public.whatsapp_messages m
+     where m.direction = 'inbound'
+       and m.created_at > now() - v_win
+       and m.created_at <= now() - interval '30 seconds'
+     order by m.conversation_id, m.created_at desc, m.id desc
+  loop
+    -- não é a inbound mais nova da conversa (chegou outra há menos de 30 s): fica para a próxima rodada
+    if exists (
+      select 1 from public.whatsapp_messages n
+       where n.conversation_id = r.conversation_id and n.company_id = r.company_id and n.direction = 'inbound'
+         and (n.created_at > r.created_at or (n.created_at = r.created_at and n.id > r.id))
+    ) then
+      continue;
+    end if;
+    select * into v_s from public.company_whatsapp_ai_settings where company_id = r.company_id;
+    if not found
+       or public.whatsapp_ai_effective_mode(v_s.enabled, v_s.mode, v_s.ai_data_processing_acknowledged_at, v_s.auto_acknowledged_at) <> 'auto'
+       or v_s.updated_at > r.created_at then
+      continue;
+    end if;
+    select * into v_conv from public.whatsapp_conversations where id = r.conversation_id and company_id = r.company_id;
+    if not found or v_conv.ai_control <> 'inherit' or v_conv.assigned_user_id is not null then
+      continue;
+    end if;
+    -- já respondida (qualquer saída depois dela)?
+    if exists (
+      select 1 from public.whatsapp_messages o
+       where o.conversation_id = r.conversation_id and o.company_id = r.company_id and o.direction = 'outbound'
+         and o.created_at > r.created_at
+    ) then
+      continue;
+    end if;
+    -- já coberta por algum job (o job já olhou para esta mensagem ou para uma mais nova)?
+    if exists (
+      select 1 from public.whatsapp_ai_jobs j
+        join public.whatsapp_messages lm on lm.id = j.latest_message_id and lm.company_id = j.company_id
+       where j.conversation_id = r.conversation_id and j.company_id = r.company_id and lm.created_at >= r.created_at
+    ) then
+      continue;
+    end if;
+
+    insert into public.whatsapp_ai_jobs (company_id, conversation_id, first_message_id, latest_message_id, run_after)
+    values (r.company_id, r.conversation_id, r.id, r.id, now())
+    on conflict (conversation_id) where status in ('pending', 'processing') do update
+       set latest_message_id = excluded.latest_message_id;
+    v_recovered := v_recovered + 1;
+  end loop;
+
+  -- falhas registradas: cobertas por um job agora => recovered; conversa/empresa não elegível => ineligible
+  update public.whatsapp_ai_enqueue_failures f
+     set status = 'recovered', resolved_at = now()
+   where f.status = 'open'
+     and exists (
+       select 1 from public.whatsapp_ai_jobs j
+         join public.whatsapp_messages lm on lm.id = j.latest_message_id and lm.company_id = j.company_id
+         join public.whatsapp_messages fm on fm.id = f.message_id and fm.company_id = f.company_id
+        where j.conversation_id = f.conversation_id and j.company_id = f.company_id and lm.created_at >= fm.created_at);
+  update public.whatsapp_ai_enqueue_failures f
+     set status = 'ineligible', resolved_at = now()
+   where f.status = 'open'
+     and (
+       not exists (
+         select 1 from public.company_whatsapp_ai_settings s
+          where s.company_id = f.company_id
+            and public.whatsapp_ai_effective_mode(s.enabled, s.mode, s.ai_data_processing_acknowledged_at, s.auto_acknowledged_at) = 'auto')
+       or exists (
+         select 1 from public.whatsapp_conversations c
+          where c.id = f.conversation_id and c.company_id = f.company_id and (c.ai_control <> 'inherit' or c.assigned_user_id is not null)));
+
+  return jsonb_build_object('recovered', v_recovered, 'expired', v_expired);
+end;
+$$;
+
+-- ---------------------------------------------------------------------------
 -- 7) Worker: claim
 -- ---------------------------------------------------------------------------
 -- Pega até p_limit jobs vencidos (pending com run_after <= now, ou processing com lease expirado) com SKIP LOCKED:
@@ -804,14 +942,30 @@ language plpgsql
 security definer
 set search_path = public
 as $$
+declare
+  v_ids uuid[];
 begin
   update public.whatsapp_ai_jobs
      set status = 'done', outcome = 'ignored', reason_code = 'job_expired', locked_until = null
    where status = 'pending' and run_after < now() - interval '15 minutes';
 
-  update public.whatsapp_ai_jobs
-     set status = 'done', outcome = 'provider_error', reason_code = 'attempts_exhausted', locked_until = null
-   where status = 'processing' and locked_until < now() and attempts >= 3;
+  with ex as (
+    update public.whatsapp_ai_jobs
+       set status = 'done', outcome = 'provider_error', reason_code = 'attempts_exhausted', locked_until = null
+     where status = 'processing' and locked_until < now() and attempts >= 3
+    returning id)
+  select coalesce(array_agg(id), '{}'::uuid[]) into v_ids from ex;
+  -- uma saída que ficou 'queued' (worker morreu no envio) NUNCA fica para sempre "enviando": falha explícita, sem reenvio
+  if cardinality(v_ids) > 0 then
+    with f as (
+      update public.whatsapp_messages
+         set status = 'failed', error_code = 'send_interrupted'
+       where ai_job_id = any(v_ids) and status = 'queued'
+      returning id, company_id)
+    insert into public.whatsapp_message_events (company_id, message_id, status, error_code)
+    select company_id, id, 'failed', 'send_interrupted' from f
+    on conflict do nothing;
+  end if;
 
   return query
   with due as (
@@ -1066,6 +1220,9 @@ declare
   v_win jsonb;
   v_ctx_at timestamptz;
 begin
+  -- ORDEM DE LOCKS FIXA em todo o módulo: conversa -> job (o mesmo de assumir/devolver e do gatilho de pausa), sem deadlock
+  perform 1 from public.whatsapp_conversations c
+   where c.id = (select j.conversation_id from public.whatsapp_ai_jobs j where j.id = p_job_id) for update;
   select * into v_job from public.whatsapp_ai_jobs where id = p_job_id for update;
   if not found or v_job.status <> 'processing' then
     return jsonb_build_object('result', 'not_active');
@@ -1193,6 +1350,9 @@ begin
     'window_closed', 'blocked_quota', 'provider_error', 'timeout', 'invalid_output', 'rate_limited', 'failed_send') then
     return jsonb_build_object('result', 'invalid');
   end if;
+  -- mesma ordem de locks do commit_send: conversa -> job
+  perform 1 from public.whatsapp_conversations c
+   where c.id = (select j.conversation_id from public.whatsapp_ai_jobs j where j.id = p_job_id) for update;
   select * into v_job from public.whatsapp_ai_jobs where id = p_job_id for update;
   if not found or v_job.status <> 'processing' then
     return jsonb_build_object('result', 'not_active');
@@ -1201,7 +1361,9 @@ begin
 
   update public.whatsapp_ai_jobs
      set status = v_status, outcome = p_outcome, reason_code = v_reason, locked_until = null,
-         usage_id = coalesce(p_usage_id, usage_id)
+         usage_id = coalesce(
+           (select u.id from public.whatsapp_ai_usage u where u.id = p_usage_id and u.job_id = v_job.id and u.company_id = v_job.company_id),
+           usage_id)
    where id = v_job.id;
 
   if p_handoff or p_outcome = 'handoff' then
@@ -1267,8 +1429,9 @@ $$;
 do $$
 begin
   if to_regnamespace('cron') is not null then
-    perform cron.unschedule(jobid) from cron.job where jobname = 'gap-whatsapp-ai-auto';
+    perform cron.unschedule(jobid) from cron.job where jobname in ('gap-whatsapp-ai-auto', 'gap-whatsapp-ai-reconcile');
     perform cron.schedule('gap-whatsapp-ai-auto', '10 seconds', 'select public.whatsapp_ai_dispatch_due()');
+    perform cron.schedule('gap-whatsapp-ai-reconcile', '* * * * *', 'select public.whatsapp_ai_reconcile_inbound()');
   end if;
 end
 $$;
@@ -1300,6 +1463,9 @@ grant execute on function public.whatsapp_ai_prepare_auto(uuid) to service_role;
 grant execute on function public.whatsapp_ai_reserve_auto_usage(uuid, text, text) to service_role;
 grant execute on function public.whatsapp_ai_auto_commit_send(uuid, uuid, text) to service_role;
 grant execute on function public.whatsapp_ai_complete_job(uuid, text, text, uuid, uuid, boolean) to service_role;
+
+revoke execute on function public.whatsapp_ai_reconcile_inbound(interval) from public, anon, authenticated;
+grant execute on function public.whatsapp_ai_reconcile_inbound(interval) to service_role;
 
 -- só o pg_cron (postgres) chama o despacho
 revoke execute on function public.whatsapp_ai_dispatch_due() from public, anon, authenticated, service_role;

@@ -358,6 +358,7 @@ export const AI_HANDOFF_REASON_LABEL: Record<string, string> = {
   prompt_injection: "mensagem suspeita",
   action_required: "o pedido exige uma ação no sistema",
   unsupported_media: "mensagem de áudio, imagem ou arquivo",
+  unsupported_commercial_claim: "a resposta trazia preço, oferta ou condição que as instruções não sustentam",
   unauthorized_offer: "a resposta continha oferta não autorizada",
   invented_value: "a resposta continha valor não autorizado",
   invalid_output: "a IA não conseguiu responder",
