@@ -9,6 +9,14 @@ export function normalizeEmail(raw: string): string {
   return raw.trim().toLowerCase();
 }
 
+/**
+ * E-mail como DIGITADO no login: só tira espaços das pontas (o type="email" já faz isso). Nunca muda maiúsculas, pontos nem
+ * qualquer caractere interno: o login não faz autocorreção — o que aparece na tela é exatamente o que é enviado.
+ */
+export function trimEmailInput(raw: string): string {
+  return raw.trim();
+}
+
 /** Formato mínimo (a validação real é do Auth); evita enviar lixo óbvio. */
 export function looksLikeEmail(email: string): boolean {
   return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);

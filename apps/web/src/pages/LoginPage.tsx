@@ -2,6 +2,7 @@ import { useState, type FormEvent } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { useAuth } from "../app/useAuth";
 import { PasswordInput } from "../components/PasswordInput";
+import { trimEmailInput } from "../lib/authEmail";
 
 export function LoginPage() {
   const { signIn } = useAuth();
@@ -16,7 +17,7 @@ export function LoginPage() {
     event.preventDefault();
     setError(null);
     setSubmitting(true);
-    const { error } = await signIn(email, password);
+    const { error } = await signIn(trimEmailInput(email), password);
     setSubmitting(false);
     if (error) setError(error);
     // sucesso: onAuthStateChange atualiza a sessão e as rotas redirecionam sozinhas.
@@ -39,10 +40,18 @@ export function LoginPage() {
               id="email"
               type="email"
               autoComplete="email"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
               required
               value={email}
               onChange={(e) => setEmail(e.target.value)}
             />
+            {trimEmailInput(email) !== "" && (
+              <p className="field-hint" aria-live="polite" data-testid="login-email-check">
+                Entrando com: <strong>{trimEmailInput(email)}</strong>
+              </p>
+            )}
           </div>
           <div className="field">
             <label htmlFor="password">Senha</label>
