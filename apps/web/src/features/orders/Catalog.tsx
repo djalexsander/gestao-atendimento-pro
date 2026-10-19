@@ -1,5 +1,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 import { formatReais } from "../../lib/money";
+import { CategoryBar, useCategorySelection, useScrollToListStart } from "../catalog/CategoryBar";
+import { barCategories } from "../catalog/categoryBarLogic";
 import { filterCatalog, lowStockNote, resolveBarcodeMatch, unavailableReason, type CatalogCategory, type CatalogProduct } from "./ordersLogic";
 
 function ProductPhoto({ url }: { url: string | null }) {
@@ -27,8 +29,11 @@ export function Catalog({
   onAdd: (product: CatalogProduct) => void;
 }) {
   const [query, setQuery] = useState("");
-  const [categoryId, setCategoryId] = useState<string | null>(null);
   const [scanMessage, setScanMessage] = useState<string | null>(null);
+  // Categorias reais da empresa (mesma fonte do cadastro); categoria que some do catálogo volta para "Todos".
+  const bar = useMemo(() => barCategories(categories), [categories]);
+  const [categoryId, setCategoryId] = useCategorySelection(bar);
+  const { anchorRef, scrollToListStart } = useScrollToListStart();
 
   const shown = useMemo(() => filterCatalog(products, { query, categoryId }), [products, query, categoryId]);
 
@@ -87,47 +92,41 @@ export function Catalog({
 
   return (
     <div className="catalog">
-      <form className="op-toolbar" role="search" onSubmit={handleSearchSubmit}>
-        <div className="op-search">
-          <input
-            className="op-search-input"
-            type="search"
-            value={query}
-            placeholder="Buscar produto…"
-            aria-label="Buscar produto por nome, código, código de barras ou descrição"
-            autoComplete="off"
-            autoCapitalize="none"
-            autoCorrect="off"
-            spellCheck={false}
-            enterKeyHint="search"
-            onChange={(e) => {
-              setQuery(e.target.value);
-              setScanMessage(null);
+      <div className="catalog-sticky">
+        <form className="op-toolbar" role="search" onSubmit={handleSearchSubmit}>
+          <div className="op-search">
+            <input
+              className="op-search-input"
+              type="search"
+              value={query}
+              placeholder="Buscar produto…"
+              aria-label="Buscar produto por nome, código, código de barras ou descrição"
+              autoComplete="off"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              enterKeyHint="search"
+              onChange={(e) => {
+                setQuery(e.target.value);
+                setScanMessage(null);
+              }}
+            />
+          </div>
+        </form>
+        {bar.length > 0 && (
+          <CategoryBar
+            categories={bar}
+            value={categoryId}
+            onChange={(id) => {
+              setCategoryId(id);
+              scrollToListStart();
             }}
           />
-        </div>
-      </form>
+        )}
+      </div>
       {scanMessage && <div className="form-error">{scanMessage}</div>}
 
-      {categories.length > 0 && (
-        <div className="catalog-chips" role="group" aria-label="Categorias">
-          <button type="button" className="op-chip" aria-pressed={categoryId === null} onClick={() => setCategoryId(null)}>
-            Todos
-          </button>
-          {categories.map((category) => (
-            <button
-              key={category.id}
-              type="button"
-              className="op-chip"
-              aria-pressed={categoryId === category.id}
-              onClick={() => setCategoryId(category.id)}
-            >
-              {category.name}
-            </button>
-          ))}
-        </div>
-      )}
-
+      <div ref={anchorRef} className="category-list-anchor" />
       {body}
     </div>
   );

@@ -1,17 +1,35 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode, type RefObject } from "react";
 import { NavLink, useLocation } from "react-router-dom";
 import { AppVersionLabel } from "../features/about/AppVersionLabel";
 import { ADMIN_NAV, groupContaining, type NavGroup } from "./adminNav";
 import { moduleAccess } from "../features/commercial/commercialLogic";
 import { useCommercial } from "../features/commercial/CommercialProvider";
 import { useAuth } from "./useAuth";
+import { useDrawer } from "./useDrawer";
 
 // Sidebar administrativa (owner/admin — a rota /app já garante isso, ver accessRules.ts). Grupos
 // abrem sozinhos ao entrar numa rota filha e continuam abrindo/fechando por clique; nenhum grupo
 // fecha sozinho (evita fechar algo que a pessoa abriu de propósito). `open`/`onNavigate` controlam
-// o drawer no mobile; no desktop `open` é ignorado (a sidebar é sempre fixa).
-export function AdminSidebar({ open, onNavigate }: { open: boolean; onNavigate: () => void }) {
+// o drawer no celular/tablet (≤900px); no desktop `open` é ignorado (a sidebar é sempre fixa e acompanha a rolagem).
+export function AdminSidebar({
+  id,
+  open,
+  onClose,
+  onNavigate,
+  openerRef,
+  footer,
+}: {
+  id: string;
+  open: boolean;
+  onClose: () => void;
+  onNavigate: () => void;
+  openerRef: RefObject<HTMLElement | null>;
+  /** Só aparece no drawer (celular/tablet): identidade, papel, troca de empresa e sair. */
+  footer?: ReactNode;
+}) {
   const { activeMembership } = useAuth();
+  const drawerRef = useRef<HTMLElement>(null);
+  useDrawer({ open, onClose, drawerRef, openerRef });
   const { entitlements } = useCommercial();
   const { pathname } = useLocation();
   const [openGroups, setOpenGroups] = useState<Set<string>>(() => {
@@ -74,10 +92,15 @@ export function AdminSidebar({ open, onNavigate }: { open: boolean; onNavigate: 
   }
 
   return (
-    <nav className={`admin-sidebar${open ? " admin-sidebar-open" : ""}`} aria-label="Navegação administrativa">
+    <nav id={id} ref={drawerRef} className={`admin-sidebar${open ? " admin-sidebar-open" : ""}`} aria-label="Navegação administrativa">
       <div className="admin-sidebar-header">
-        <div className="admin-brand">Gestão Atendimento Pro</div>
-        <div className="admin-company">{activeMembership?.company.name}</div>
+        <div className="admin-sidebar-title">
+          <div className="admin-brand">Gestão Atendimento Pro</div>
+          <div className="admin-company">{activeMembership?.company.name}</div>
+        </div>
+        <button type="button" className="admin-drawer-close" aria-label="Fechar menu" onClick={onClose}>
+          ✕
+        </button>
       </div>
       <div className="admin-nav-scroll">
         {ADMIN_NAV.map((entry) =>
@@ -96,6 +119,7 @@ export function AdminSidebar({ open, onNavigate }: { open: boolean; onNavigate: 
           ),
         )}
       </div>
+      {footer && <div className="admin-sidebar-footer">{footer}</div>}
       <AppVersionLabel />
     </nav>
   );

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useAuth } from "../../app/useAuth";
 import { formatReais } from "../../lib/money";
+import { CategoryBar, useCategorySelection, useScrollToListStart } from "./CategoryBar";
+import { barCategories } from "./categoryBarLogic";
 import type { AdminCategory } from "./categoriesLogic";
 import { EditProductDialog, NewProductDialog, ToggleProductDialog } from "./ProductDialogs";
 import type { ProcessedImage } from "./productImage";
@@ -99,7 +101,11 @@ export function ProductsAdmin({ source = supabaseProductsAdminSource }: { source
   const [dialog, setDialog] = useState<OpenDialog | null>(null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<ProductFilter>("all");
-  const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
+
+  // Barra de categorias: categorias ATIVAS reais da empresa (a mesma fonte do cadastro); a escolhida some => volta para "Todos".
+  const categoryBar = useMemo(() => barCategories(categories), [categories]);
+  const [categoryFilter, setCategoryFilter] = useCategorySelection(categoryBar);
+  const { anchorRef, scrollToListStart } = useScrollToListStart();
 
   const reload = useCallback(async () => {
     if (!companyId) return;
@@ -342,23 +348,20 @@ export function ProductsAdmin({ source = supabaseProductsAdminSource }: { source
               </button>
             ))}
           </div>
-          {categories.length > 0 && (
-            <select
-              className="admin-search"
-              aria-label="Filtrar por categoria"
-              value={categoryFilter ?? ""}
-              onChange={(e) => setCategoryFilter(e.target.value || null)}
-            >
-              <option value="">Todas as categorias</option>
-              {categories.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
-              ))}
-            </select>
-          )}
         </div>
       )}
+
+      {products && list.length > 0 && categoryBar.length > 0 && (
+        <CategoryBar
+          categories={categoryBar}
+          value={categoryFilter}
+          onChange={(id) => {
+            setCategoryFilter(id);
+            scrollToListStart();
+          }}
+        />
+      )}
+      <div ref={anchorRef} className="category-list-anchor" />
 
       {body}
 
