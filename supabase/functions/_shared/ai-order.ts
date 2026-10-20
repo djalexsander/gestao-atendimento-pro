@@ -209,7 +209,7 @@ export function startsWithQuantity(text: string): boolean {
 // Confirmação (determinística e conservadora) e cancelamento
 // ---------------------------------------------------------------------------
 const CONFIRM_PHRASES = new Set([
-  "confirmar", "confirmado", "confirmo", "pode confirmar", "pode mandar", "pode enviar", "esta correto", "esta certo",
+  "confirmar", "confirma", "confirmado", "confirmo", "pode confirmar", "pode mandar", "pode enviar", "esta correto", "esta certo",
   "confirmar pedido", "pode confirmar o pedido", "pode mandar o pedido", "pode enviar o pedido", "confirmo o pedido",
 ]);
 const SIM_PREFIX_OK = new Set(["sim"]);
