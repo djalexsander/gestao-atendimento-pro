@@ -9,10 +9,10 @@
 //  * Produto/opção/preço/taxa/zona/total/estoque: sempre do banco. O modelo só devolve TEXTO de produto e números.
 //  * Confirmação do cliente: regra determinística (ai-order.ts), nunca o modelo. Pedido oficial só pela RPC de confirmação.
 //  * Toda resposta ao cliente é template. "Pedido confirmado" só com result='created' vindo do banco.
-import { norm, unansweredTail, type AutoMessage } from "./ai-auto.ts";
+import { norm, type AutoMessage } from "./ai-auto.ts";
 import {
   MSG_ALREADY_CONFIRMED, MSG_CANCEL_AFTER_ORDER, MSG_CANCELLED, MSG_FAILED, MSG_NOT_FOUND, MSG_NO_DRAFT, MSG_REPROMPT, MSG_TOO_BIG,
-  buildOrderSystemPrompt, buildOrderUserBlock, classifyConfirmationBatch, decideQuantity, hasOrderVerb, isCancelIntent, matchItem,
+  boundedTail, buildOrderSystemPrompt, buildOrderUserBlock, classifyConfirmationBatch, decideQuantity, hasOrderVerb, isCancelIntent, matchItem,
   nextQuestion, parseOrderState, plain, renderAmbiguous, renderAskQuantity, renderCreated, renderPriceChanges, renderSummary,
   renderUnavailable, startsWithQuantity, validateExtraction, brl, PAYMENT_LABELS,
   type ExtractedOp, type OrderState,
@@ -71,7 +71,7 @@ export async function runOrderFlow(io: OrderFlowIo, input: OrderFlowInput): Prom
   }
   const state = parseOrderState(g.state);
 
-  const inbound = unansweredTail(input.messages).filter((m) => m.direction === "inbound");
+  const inbound = boundedTail(input.messages).filter((m) => m.direction === "inbound");
   const skip = state && state.applied.job_id === jobId ? Math.min(state.applied.tail_count ?? 0, inbound.length) : 0;
   const fresh = inbound.slice(skip);
   const texts = fresh.filter((m) => m.type === undefined || m.type === "text" || m.type === "interactive").map((m) => m.text);

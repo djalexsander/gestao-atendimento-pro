@@ -4,7 +4,27 @@
 // produto/opção/preço/taxa/zona/total é o BANCO (RPCs whatsapp_order_*). A CONFIRMAÇÃO é decidida aqui por regra
 // determinística (nunca pelo modelo) e TODA resposta ao cliente é montada por template a partir do estado do banco: texto livre
 // do modelo nunca chega ao cliente neste fluxo. Nada aqui loga mensagem, endereço, nome ou telefone.
-import { norm } from "./ai-auto.ts";
+import { norm, unansweredTail, type AutoMessage } from "./ai-auto.ts";
+
+/** Intervalo máximo entre mensagens consecutivas do MESMO lote do cliente (mensagens mais antigas que isso são outra conversa). */
+export const TAIL_MAX_GAP_MS = 10 * 60_000;
+/**
+ * Lote de mensagens do cliente que o fluxo do pedido pode aplicar: as sem resposta (unansweredTail) E contíguas — para ao
+ * encontrar um intervalo maior que TAIL_MAX_GAP_MS entre duas mensagens. Sem isto, mensagens antigas que ficaram sem resposta
+ * (ex.: período de atendimento humano) seriam aplicadas ao rascunho novo (incidente do 1º teste real: 3+3+2 em vez de 2).
+ */
+export function boundedTail(messages: AutoMessage[], maxGapMs = TAIL_MAX_GAP_MS): AutoMessage[] {
+  const tail = unansweredTail(messages);
+  const out: AutoMessage[] = [];
+  let prev: number | null = null;
+  for (let i = tail.length - 1; i >= 0; i--) {
+    const t = tail[i].at ? Date.parse(tail[i].at as string) : NaN;
+    if (prev !== null && !Number.isNaN(t) && prev - t > maxGapMs) break;
+    out.unshift(tail[i]);
+    if (!Number.isNaN(t)) prev = t;
+  }
+  return out;
+}
 
 export const ORDER_PROMPT_VERSION = "wa-order-v1";
 export const ORDER_MAX_OPS = 12;
