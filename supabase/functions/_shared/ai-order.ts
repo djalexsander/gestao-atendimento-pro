@@ -154,7 +154,33 @@ export function decideQuantity(op: { quantity: number | null; quantity_kind: str
 // ---------------------------------------------------------------------------
 // Intenção: pedido x pergunta informativa
 // ---------------------------------------------------------------------------
-const NOT_ORDER_AFTER_QUERO = "(saber|ver|conhecer|falar|uma informacao|um atendente|o cardapio|o menu|perguntar|entender|checar)";
+// Retirar item: LINHA INTEIRA x REDUZIR N unidades. A conta (atual - N) é do BACKEND, nunca do modelo.
+const REMOVE_ALL_RE = /\b(todos|todas|tudo|inteir[oa]s?|nenhum|nenhuma)\b|\bnao quero (mais|o|a|os|as)\b|\bnao vou querer\b/;
+const REMOVE_VERB_NUM_RE = /\b(tira|tire|tirar|remove|remova|remover|retira|retire|retirar|diminui|diminua|diminuir|reduz|reduza|reduzir|menos)\s+(\d{1,3}|um|uma|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez)\b/;
+export type RemovalIntent = { mode: "all" } | { mode: "qty"; qty: number };
+/**
+ * "Tira 1 espeto de carne" => qty 1 (reduz); "tira o espeto de carne" / "tira todos" / "não quero mais" => linha inteira.
+ * Quantidade junto do verbo de retirar significa REDUZIR essa quantidade. Fonte do número: o que o cliente ESCREVEU
+ * (verbo + número no texto) e, na falta, a quantidade explícita do modelo — só se o número aparece no texto do cliente.
+ * `single`: só há UMA operação de retirada na mensagem (o regex sobre o texto inteiro só é confiável nesse caso).
+ */
+export function removalIntent(op: { quantity: number | null; quantity_kind: string | null }, customerText: string, single: boolean): RemovalIntent {
+  const t = norm(customerText);
+  if (REMOVE_ALL_RE.test(t)) return { mode: "all" };
+  if (single) {
+    const m = REMOVE_VERB_NUM_RE.exec(t);
+    if (m) {
+      const n = /^\d/.test(m[2]) ? Number(m[2]) : NUMERAL_WORDS[m[2]];
+      if (Number.isInteger(n) && n >= 1) return { mode: "qty", qty: n };
+    }
+  }
+  if (op.quantity_kind === "explicit" && typeof op.quantity === "number" && Number.isInteger(op.quantity) && op.quantity >= 1 && numeralsIn(customerText).includes(op.quantity)) {
+    return { mode: "qty", qty: op.quantity };
+  }
+  return { mode: "all" };
+}
+
+const NOT_ORDER_AFTER_QUERO ="(saber|ver|conhecer|falar|uma informacao|um atendente|o cardapio|o menu|perguntar|entender|checar)";
 const ORDER_VERB_RE = new RegExp(
   "\\b(" +
     `quer(o|ia|emos)\\b(?! ${NOT_ORDER_AFTER_QUERO})|vou (querer|pedir)|pode (me )?(anotar|colocar|por|botar|adicionar|incluir|trazer|mandar|separar|ser)|` +
@@ -224,7 +250,7 @@ export function isCancelIntent(text: string): boolean {
 // Extrator (modelo): schema estrito e validação
 // ---------------------------------------------------------------------------
 export const OP_KINDS = [
-  "add_item", "remove_item", "set_quantity", "replace_item", "set_item_options", "set_item_notes",
+  "add_item", "remove_item", "decrement_item", "set_quantity", "replace_item", "set_item_options", "set_item_notes",
   "set_fulfillment", "set_address", "set_payment_method", "set_change", "set_contact_name", "set_order_notes",
 ] as const;
 export type OpKind = (typeof OP_KINDS)[number];
@@ -320,7 +346,8 @@ export function buildOrderSystemPrompt(businessName: string | null): string {
     "- order_intent=true só quando o cliente está PEDINDO/alterando itens do pedido (\"quero\", \"me vê\", \"manda\", \"coloca\", \"tira\", \"troca\"...) ou respondendo a uma pergunta do pedido (tipo de entrega, endereço, pagamento, nome, opção do item).",
     "- inquiry_only=true quando for só pergunta informativa (\"tem espeto de carne?\", \"quanto é a coca?\", \"qual o cardápio?\"). Pergunta NÃO adiciona item: nesse caso operations deve ser [].",
     "- add_item: quantity_kind=explicit se o cliente escreveu o número (dígito ou por extenso) e quantity=esse número; singular se pediu UM item no singular sem número (\"quero espeto de carne\", \"me vê uma Coca\", \"manda um pão de alho\") e quantity=1; unclear se for plural sem número, \"uns\", \"alguns\", \"meia dúzia\" ou ambíguo (quantity=null).",
-    "- Várias frases/itens => uma operação por item. \"Coloca mais um coração\" => add_item. \"Tira uma Coca\" => remove_item (ou set_quantity se reduzir). \"Troca o de frango por linguiça\" => replace_item com product_text=frango e to_text=linguiça.",
+    "- Várias frases/itens => uma operação por item. \"Coloca mais um coração\" => add_item. \"Troca o de frango por linguiça\" => replace_item com product_text=frango e to_text=linguiça.",
+    "- Retirar item: remove_item = tirar a LINHA INTEIRA, sem número (\"tira o espeto de carne\", \"não quero mais a Coca\", \"tira todos\"). decrement_item = REDUZIR N unidades (\"tira 1 espeto de carne\", \"remove 2\", \"diminui 1\"): quantity=N, o número que o cliente escreveu, quantity_kind=explicit. NÃO calcule a quantidade final. set_quantity = o cliente disse a quantidade FINAL (\"deixa só 1\", \"muda para 3\"): quantity=essa quantidade.",
     "- Observação como \"sem cebola\" => set_item_notes com notes (product_text=o item, ou null se só houver um item no pedido). Opção de item (ponto da carne, adicionais) => set_item_options ou options_text no add_item.",
     "- set_fulfillment: value=pickup (retirada/buscar) ou delivery (entrega). set_contact_name: value=nome. set_order_notes: value=observação geral.",
     "- set_address: preencha SÓ os campos que o cliente escreveu (street, number, complement, neighborhood, city, state em 2 letras, cep, reference); os demais null. Não deduza cidade nem UF.",

@@ -13,7 +13,7 @@ import { norm, type AutoMessage } from "./ai-auto.ts";
 import {
   MSG_ALREADY_CONFIRMED, MSG_CANCEL_AFTER_ORDER, MSG_CANCELLED, MSG_FAILED, MSG_NOT_FOUND, MSG_NO_DRAFT, MSG_REPROMPT, MSG_TOO_BIG,
   boundedTail, buildOrderSystemPrompt, buildOrderUserBlock, classifyConfirmationBatch, decideQuantity, hasOrderVerb, isCancelIntent, matchItem,
-  nextQuestion, parseOrderState, plain, renderAmbiguous, renderAskQuantity, renderCreated, renderPriceChanges, renderSummary,
+  nextQuestion, parseOrderState, plain, removalIntent, renderAmbiguous, renderAskQuantity, renderCreated, renderPriceChanges, renderSummary,
   renderUnavailable, startsWithQuantity, validateExtraction, brl, PAYMENT_LABELS,
   type ExtractedOp, type OrderState,
 } from "./ai-order.ts";
@@ -246,6 +246,10 @@ async function executeExtraction(
   let payment = null as { method: string | null; needsChange: boolean | null; amount: number | null } | null;
   let state = state0;
   let considered = 0;
+  // quantidade "viva" de cada linha dentro deste lote (várias retiradas na mesma mensagem não podem usar o estado velho)
+  const qtyNow = new Map<string, number>();
+  const liveQty = (i: { item_id: string; quantity: number }) => qtyNow.get(i.item_id) ?? i.quantity;
+  const removals = ops.filter((o) => o.op === "remove_item" || o.op === "decrement_item").length;
 
   const resolveItem = async (mention: string) => {
     const r = await io.rpc("whatsapp_order_resolve_item", { p_job_id: jobId, p_mention: mention, p_limit: 5 });
@@ -282,17 +286,35 @@ async function executeExtraction(
         units.push({ ops: [{ op: "add_item", product_id: prod.product_id, quantity: q.qty, notes: op.notes, option_ids: optionIds }], acks: [{ kind: "add", text: `${q.qty}x ${plain(String(prod.name), 80)}` }] });
         break;
       }
-      case "remove_item": case "set_quantity": case "set_item_notes": case "set_item_options": case "replace_item": {
+      case "remove_item": case "decrement_item": case "set_quantity": case "set_item_notes": case "set_item_options": case "replace_item": {
         if (!state) { notes.push("Ainda não há itens no seu pedido."); break; }
         considered++;
-        const m = matchItem(state.items, op.product_text);
+        const m = matchItem(state.items.filter((i) => liveQty(i) > 0), op.product_text);
         if (m.kind === "none") { notes.push("Não encontrei esse item no seu pedido."); break; }
         if (m.kind === "many") { questions.push(`Em qual item: ${m.items.map((i) => plain(i.name, 60)).join(" ou ")}?`); break; }
         const it = m.item;
-        if (op.op === "remove_item") { units.push({ ops: [{ op: "remove_item", item_id: it.item_id }], acks: [{ kind: "remove", text: `${it.quantity}x ${plain(it.name, 80)}` }] }); break; }
+        if (op.op === "remove_item" || op.op === "decrement_item") {
+          // linha inteira x reduzir N: a decisão vem do TEXTO do cliente; a conta (atual - N) é feita aqui, nunca pelo modelo
+          const cur = liveQty(it);
+          const intent = removalIntent(op, text, removals === 1);
+          if (intent.mode === "qty" && intent.qty > cur) {
+            questions.push(`Você tem ${cur} ${cur === 1 ? "unidade" : "unidades"} de ${plain(it.name, 80)} no pedido. Quantas deseja retirar?`);
+            break;
+          }
+          if (intent.mode === "all" || intent.qty === cur) {
+            qtyNow.set(it.item_id, 0);
+            units.push({ ops: [{ op: "remove_item", item_id: it.item_id }], acks: [{ kind: "remove", text: `${cur}x ${plain(it.name, 80)}` }] });
+            break;
+          }
+          const left = cur - intent.qty;
+          qtyNow.set(it.item_id, left);
+          units.push({ ops: [{ op: "set_quantity", item_id: it.item_id, quantity: left }], acks: [{ kind: "change", text: `${left}x ${plain(it.name, 80)}` }] });
+          break;
+        }
         if (op.op === "set_quantity") {
           const q = decideQuantity(op, text);
           if (q.kind !== "qty") { questions.push(renderAskQuantity(it.name)); break; }
+          qtyNow.set(it.item_id, q.qty);
           units.push({ ops: [{ op: "set_quantity", item_id: it.item_id, quantity: q.qty }], acks: [{ kind: "change", text: `${q.qty}x ${plain(it.name, 80)}` }] });
           break;
         }
