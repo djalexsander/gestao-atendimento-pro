@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { formatReais } from "../../lib/money";
 import { Modal } from "../employees/Modal";
+import { OrderWhatsappNotice } from "../whatsapp/OrderWhatsappNotice";
 import type { CompanyRole } from "../../lib/types";
 import type { CourierOption, DeliveryDetail as Detail, DeliverySource } from "./deliveryApi";
 import {
@@ -129,6 +130,7 @@ export function DeliveryDetail({
           <span className={`dl-badge dl-badge-${row.fulfillment}`}>{FULFILLMENT_LABEL[row.fulfillment]}</span>
           <span className="dl-badge dl-badge-state">{stateLabel(row)}</span>
           {row.status === "confirmed" && row.production === "ready" && <span className="dl-badge dl-badge-ready">Itens prontos</span>}
+          <OrderWhatsappNotice serviceOrderId={row.orderId} />
         </div>
 
         <dl className="dl-info">

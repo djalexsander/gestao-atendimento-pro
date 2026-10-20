@@ -85,3 +85,9 @@ verify_jwt = true
 # x-internal-secret (>= 32 caracteres, tempo constante); não há JWT de usuário. Só age com WHATSAPP_AI_AUTO_ENABLED="true"
 # (kill switch em Edge Secret). O envio usa o fluxo OFICIAL (_shared/whatsapp-dispatch.ts); chaves só em Edge Secrets.
 verify_jwt = false
+
+[functions.whatsapp-order-notify]
+# Worker dos avisos AUTOMÁTICOS do pedido (pronto / saiu para entrega). Chamado SÓ pelo banco (pg_cron -> pg_net) com o segredo
+# compartilhado no header x-internal-secret (>= 32 caracteres, tempo constante); não há JWT de usuário. Só age com
+# WHATSAPP_ORDER_NOTIFY_ENABLED="true" (kill switch global em Edge Secret). Sem OpenAI. Envio pelo fluxo OFICIAL.
+verify_jwt = false

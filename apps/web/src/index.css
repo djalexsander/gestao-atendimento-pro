@@ -5382,3 +5382,9 @@ button {
 .wa-suggest { list-style: none; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .wa-suggest li { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 .wa-customer { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
+
+/* Selo do aviso automático do pedido pelo WhatsApp (informativo) */
+.wa-notice { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); font-size: 12px; line-height: 1.6; }
+.wa-notice-ok { background: var(--success-bg); border-color: var(--success); color: var(--success); }
+.wa-notice-wait { background: var(--surface); color: var(--text-muted); }
+.wa-notice-warn { background: var(--warning-bg); border-color: var(--warning); color: var(--warning); }
