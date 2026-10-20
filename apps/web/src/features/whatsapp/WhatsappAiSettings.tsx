@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { supabaseAiSettingsSource, type AiSettingsSource } from "./whatsappAiApi";
 import { AI_AUTO_WARNING, aiSettingsError, type AiSettings } from "./whatsappLogic";
+import { AI_NAME_HINT, AI_NAME_MAX, AI_NAME_PLACEHOLDER, assistantPreview, displayNameError, normalizeDisplayName } from "./aiDisplayNameLogic";
 
 type Mode = "off" | "suggest" | "auto";
 
@@ -13,6 +14,7 @@ export function WhatsappAiSettings({ companyId, source = supabaseAiSettingsSourc
   const [enabled, setEnabled] = useState(false);
   const [mode, setMode] = useState<Mode>("off");
   const [businessName, setBusinessName] = useState("");
+  const [aiName, setAiName] = useState("");
   const [tone, setTone] = useState("");
   const [businessHours, setBusinessHours] = useState("");
   const [customInstructions, setCustomInstructions] = useState("");
@@ -28,6 +30,7 @@ export function WhatsappAiSettings({ companyId, source = supabaseAiSettingsSourc
     setEnabled(s.enabled);
     setMode(s.mode);
     setBusinessName(s.businessName);
+    setAiName(s.aiDisplayName);
     setTone(s.tone);
     setBusinessHours(s.businessHours);
     setCustomInstructions(s.customInstructions);
@@ -59,6 +62,8 @@ export function WhatsappAiSettings({ companyId, source = supabaseAiSettingsSourc
       { mode: enabled ? nextMode : "off", autoAcknowledged: ackAuto },
     );
     if (problem) return setMessage({ kind: "err", text: problem });
+    const nameProblem = displayNameError(aiName);
+    if (nameProblem) return setMessage({ kind: "err", text: nameProblem });
     setSaving(true);
     setMessage(null);
     const r = await source.save(companyId, {
@@ -76,6 +81,19 @@ export function WhatsappAiSettings({ companyId, source = supabaseAiSettingsSourc
       afterHoursMessage: loaded.afterHoursMessage,
       businessSchedule: loaded.businessSchedule,
     });
+    if (r.data && normalizeDisplayName(aiName) !== normalizeDisplayName(r.data.aiDisplayName)) {
+      // o nome da assistente tem RPC própria (owner/admin); só é enviada quando mudou
+      const n = await source.saveDisplayName(companyId, aiName);
+      setSaving(false);
+      if (n.data) {
+        apply(n.data);
+        setMessage({ kind: "ok", text: "Configuração da IA salva." });
+      } else {
+        apply(r.data);
+        setMessage({ kind: "err", text: `Configuração salva, mas o nome da assistente não: ${n.error}` });
+      }
+      return;
+    }
     setSaving(false);
     if (r.data) {
       apply(r.data);
@@ -139,6 +157,14 @@ export function WhatsappAiSettings({ companyId, source = supabaseAiSettingsSourc
           <label className="dl-field"><span>Horário de atendimento</span><input maxLength={300} placeholder="Ex.: Seg a Sex, 9h às 18h" value={businessHours} onChange={(e) => setBusinessHours(e.target.value)} /></label>
           <label className="dl-field"><span>Mensagens de contexto (1 a 30)</span><input inputMode="numeric" value={maxContext} onChange={(e) => setMaxContext(e.target.value)} /></label>
         </div>
+        <label className="dl-field">
+          <span>Nome da assistente</span>
+          <input maxLength={AI_NAME_MAX} placeholder={AI_NAME_PLACEHOLDER} value={aiName} onChange={(e) => setAiName(e.target.value)} aria-describedby="wa-ai-name-hint" />
+          <small id="wa-ai-name-hint" className="field-hint">{AI_NAME_HINT}</small>
+        </label>
+        <p className="field-hint" data-testid="wa-ai-name-preview" aria-live="polite">
+          <strong>Prévia:</strong> {assistantPreview(aiName, businessName || "sua empresa")}
+        </p>
         <label className="dl-field dl-field-wide">
           <span>{mode === "auto" ? "Instruções (obrigatório no modo automático)" : "Instruções adicionais (opcional)"}</span>
           <textarea rows={mode === "auto" ? 6 : 3} maxLength={2000} value={customInstructions} onChange={(e) => setCustomInstructions(e.target.value)} />

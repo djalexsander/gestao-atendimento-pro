@@ -504,12 +504,14 @@ export interface AiSettings {
   afterHoursPolicy: "ai_continues" | "silent" | "message";
   afterHoursMessage: string;
   businessSchedule: unknown;
+  /** Fase 2 (assistente): nome usado SÓ na apresentação inicial; vazio = "Assistente Virtual". */
+  aiDisplayName: string;
 }
 
 export const AI_DEFAULT_SETTINGS: AiSettings = {
   effectiveMode: "off", enabled: false, mode: "off", businessName: "", tone: "", customInstructions: "", businessHours: "",
   fallbackToHuman: true, maxContextMessages: 12, acknowledgedAt: null,
-  autoAcknowledgedAt: null, afterHoursPolicy: "ai_continues", afterHoursMessage: "", businessSchedule: null,
+  autoAcknowledgedAt: null, afterHoursPolicy: "ai_continues", afterHoursMessage: "", businessSchedule: null, aiDisplayName: "",
 };
 
 export const AI_AUTO_WARNING =
@@ -536,6 +538,7 @@ export function toAiSettings(raw: unknown): AiSettings {
     afterHoursPolicy: o.after_hours_policy === "silent" || o.after_hours_policy === "message" ? o.after_hours_policy : "ai_continues",
     afterHoursMessage: str(o.after_hours_message),
     businessSchedule: typeof o.business_schedule === "object" && o.business_schedule !== null ? o.business_schedule : null,
+    aiDisplayName: str(o.ai_display_name),
   };
 }
 

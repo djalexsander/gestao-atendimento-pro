@@ -17,6 +17,7 @@ import {
   buildAutoSystemPrompt,
   checkReplySafety,
   preFilter,
+  unansweredTail,
   validateDecision,
   type AiDecider,
   type AutoContext,
@@ -33,6 +34,7 @@ import {
 } from "../_shared/ai-knowledge.ts";
 import { ORDER_EXTRACT_SCHEMA, validateExtraction } from "../_shared/ai-order.ts";
 import { runOrderFlow, type OrderFlowIo } from "../_shared/ai-order-flow.ts";
+import { composeWithIntro, greetingReply, isGreetingOnly } from "../_shared/ai-intro.ts";
 import { authorizeInternalRequest } from "../_shared/push-core.ts";
 import { dispatchQueuedMessage, markMessageFailed, type DispatchRpcClient } from "../_shared/whatsapp-dispatch.ts";
 import { isValidGraphVersion, type GraphSender } from "../_shared/whatsapp-graph.ts";
@@ -90,6 +92,8 @@ interface JobRow {
 
 interface Ctx {
   deps: AutoDeps;
+  /** Apresentação da assistente a prefixar na 1ª saída da conversa (por JOB; o Ctx base é compartilhado e nunca a recebe). */
+  intro?: string | null;
 }
 
 async function completeJob(
@@ -162,7 +166,9 @@ async function commitAndDispatch(
   body: string,
   opts: { usageId: string | null; okOutcome: string; okReason: string; fallback: boolean; onSent?: (messageId: string) => Promise<void> },
 ): Promise<string> {
-  const commit = await call(c.deps.admin, "whatsapp_ai_auto_commit_send", { p_job_id: jobId, p_context_latest_message_id: latest, p_body: body });
+  // APRESENTAÇÃO (Fase 2): só na 1ª saída da conversa, prefixo FIXO do banco; as checagens de segurança já rodaram sobre a resposta pura
+  const finalBody = composeWithIntro(c.intro ?? null, body);
+  const commit = await call(c.deps.admin, "whatsapp_ai_auto_commit_send", { p_job_id: jobId, p_context_latest_message_id: latest, p_body: finalBody });
   const res = isObj(commit.data) ? commit.data : null;
   if (commit.error || !res || typeof res.result !== "string") {
     console.error("whatsapp-ai-auto: commit falhou", { code: commit.error?.code ?? null });
@@ -268,8 +274,9 @@ function makeOrderIo(c: Ctx, jobId: string, latest: string, fallback: boolean): 
   };
 }
 
-async function processJob(c: Ctx, job: JobRow): Promise<string> {
-  const { deps } = c;
+async function processJob(base: Ctx, job: JobRow): Promise<string> {
+  const { deps } = base;
+  let c: Ctx = base;
   const decider = deps.decider as AiDecider;
 
   const prep = await call(deps.admin, "whatsapp_ai_prepare_auto", { p_job_id: job.id });
@@ -310,6 +317,13 @@ async function processJob(c: Ctx, job: JobRow): Promise<string> {
   }
   const latest = p.latest_message_id;
 
+  // APRESENTAÇÃO da assistente (Fase 2): o banco diz se esta será a 1ª saída da conversa e entrega a frase pronta. Falha ou migration
+  // ausente = sem apresentação (comportamento anterior), nunca erro. O nome da assistente jamais entra em prompt.
+  const introRes = await call(deps.admin, "whatsapp_ai_auto_intro", { p_job_id: job.id });
+  const introData = isObj(introRes.data) ? introRes.data : null;
+  const intro = !introRes.error && introData && introData.first === true && typeof introData.intro === "string" && introData.intro.length > 0 ? introData.intro : null;
+  if (intro) c = { deps, intro };
+
   // fora do expediente com mensagem fixa: SEM IA
   if (typeof p.after_hours_message === "string" && !Array.isArray(p.messages)) {
     return await commitAndDispatch(c, job.id, latest, p.after_hours_message, {
@@ -322,6 +336,14 @@ async function processJob(c: Ctx, job: JobRow): Promise<string> {
 
   const ctx = p as AutoContext & { latest_message_id: string };
   const fallback = ctx.fallback_to_human === true;
+
+  // 1ª saída E o cliente só cumprimentou ("Oi", "Bom dia"): resposta 100% template, SEM OpenAI e sem gastar cota
+  if (intro) {
+    const pending = unansweredTail(ctx.messages).filter((m) => m.direction === "inbound");
+    if (pending.length > 0 && pending.every((m) => isGreetingOnly(m.text))) {
+      return await commitAndDispatch(c, job.id, latest, greetingReply(intro), { usageId: null, okOutcome: "replied", okReason: "intro_greeting", fallback });
+    }
+  }
 
   // pré-filtros determinísticos: sem custo de IA
   const pre = preFilter(ctx);

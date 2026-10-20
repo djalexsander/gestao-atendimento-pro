@@ -25,6 +25,8 @@ export interface AiSettingsInput {
 export interface AiSettingsSource {
   get(companyId: string): Promise<AiResult<AiSettings>>;
   save(companyId: string, input: AiSettingsInput): Promise<AiResult<AiSettings>>;
+  /** Nome da assistente virtual (RPC pequena e própria; owner/admin). Vazio volta ao padrão. */
+  saveDisplayName(companyId: string, name: string): Promise<AiResult<AiSettings>>;
 }
 
 const GENERIC = "Não foi possível carregar a configuração da IA agora. Tente novamente.";
@@ -60,6 +62,15 @@ export const supabaseAiSettingsSource: AiSettingsSource = {
       // PT400/403/409 do banco já vêm em português amigável
       if (error.code && /^PT40\d$/.test(error.code) && error.message) return { data: null, error: error.message };
       return { data: null, error: "Não foi possível salvar agora. Tente novamente." };
+    }
+    return { data: toAiSettings(data), error: null };
+  },
+  async saveDisplayName(companyId, name) {
+    const { data, error } = await supabase.rpc("whatsapp_ai_set_display_name", { p_company_id: companyId, p_name: name });
+    if (error) {
+      console.error("Falha ao salvar o nome da assistente:", error.code ?? "sem código");
+      if (error.code && /^PT40\d$/.test(error.code) && error.message) return { data: null, error: error.message };
+      return { data: null, error: "Não foi possível salvar o nome agora. Tente novamente." };
     }
     return { data: toAiSettings(data), error: null };
   },
