@@ -413,7 +413,12 @@ export function renderItemLine(it: OrderItem): string[] {
   // quantidade > 1: mostra também o valor unitário (apresentação; = total da linha / quantidade, já calculado pelo banco)
   const each = it.quantity > 1 ? ` — ${brl(Number(it.line_total) / it.quantity)} cada` : "";
   const out = [`${it.quantity}x ${plain(it.name, 80)}${each} — ${brl(it.line_total)}`];
-  if (it.options.length) out.push(`   com ${it.options.map((o) => plain(o.name, 40)).join(", ")}`);
+  // cada opção escolhida aparece com o grupo e o acréscimo, para o cliente ver o que está pagando antes de confirmar
+  for (const o of it.options) {
+    const d = Number(o.price_delta);
+    const extra = d > 0 ? ` (+${brl(d)})` : d < 0 ? ` (-${brl(-d)})` : "";
+    out.push(`   ${o.group ? plain(o.group, 40) + ": " : ""}${plain(o.name, 40)}${extra}`);
+  }
   if (it.notes) out.push(`   obs.: ${plain(it.notes, 100)}`);
   return out;
 }
