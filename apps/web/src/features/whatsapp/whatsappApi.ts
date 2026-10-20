@@ -45,6 +45,8 @@ export interface WhatsappSource {
   aiSuggest?(conversationId: string): Promise<Result<string>>;
   /** IA automática (Fase 2): 'human' = Assumir atendimento (pausa a IA); 'inherit' = Devolver para IA (também desatribui). */
   setAiControl?(conversationId: string, control: "human" | "inherit"): Promise<Result<null>>;
+  /** Excluir conversa (soft delete; só owner/admin; o banco deriva a empresa da conversa). Opcional: fontes simuladas antigas seguem válidas. */
+  deleteConversation?(conversationId: string): Promise<Result<null>>;
   subscribe(companyId: string, onChange: () => void): () => void;
 }
 
@@ -177,6 +179,11 @@ export const supabaseWhatsappSource: WhatsappSource = {
   },
   async setAiControl(conversationId, control) {
     const { error } = await supabase.rpc("whatsapp_set_conversation_ai_control", { p_conversation_id: conversationId, p_control: control });
+    if (error) return failAction(error);
+    return { data: null, error: null };
+  },
+  async deleteConversation(conversationId) {
+    const { error } = await supabase.rpc("whatsapp_delete_conversation", { p_conversation_id: conversationId });
     if (error) return failAction(error);
     return { data: null, error: null };
   },

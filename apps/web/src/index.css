@@ -5356,6 +5356,12 @@ button {
 .wa-assign { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .wa-assign select { min-height: 40px; max-width: 100%; }
 .wa-status-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.wa-menu { position: relative; }
+.wa-menu-button { min-width: 40px; min-height: 40px; font-size: 18px; line-height: 1; }
+.wa-menu-list { position: absolute; right: 0; top: calc(100% + 4px); z-index: 20; min-width: 190px; padding: 4px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); }
+.wa-menu-item { display: block; width: 100%; min-height: 44px; padding: 8px 12px; border: 0; border-radius: 8px; background: transparent; color: var(--text); text-align: left; font: inherit; cursor: pointer; }
+.wa-menu-item:hover, .wa-menu-item:focus-visible { background: var(--bg); outline: none; }
+.wa-menu-danger { color: #f87171; }
 .wa-msg-failed { border-color: var(--danger); background: var(--danger-bg); }
 .wa-retry { align-self: flex-end; }
 .wa-composer { display: flex; flex-direction: column; gap: 6px; border-top: 1px solid var(--border); padding-top: 8px; }

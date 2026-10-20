@@ -92,6 +92,26 @@ export const STATUS_LABEL: Record<ConversationStatus, string> = { open: "Aberta"
 export const WHATSAPP_ROLES: readonly CompanyRole[] = ["owner", "admin", "attendant", "cashier"];
 export const canUseWhatsapp = (role: CompanyRole | null | undefined): boolean => !!role && WHATSAPP_ROLES.includes(role);
 
+// ---------------------------------------------------------------------------
+// Excluir conversa (soft delete no banco; só owner/admin)
+// ---------------------------------------------------------------------------
+/** Quem vê a ação "Excluir conversa" (o banco confere de novo: attendant/cashier nunca excluem). */
+export const canDeleteConversation = (role: CompanyRole | null | undefined): boolean => role === "owner" || role === "admin";
+export const DELETE_CONVERSATION_TITLE = "Excluir esta conversa?";
+export const DELETE_CONVERSATION_TEXT = "Esta ação removerá a conversa do atendimento e não poderá ser desfeita. As mensagens desta conversa também deixarão de aparecer.";
+export const DELETE_CONVERSATION_OK = "Conversa excluída.";
+export const DELETE_CONVERSATION_ERROR = "Não foi possível excluir a conversa.";
+/** Tira a conversa da lista local na hora (sem esperar o recarregamento). */
+export function withoutConversation<T extends { id: string }>(list: T[] | null, id: string): T[] | null {
+  return list === null ? null : list.filter((c) => c.id !== id);
+}
+/** Mensagem de falha: recusas do banco (envio/IA em andamento, permissão) seguem; qualquer outra vira o texto padrão. */
+export function friendlyDeleteError(message: string | null | undefined): string {
+  const m = (message ?? "").trim();
+  if (m && m.length <= 160 && !/^(Edge Function|FunctionsHttpError|FunctionsFetchError|Failed to|TypeError|AuthApiError|Não foi possível concluir)/i.test(m)) return m;
+  return DELETE_CONVERSATION_ERROR;
+}
+
 export function toConversation(r: RawConversation): ConversationRow {
   return {
     id: r.id,

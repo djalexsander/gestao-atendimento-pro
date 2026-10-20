@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent }
 import { useAuth } from "../../app/useAuth";
 import { createCoalescedRunner } from "../orders/coalesce";
 import { supabaseWhatsappSource, type WhatsappSource } from "./whatsappApi";
+import { Modal } from "../employees/Modal";
 import {
   AI_BADGE_EDITED_TEXT,
   AI_BADGE_TEXT,
@@ -21,7 +22,12 @@ import {
   STATUS_LABEL,
   agentLabel,
   applyFilter,
+  DELETE_CONVERSATION_OK,
+  DELETE_CONVERSATION_TEXT,
+  DELETE_CONVERSATION_TITLE,
+  canDeleteConversation,
   canUseWhatsapp,
+  friendlyDeleteError,
   composerBlock,
   conversationTitle,
   formatClock,
@@ -35,6 +41,7 @@ import {
   makeSendError,
   totalUnread,
   visibleSendError,
+  withoutConversation,
   windowLabel,
   windowState,
   type AgentOption,
@@ -67,6 +74,12 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
   const [agents, setAgents] = useState<AgentOption[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Excluir conversa: menu ⋮ (só owner/admin), confirmação e aviso de sucesso
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [filter, setFilter] = useState<ConversationFilter>("open");
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -159,6 +172,9 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
     setDraft("");
     setSendError(null);
     setActionError(null);
+    setMenuOpen(false);
+    setConfirmDelete(false);
+    setDeleteError(null);
     setAiState(AI_IDLE);
     setAiError(null);
     aiRunning.current = false;
@@ -189,6 +205,26 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
     const r = await fn();
     setBusy(false);
     if (r.error) setActionError(r.error);
+    requestConversations();
+  }
+
+  async function doDelete() {
+    if (!selected || deleting || !source.deleteConversation) return;
+    const id = selected.id;
+    setDeleting(true);
+    setDeleteError(null);
+    const r = await source.deleteConversation(id);
+    setDeleting(false);
+    if (r.error) {
+      setDeleteError(friendlyDeleteError(r.error));
+      return;
+    }
+    // some NA HORA da lista; o painel central e o do cliente voltam ao estado vazio (sem F5)
+    setConversations((list) => withoutConversation(list, id));
+    setConfirmDelete(false);
+    setMenuOpen(false);
+    setSelectedId(null);
+    setNotice(DELETE_CONVERSATION_OK);
     requestConversations();
   }
 
@@ -277,6 +313,14 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
       </div>
 
       {error && <div className="form-error" role="alert">{error}</div>}
+      {notice && (
+        <div className="form-notice" role="status">
+          {notice}{" "}
+          <button type="button" className="btn-secondary btn-small" onClick={() => setNotice(null)}>
+            Ok
+          </button>
+        </div>
+      )}
       {summary && !summary.configured && (
         <div className="form-notice" role="status">
           Nenhum número de WhatsApp está conectado a esta empresa.
@@ -374,6 +418,39 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
                     ))}
                   </select>
                 </label>
+                {canDeleteConversation(role) && source.deleteConversation && (
+                  <div className="wa-menu">
+                    <button
+                      type="button"
+                      className="btn-secondary btn-small wa-menu-button"
+                      aria-label="Mais ações da conversa"
+                      aria-haspopup="menu"
+                      aria-expanded={menuOpen}
+                      onClick={() => setMenuOpen((o) => !o)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") setMenuOpen(false);
+                      }}
+                    >
+                      ⋮
+                    </button>
+                    {menuOpen && (
+                      <div className="wa-menu-list" role="menu">
+                        <button
+                          type="button"
+                          role="menuitem"
+                          className="wa-menu-item wa-menu-danger"
+                          onClick={() => {
+                            setMenuOpen(false);
+                            setDeleteError(null);
+                            setConfirmDelete(true);
+                          }}
+                        >
+                          Excluir conversa
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="wa-status-actions">
                   {statusActions(selected.status).map((a) => (
                     <button
@@ -483,6 +560,24 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
             </>
           )}
         </section>
+
+        {confirmDelete && selected && (
+          <Modal title={DELETE_CONVERSATION_TITLE} onClose={() => (deleting ? undefined : setConfirmDelete(false))}>
+            <p>{DELETE_CONVERSATION_TEXT}</p>
+            <p className="field-hint">
+              {conversationTitle(selected)} · {formatWaPhone(selected.phone)}
+            </p>
+            {deleteError && <div className="form-error" role="alert">{deleteError}</div>}
+            <div className="modal-actions">
+              <button type="button" className="btn-secondary" disabled={deleting} onClick={() => setConfirmDelete(false)}>
+                Cancelar
+              </button>
+              <button type="button" className="btn-danger" disabled={deleting} onClick={() => void doDelete()}>
+                {deleting ? "Excluindo…" : "Excluir conversa"}
+              </button>
+            </div>
+          </Modal>
+        )}
 
         <aside className="wa-side" aria-label="Cliente">
           {!selected ? (
