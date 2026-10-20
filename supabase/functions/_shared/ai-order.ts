@@ -434,9 +434,9 @@ export function renderSummary(s: OrderState, header = "Seu pedido"): string {
   lines.push(`Total: ${brl(s.grand_total)}`);
   if (s.fulfillment === "delivery") {
     const a = s.address;
-    const street = [plain(a.street, 100), plain(a.number, 20)].filter(Boolean).join(", ");
-    const place = [plain(a.complement, 50), plain(a.neighborhood, 60)].filter(Boolean).join(" · ");
-    const city = [plain(a.city, 60), plain(a.state, 4)].filter(Boolean).join("/");
+    const street = [friendlyCase(a.street, 100), plain(a.number, 20)].filter(Boolean).join(", ");
+    const place = [plain(a.complement, 50), friendlyCase(a.neighborhood, 60)].filter(Boolean).join(" · ");
+    const city = [friendlyCase(a.city, 60), plain(a.state, 4)].filter(Boolean).join("/");
     lines.push(`Endereço: ${[street, place, city].filter(Boolean).join(" — ")}${a.city_inferred ? " (confirme a cidade)" : ""}`);
     if (a.reference) lines.push(`Referência: ${plain(a.reference, 100)}`);
     lines.push(`Previsão: cerca de ${s.estimated_minutes ?? s.settings.delivery_minutes} min`);
@@ -505,6 +505,20 @@ export function renderPriceChanges(changes: Array<{ name: string; old: number | 
 export function renderAmbiguous(candidates: Array<{ name: string; price: number | string }>): string {
   const opts = candidates.slice(0, 5).map((c) => `${plain(c.name, 80)} (${brl(c.price)})`).join(", ");
   return `Qual você prefere: ${opts}?`;
+}
+/**
+ * Caixa amigável SÓ para apresentar (nunca para casar nem para gravar): texto todo em MAIÚSCULAS ou todo em minúsculas vira
+ * "Título" (de/da/do/das/dos/e/em ficam minúsculas); texto com caixa mista, digitado assim pelo cliente, fica como está.
+ */
+export function friendlyCase(s: unknown, max = 120): string {
+  const t = plain(s, max);
+  if (!t || (t !== t.toUpperCase() && t !== t.toLowerCase())) return t;
+  const small = new Set(["de", "da", "do", "das", "dos", "e", "em"]);
+  return t.toLowerCase().split(" ").map((w, i) => (i > 0 && small.has(w) ? w : w.charAt(0).toUpperCase() + w.slice(1))).join(" ");
+}
+export function renderZoneAmbiguous(neighborhoods: string[]): string {
+  const opts = neighborhoods.slice(0, 5).map((n) => friendlyCase(n, 60)).join(" ou ");
+  return `Atendemos mais de um bairro com esse nome: ${opts}. Qual é o seu?`;
 }
 export function renderUnavailable(name: string): string {
   return `${plain(name, 80)} não está disponível no momento.`;

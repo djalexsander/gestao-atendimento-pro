@@ -14,7 +14,7 @@ import {
   MSG_ALREADY_CONFIRMED, MSG_CANCEL_AFTER_ORDER, MSG_CANCELLED, MSG_FAILED, MSG_NOT_FOUND, MSG_NO_DRAFT, MSG_REPROMPT, MSG_TOO_BIG,
   boundedTail, buildOrderSystemPrompt, buildOrderUserBlock, classifyConfirmationBatch, decideQuantity, hasOrderVerb, isCancelIntent, matchItem,
   nextQuestion, parseOrderState, plain, removalIntent, renderAmbiguous, renderAskQuantity, renderCreated, renderPriceChanges, renderSummary,
-  renderUnavailable, startsWithQuantity, validateExtraction, brl, PAYMENT_LABELS,
+  renderUnavailable, renderZoneAmbiguous, startsWithQuantity, validateExtraction, brl, PAYMENT_LABELS,
   type ExtractedOp, type OrderState,
 } from "./ai-order.ts";
 
@@ -45,7 +45,7 @@ class FlowAbort extends Error { constructor(public outcome: string, public reaso
 
 const DISABLED_REASONS = new Set(["order_drafts_disabled", "mode_not_auto", "module_inactive"]);
 const EDIT_RE = /(alterar|mudar|trocar|tirar|tira|remover|retirar|adicionar|colocar|coloca) /;
-const OUR_QUESTION_RE = /^(quantos |qual voc[eê] prefere|para .*:|para a entrega|prefere retirada|ser[aá] (entrega|retirada)|como prefere pagar|vai precisar de troco|em nome de quem|o que voc[eê] gostaria|n[aã]o encontrei esse item|preciso rever|n[aã]o entregamos|no momento n[aã]o)/;
+const OUR_QUESTION_RE = /^(quantos |atendemos mais de um bairro|qual voc[eê] prefere|para .*:|para a entrega|prefere retirada|ser[aá] (entrega|retirada)|como prefere pagar|vai precisar de troco|em nome de quem|o que voc[eê] gostaria|n[aã]o encontrei esse item|preciso rever|n[aã]o entregamos|no momento n[aã]o)/;
 const isOurQuestion = (t: string | null) => !!t && OUR_QUESTION_RE.test(norm(t).replace(/^anotei[^\n]*\n/, ""));
 const isMissingFunction = (e: { code?: string; message: string }) => e.code === "42883" || e.code === "PGRST202" || /could not find the function|does not exist/i.test(e.message);
 
@@ -406,8 +406,13 @@ async function executeExtraction(
     if (!state || state.fulfillment !== "delivery") { questions.push(state?.fulfillment === "pickup" ? "Seu pedido está como retirada. Quer trocar para entrega?" : "Prefere retirada no balcão ou entrega?"); }
     else {
       const r = await mutate(io, "whatsapp_order_set_address", { ...base, p_fields: address });
-      if (r.result === "ok") state = parseOrderState(r.state) ?? state;
-      else if (r.reason === "address_invalid") notes.push(`O endereço informado parece inválido${typeof r.message === "string" ? ` (${plain(r.message, 100)})` : ""}. Pode conferir?`);
+      if (r.result === "ok") {
+        state = parseOrderState(r.state) ?? state;
+        // mais de uma zona compatível com o bairro digitado: NÃO escolhe; pergunta qual (a resposta traz o nome completo)
+        if (r.address_status === "ambiguous_zone" && Array.isArray(r.zone_candidates)) {
+          questions.push(renderZoneAmbiguous((r.zone_candidates as Array<{ neighborhood?: unknown }>).map((c) => String(c.neighborhood ?? "")).filter(Boolean)));
+        }
+      } else if (r.reason === "address_invalid") notes.push(`O endereço informado parece inválido${typeof r.message === "string" ? ` (${plain(r.message, 100)})` : ""}. Pode conferir?`);
       else if (r.reason === "delivery_disabled") notes.push("No momento não estamos fazendo entregas. Quer retirar no balcão?");
     }
   }
