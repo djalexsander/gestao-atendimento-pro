@@ -21,6 +21,16 @@ import {
   type AiDecider,
   type AutoContext,
 } from "../_shared/ai-auto.ts";
+import {
+  KNOWLEDGE_LOOKUP_LIMIT,
+  buildFactsBlock,
+  checkSuggestionSafety,
+  isOrderIntent,
+  knowledgeKinds,
+  knowledgeQuery,
+  parseKnowledge,
+  type KnowledgeFacts,
+} from "../_shared/ai-knowledge.ts";
 import { authorizeInternalRequest } from "../_shared/push-core.ts";
 import { dispatchQueuedMessage, markMessageFailed, type DispatchRpcClient } from "../_shared/whatsapp-dispatch.ts";
 import { isValidGraphVersion, type GraphSender } from "../_shared/whatsapp-graph.ts";
@@ -105,6 +115,19 @@ async function finalizeUsage(c: Ctx, usageId: string, status: FinalStatus, input
     p_latency_ms: Math.max(0, Math.round(latency)),
   });
   if (r.error) console.error("whatsapp-ai-auto: não finalizou o uso", { code: r.error.code ?? null });
+}
+
+// Rastreio SEM conteúdo da base de conhecimento (usado?, nº de produtos, tipos, consultas, código de bloqueio). Falha só é logada.
+async function recordKnowledge(c: Ctx, usageId: string, facts: KnowledgeFacts, safetyReason: string | null): Promise<void> {
+  const r = await call(c.deps.admin, "whatsapp_ai_record_knowledge_usage", {
+    p_usage_id: usageId,
+    p_knowledge_used: true,
+    p_product_count: facts.products.length,
+    p_kinds: knowledgeKinds(facts),
+    p_lookup_count: 1,
+    p_safety_reason: safetyReason,
+  });
+  if (r.error) console.error("whatsapp-ai-auto: não registrou o uso do conhecimento", { code: r.error.code ?? null });
 }
 
 /** Handoff (conversa vai para o humano) quando fallback_to_human=true; senão apenas não responde (ignored). */
@@ -244,6 +267,21 @@ async function processJob(c: Ctx, job: JobRow): Promise<string> {
     return await handoffOrIgnore(c, job.id, fallback, pre.reason_code, { handled: latest });
   }
 
+  // BASE DE CONHECIMENTO (Etapa 3): só com knowledge_enabled=true (senão a RPC devolve {enabled:false} e nada muda). UMA consulta ao
+  // banco com a MESMA busca do suggest; a empresa vem do JOB no banco. A busca usa a ÚLTIMA mensagem do cliente (a anterior só entra
+  // quando a última depende dela). Falha na consulta = falha fechada: nada é gerado nem enviado, o job é retomado depois.
+  const kQuery = knowledgeQuery(ctx.messages);
+  const lookup = await call(deps.admin, "whatsapp_ai_lookup_knowledge_job", { p_job_id: job.id, p_query: kQuery, p_limit: KNOWLEDGE_LOOKUP_LIMIT });
+  if (lookup.error) {
+    console.error("whatsapp-ai-auto: consulta de conhecimento falhou", { code: lookup.error.code ?? null });
+    return "left_for_retry";
+  }
+  const facts = parseKnowledge(lookup.data);
+  // com a base ligada, pedido/compra não gasta IA: handoff direto (o automático nunca cria, anota nem reserva pedido)
+  if (facts && isOrderIntent(kQuery)) {
+    return await handoffOrIgnore(c, job.id, fallback, "action_required", { handled: latest });
+  }
+
   // reserva atômica da cota ANTES do provedor
   const rsv = await call(deps.admin, "whatsapp_ai_reserve_auto_usage", { p_job_id: job.id, p_provider: decider.provider, p_model: decider.model });
   const rd = isObj(rsv.data) ? rsv.data : {};
@@ -257,6 +295,15 @@ async function processJob(c: Ctx, job: JobRow): Promise<string> {
   }
   const usageId = typeof rd.usage_id === "string" ? rd.usage_id : null;
   if (!usageId) return "left_for_retry";
+
+  // com fatos, o prompt ganha a seção FATOS AUTORIZADOS (+ regras do auto); sem fatos é EXATAMENTE o prompt de sempre
+  const systemPrompt = facts ? [buildAutoSystemPrompt(ctx), ...buildFactsBlock(facts, "auto")].join("\n") : buildAutoSystemPrompt(ctx);
+  let knowledgeRecorded = false;
+  const recordKn = async (reason: string | null): Promise<void> => {
+    if (!facts || knowledgeRecorded) return;
+    knowledgeRecorded = true;
+    await recordKnowledge(c, usageId, facts, reason);
+  };
 
   // provedor (timeout, sem retry)
   const now = deps.now ?? Date.now;
@@ -272,7 +319,7 @@ async function processJob(c: Ctx, job: JobRow): Promise<string> {
   let result;
   try {
     result = await Promise.race([
-      decider.decide({ system: buildAutoSystemPrompt(ctx), user: buildAutoConversationBlock(ctx), timeoutMs: AUTO_TIMEOUT_MS, signal: controller.signal }),
+      decider.decide({ system: systemPrompt, user: buildAutoConversationBlock(ctx), timeoutMs: AUTO_TIMEOUT_MS, signal: controller.signal }),
       timeout,
     ]);
   } catch (e) {
@@ -285,6 +332,7 @@ async function processJob(c: Ctx, job: JobRow): Promise<string> {
 
   if (!result.ok) {
     await finalizeUsage(c, usageId, result.kind, null, null, latency);
+    await recordKn(null);
     console.error("whatsapp-ai-auto: geração falhou", { kind: result.kind });
     return await handoffOrIgnore(c, job.id, fallback, result.kind, { usageId, handled: latest, failureOutcome: result.kind });
   }
@@ -292,6 +340,7 @@ async function processJob(c: Ctx, job: JobRow): Promise<string> {
   const v = validateDecision(result.text);
   if (!v.ok) {
     await finalizeUsage(c, usageId, "invalid_output", result.inputTokens, result.outputTokens, latency);
+    await recordKn(null);
     console.error("whatsapp-ai-auto: decisão inválida", { why: v.why });
     return await handoffOrIgnore(c, job.id, fallback, "invalid_output", { usageId, handled: latest, failureOutcome: "invalid_output" });
   }
@@ -299,26 +348,34 @@ async function processJob(c: Ctx, job: JobRow): Promise<string> {
   const d = v.decision;
 
   if (d.action === "ignore") {
+    await recordKn(null);
     await completeJob(c, job.id, "ignored", d.reason_code, { usageId, handled: latest });
     return "ignored";
   }
   if (d.action === "handoff") {
+    await recordKn(null);
     return await handoffOrIgnore(c, job.id, fallback, d.reason_code, { usageId, handled: latest });
   }
 
   // action === 'reply': só com confiança alta e dentro das checagens de segurança
   if (d.confidence !== "high") {
+    await recordKn(null);
     return await handoffOrIgnore(c, job.id, fallback, "low_confidence", { usageId, handled: latest });
   }
   const reply = d.reply as string;
   if (reply.length > AUTO_REPLY_MAX_CHARS) {
+    await recordKn(null);
     return await handoffOrIgnore(c, job.id, fallback, "invalid_output", { usageId, handled: latest, failureOutcome: "invalid_output" });
   }
-  const safe = checkReplySafety(reply, ctx);
+  // Com fatos: a MESMA checagem do suggest (fatos + instruções + horário; preço/produto/pagamento/horário/entrega/disponibilidade).
+  // Sem fatos: a checagem de sempre. Fora dos fatos => handoff, zero mensagem.
+  const safe = facts ? checkSuggestionSafety(reply, facts, ctx, { strictProducts: true }) : checkReplySafety(reply, ctx);
   if (!safe.ok) {
+    await recordKn(safe.reason_code === "action_required" ? "action_required" : "unsupported_commercial_claim");
     return await handoffOrIgnore(c, job.id, fallback, safe.reason_code ?? "other", { usageId, handled: latest });
   }
 
+  await recordKn(null);
   return await commitAndDispatch(c, job.id, latest, reply, { usageId, okOutcome: "replied", okReason: "answered", fallback });
 }
 
