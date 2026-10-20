@@ -97,14 +97,14 @@ export function resolveSuggester(
 // ---------------------------------------------------------------------------
 export const OPENAI_DECISION_MAX_OUTPUT_TOKENS = 1000;
 
-export function buildOpenAiDecisionBody(model: string, req: Pick<DecideRequest, "system" | "user">): Record<string, unknown> {
+export function buildOpenAiDecisionBody(model: string, req: Pick<DecideRequest, "system" | "user" | "schema" | "maxOutputTokens">): Record<string, unknown> {
   return {
     model,
     instructions: req.system,
     input: req.user,
-    max_output_tokens: OPENAI_DECISION_MAX_OUTPUT_TOKENS,
+    max_output_tokens: req.maxOutputTokens ?? OPENAI_DECISION_MAX_OUTPUT_TOKENS,
     store: false,
-    text: { format: { type: "json_schema", name: "whatsapp_auto_decision", strict: true, schema: DECISION_JSON_SCHEMA } },
+    text: { format: { type: "json_schema", name: req.schema?.name ?? "whatsapp_auto_decision", strict: true, schema: req.schema?.schema ?? DECISION_JSON_SCHEMA } },
   };
 }
 

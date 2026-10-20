@@ -66,6 +66,10 @@ export interface DecideRequest {
   user: string;
   timeoutMs: number;
   signal: AbortSignal;
+  /** JSON Schema (strict) alternativo. Omitido = a decisão de resposta de sempre (DECISION_JSON_SCHEMA). Usado pelo extrator do pedido. */
+  schema?: { name: string; schema: object };
+  /** Teto de tokens de saída alternativo (o extrator do pedido precisa de mais que a decisão curta). */
+  maxOutputTokens?: number;
 }
 
 export type DecideResult =

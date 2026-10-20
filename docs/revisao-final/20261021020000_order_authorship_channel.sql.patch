@@ -1,0 +1,261 @@
+diff --git a/supabase/migrations/20261021020000_order_authorship_channel.sql b/supabase/migrations/20261021020000_order_authorship_channel.sql
+new file mode 100644
+index 0000000..3345e34
+--- /dev/null
++++ b/supabase/migrations/20261021020000_order_authorship_channel.sql
+@@ -0,0 +1,255 @@
++-- WhatsApp pedido conversacional — passo 1 (D1): AUTORIA e VÍNCULO AUDITÁVEL de pedidos criados pela IA.
++--
++-- Hoje service_sessions.opened_by, service_orders.created_by, product_stock_movements.created_by e print_jobs.created_by
++-- são NOT NULL com FK para auth.users: só um usuário humano pode originar pedido. A IA não é usuário. Esta migration NÃO
++-- cria conta de sistema; ela torna a autoria explícita e verificável:
++--
++--   * coluna created_via ('user' | 'whatsapp_ai') nas quatro tabelas;
++--   * created_by/opened_by passam a aceitar NULO, mas SOMENTE quando created_via = 'whatsapp_ai' (CHECK de equivalência:
++--     'user' <=> ator preenchido). Nada do que existe hoje muda de valor (todas as linhas atuais são 'user' com ator);
++--   * delivery_orders ganha o vínculo auditável com a conversa e o rascunho (whatsapp_conversation_id,
++--     whatsapp_order_draft_id) e created_via. O canal já existe (delivery_orders.channel, 20261015020000): o pedido da IA
++--     usa channel = 'whatsapp'. A FK do rascunho entra na migration que cria a tabela de rascunhos.
++--
++-- Os guards de imutabilidade passam a proteger também as colunas novas. Fora daqui, de propósito: nenhuma função de pedido
++-- é alterada (isso é a migration 20261021030000) e nenhuma RLS/GRANT muda.
++
++-- ---------------------------------------------------------------------------
++-- 1) Autoria nas quatro tabelas (autor humano OU whatsapp_ai)
++-- ---------------------------------------------------------------------------
++alter table public.service_sessions
++  add column created_via text not null default 'user'
++    constraint service_sessions_created_via_check check (created_via in ('user', 'whatsapp_ai')),
++  alter column opened_by drop not null;
++alter table public.service_sessions
++  add constraint service_sessions_actor_check check ((created_via = 'user') = (opened_by is not null));
++comment on column public.service_sessions.created_via is
++  'Quem originou o atendimento: user (opened_by preenchido) ou whatsapp_ai (opened_by nulo; vínculo em delivery_orders).';
++
++alter table public.service_orders
++  add column created_via text not null default 'user'
++    constraint service_orders_created_via_check check (created_via in ('user', 'whatsapp_ai')),
++  alter column created_by drop not null;
++alter table public.service_orders
++  add constraint service_orders_actor_check check ((created_via = 'user') = (created_by is not null));
++comment on column public.service_orders.created_via is
++  'Quem originou o pedido: user (created_by preenchido) ou whatsapp_ai (created_by nulo; vínculo auditável em delivery_orders).';
++
++alter table public.product_stock_movements
++  add column created_via text not null default 'user'
++    constraint product_stock_movements_created_via_check check (created_via in ('user', 'whatsapp_ai')),
++  alter column created_by drop not null;
++alter table public.product_stock_movements
++  add constraint product_stock_movements_actor_check check (
++    (created_via = 'user') = (created_by is not null)
++    -- a IA só origina BAIXA de venda; entrada, ajuste e estorno continuam exclusivamente humanos
++    and (created_via = 'user' or movement_type = 'sale')
++  );
++
++alter table public.print_jobs
++  add column created_via text not null default 'user'
++    constraint print_jobs_created_via_check check (created_via in ('user', 'whatsapp_ai')),
++  alter column created_by drop not null;
++alter table public.print_jobs
++  add constraint print_jobs_actor_check check (
++    (created_via = 'user') = (created_by is not null)
++    -- só o job de produção do pedido da IA nasce sem usuário (reimpressão, cancelamento, conta e recibo são humanos)
++    and (created_via = 'user' or job_type = 'production_order')
++  );
++
++-- ---------------------------------------------------------------------------
++-- 2) Pedido de delivery: autoria + vínculo auditável com a conversa e o rascunho
++-- ---------------------------------------------------------------------------
++-- delivery_orders.created_by já é nulo-permitido (ON DELETE SET NULL), então a regra aqui é só de um sentido:
++-- whatsapp_ai => sem usuário, canal whatsapp e vínculo completo. O contrário (user) não exige created_by, porque o
++-- usuário pode ser excluído depois (SET NULL).
++alter table public.delivery_orders
++  add column created_via text not null default 'user'
++    constraint delivery_orders_created_via_check check (created_via in ('user', 'whatsapp_ai')),
++  add column whatsapp_conversation_id uuid,
++  add column whatsapp_order_draft_id uuid;
++
++alter table public.delivery_orders
++  add constraint delivery_orders_whatsapp_link_pair_check
++    check ((whatsapp_conversation_id is null) = (whatsapp_order_draft_id is null)),
++  add constraint delivery_orders_whatsapp_link_channel_check
++    check (whatsapp_order_draft_id is null or channel = 'whatsapp'),
++  add constraint delivery_orders_whatsapp_ai_check
++    check (created_via <> 'whatsapp_ai' or (created_by is null and whatsapp_order_draft_id is not null)),
++  add constraint delivery_orders_whatsapp_conversation_fkey
++    foreign key (whatsapp_conversation_id, company_id)
++    references public.whatsapp_conversations (id, company_id);
++
++-- um rascunho gera NO MÁXIMO um pedido de delivery
++create unique index delivery_orders_whatsapp_draft_key
++  on public.delivery_orders (company_id, whatsapp_order_draft_id)
++  where whatsapp_order_draft_id is not null;
++create index delivery_orders_whatsapp_conversation_idx
++  on public.delivery_orders (company_id, whatsapp_conversation_id)
++  where whatsapp_conversation_id is not null;
++
++comment on column public.delivery_orders.created_via is
++  'user ou whatsapp_ai. whatsapp_ai exige created_by nulo, channel = whatsapp e o vínculo com o rascunho.';
++comment on column public.delivery_orders.whatsapp_conversation_id is
++  'Conversa do WhatsApp de onde veio o pedido (auditoria). Imutável.';
++comment on column public.delivery_orders.whatsapp_order_draft_id is
++  'Rascunho conversacional que originou o pedido (auditoria; um rascunho = no máximo um pedido). A FK entra com a tabela de rascunhos. Imutável.';
++
++-- ---------------------------------------------------------------------------
++-- 3) Guards de imutabilidade (corpos vigentes + as colunas novas)
++-- ---------------------------------------------------------------------------
++-- service_sessions (vigente: 20261014020000)
++create or replace function public.guard_service_session_change()
++returns trigger
++language plpgsql
++set search_path = public
++as $$
++begin
++  if new.company_id is distinct from old.company_id
++     or new.opened_by is distinct from old.opened_by
++     or new.created_via is distinct from old.created_via
++     or new.opened_at is distinct from old.opened_at then
++    raise exception 'Empresa, funcionário e horário de abertura de um atendimento não podem ser alterados.'
++      using errcode = 'PT409';
++  end if;
++  if new.customer_id is distinct from old.customer_id then
++    raise exception 'O cliente de um atendimento não pode ser alterado.' using errcode = 'PT409';
++  end if;
++  if new.kind is distinct from old.kind then
++    raise exception 'O tipo de um atendimento não pode ser alterado.' using errcode = 'PT409';
++  end if;
++  return new;
++end;
++$$;
++
++-- service_orders (vigente: 20260928020000)
++create or replace function public.guard_service_order_change()
++returns trigger
++language plpgsql
++set search_path = public
++as $$
++begin
++  if new.company_id is distinct from old.company_id
++     or new.service_session_id is distinct from old.service_session_id
++     or new.origin is distinct from old.origin
++     or new.created_by is distinct from old.created_by
++     or new.created_via is distinct from old.created_via
++     or new.created_at is distinct from old.created_at
++     or new.submitted_at is distinct from old.submitted_at then
++    raise exception 'Os dados de origem de um pedido não podem ser alterados.'
++      using errcode = 'PT409';
++  end if;
++  return new;
++end;
++$$;
++
++-- print_jobs (vigente: 20261001010000)
++create or replace function public.guard_print_job_change()
++returns trigger
++language plpgsql
++set search_path = public
++as $$
++begin
++  if new.id is distinct from old.id
++     or new.company_id is distinct from old.company_id
++     or new.print_device_id is distinct from old.print_device_id
++     or new.job_type is distinct from old.job_type
++     or new.service_order_id is distinct from old.service_order_id
++     or new.cancellation_id is distinct from old.cancellation_id
++     or new.service_session_id is distinct from old.service_session_id
++     or new.cash_session_id is distinct from old.cash_session_id
++     or new.payload is distinct from old.payload
++     or new.reprint_of_id is distinct from old.reprint_of_id
++     or new.created_by is distinct from old.created_by
++     or new.created_via is distinct from old.created_via
++     or new.created_at is distinct from old.created_at then
++    raise exception 'Um job de impressão não pode ter seu conteúdo alterado.' using errcode = 'PT409';
++  end if;
++  return new;
++end;
++$$;
++
++-- delivery_orders (vigente: 20261015020000)
++create or replace function public.guard_delivery_order_change()
++returns trigger
++language plpgsql
++set search_path = public
++as $$
++begin
++  if new.company_id is distinct from old.company_id
++     or new.service_session_id is distinct from old.service_session_id
++     or new.service_order_id is distinct from old.service_order_id
++     or new.client_request_id is distinct from old.client_request_id
++     or new.fulfillment is distinct from old.fulfillment
++     or new.channel is distinct from old.channel
++     or new.created_via is distinct from old.created_via
++     or new.whatsapp_conversation_id is distinct from old.whatsapp_conversation_id
++     or new.whatsapp_order_draft_id is distinct from old.whatsapp_order_draft_id
++     or new.customer_id is distinct from old.customer_id
++     or new.customer_name is distinct from old.customer_name
++     or new.customer_phone is distinct from old.customer_phone
++     or new.source_address_id is distinct from old.source_address_id
++     or new.addr_street is distinct from old.addr_street
++     or new.addr_number is distinct from old.addr_number
++     or new.addr_complement is distinct from old.addr_complement
++     or new.addr_neighborhood is distinct from old.addr_neighborhood
++     or new.addr_city is distinct from old.addr_city
++     or new.addr_state is distinct from old.addr_state
++     or new.addr_cep is distinct from old.addr_cep
++     or new.addr_reference is distinct from old.addr_reference
++     or new.delivery_fee is distinct from old.delivery_fee
++     or new.fee_source is distinct from old.fee_source
++     or new.zone_id is distinct from old.zone_id
++     or new.estimated_ready_at is distinct from old.estimated_ready_at
++     or new.estimated_delivery_at is distinct from old.estimated_delivery_at
++     or new.payment_timing is distinct from old.payment_timing
++     or new.expected_method is distinct from old.expected_method
++     or new.cash_change_for is distinct from old.cash_change_for
++     or new.notes is distinct from old.notes
++     or new.created_by is distinct from old.created_by
++     or new.created_at is distinct from old.created_at then
++    raise exception 'Os dados de um pedido de delivery não podem ser alterados.' using errcode = 'PT409';
++  end if;
++
++  if new.delivery_status is distinct from old.delivery_status then
++    if not (
++      (old.delivery_status = 'confirmed' and new.delivery_status in ('out_for_delivery', 'picked_up', 'canceled'))
++      or (old.delivery_status = 'out_for_delivery' and new.delivery_status in ('delivered', 'canceled'))
++    ) then
++      raise exception 'Transição de estado inválida: % -> %.', old.delivery_status, new.delivery_status using errcode = 'PT409';
++    end if;
++  elsif old.delivery_status in ('delivered', 'picked_up', 'canceled')
++        and (new.courier_user_id is distinct from old.courier_user_id
++             or new.out_for_delivery_at is distinct from old.out_for_delivery_at
++             or new.delivered_at is distinct from old.delivered_at
++             or new.picked_up_at is distinct from old.picked_up_at
++             or new.canceled_at is distinct from old.canceled_at
++             or new.cancel_reason is distinct from old.cancel_reason) then
++    raise exception 'Este pedido já foi concluído e não pode mais ser alterado.' using errcode = 'PT409';
++  end if;
++  return new;
++end;
++$$;
++
++-- ---------------------------------------------------------------------------
++-- 4) Nome do operador no snapshot de impressão: pedido da IA não tem usuário
++-- ---------------------------------------------------------------------------
++-- (vigente: 20261001010000). Antes um p_user_id nulo era impossível; agora é o pedido da IA.
++create or replace function public.print_actor_name(p_company_id uuid, p_user_id uuid)
++returns text
++language sql
++stable
++security definer
++set search_path = public
++as $$
++  select case
++    when p_user_id is null then 'WhatsApp (IA)'
++    else coalesce(
++      nullif(btrim(pr.full_name), ''),
++      (select cu.login from public.company_users cu where cu.company_id = p_company_id and cu.user_id = p_user_id),
++      'Usuário'
++    )
++  end
++  from (select 1) x
++  left join public.profiles pr on pr.user_id = p_user_id;
++$$;

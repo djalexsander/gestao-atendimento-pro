@@ -1,0 +1,324 @@
+diff --git a/supabase/migrations/20261021040000_whatsapp_order_drafts.sql b/supabase/migrations/20261021040000_whatsapp_order_drafts.sql
+new file mode 100644
+index 0000000..02a99b8
+--- /dev/null
++++ b/supabase/migrations/20261021040000_whatsapp_order_drafts.sql
+@@ -0,0 +1,318 @@
++-- WhatsApp pedido conversacional — passo 3: SCHEMA do rascunho (nada de pedido oficial aqui).
++--
++-- O rascunho é o que a IA monta na conversa ANTES de qualquer pedido oficial. Preço, total, taxa, zona e disponibilidade
++-- são sempre calculados/lidos pelo banco; o modelo só expressa intenção. Esta migration cria só estrutura, guardas e RLS:
++--   * company_whatsapp_ai_settings.order_drafts_enabled (default false): trava por empresa, além do kill switch do worker;
++--   * whatsapp_order_drafts / _items / _item_modifiers / _events;
++--   * máquina de estados protegida por trigger (collecting -> awaiting_confirmation -> confirmed|cancelled|expired|failed);
++--   * minimização de dados: ao cancelar, expirar, FALHAR ou confirmar, endereço e observações do pedido (rascunho) são ZERADOS
++--     na própria transição, sem prazo adicional. Fica só o necessário para auditoria operacional (itens, snapshots de preço,
++--     totais, status, código do motivo e ids técnicos). O pedido confirmado guarda o endereço só no snapshot de delivery_orders;
++--   * a FK que faltava em delivery_orders.whatsapp_order_draft_id (migration 20261021020000).
++-- Sem RPC aqui (migration 20261021050000) e sem GRANT de escrita: o app só LÊ (papel operacional + módulo whatsapp).
++
++-- ---------------------------------------------------------------------------
++-- 1) Trava por empresa
++-- ---------------------------------------------------------------------------
++alter table public.company_whatsapp_ai_settings
++  add column order_drafts_enabled boolean not null default false;
++
++comment on column public.company_whatsapp_ai_settings.order_drafts_enabled is
++  'Pedido conversacional (rascunho + confirmação explícita) pelo modo AUTOMÁTICO. Só tem efeito com mode=auto, módulos whatsapp e delivery. Default false.';
++
++-- ---------------------------------------------------------------------------
++-- 2) Rascunho
++-- ---------------------------------------------------------------------------
++create table public.whatsapp_order_drafts (
++  id uuid primary key default gen_random_uuid(),
++  company_id uuid not null references public.companies(id) on delete cascade,
++  conversation_id uuid not null,
++  status text not null default 'collecting'
++    constraint whatsapp_order_drafts_status_check check (status in ('collecting', 'awaiting_confirmation', 'confirmed', 'cancelled', 'expired', 'failed')),
++  fulfillment text
++    constraint whatsapp_order_drafts_fulfillment_check check (fulfillment is null or fulfillment in ('pickup', 'delivery')),
++  -- snapshot do contato (nunca cria/edita cliente)
++  contact_name text
++    constraint whatsapp_order_drafts_contact_name_length check (contact_name is null or char_length(contact_name) between 1 and 80),
++  contact_phone text
++    constraint whatsapp_order_drafts_contact_phone_check check (contact_phone is null or contact_phone ~ '^[0-9]{8,15}$'),
++  customer_id uuid,
++  notes text
++    constraint whatsapp_order_drafts_notes_length check (notes is null or char_length(notes) between 1 and 300),
++  -- endereço de entrega (snapshot em colunas; zerado ao cancelar/expirar/confirmar)
++  addr_street text constraint whatsapp_order_drafts_street_length check (addr_street is null or char_length(addr_street) between 1 and 120),
++  addr_number text constraint whatsapp_order_drafts_number_length check (addr_number is null or char_length(addr_number) between 1 and 20),
++  addr_complement text constraint whatsapp_order_drafts_complement_length check (addr_complement is null or char_length(addr_complement) between 1 and 60),
++  addr_neighborhood text constraint whatsapp_order_drafts_neigh_length check (addr_neighborhood is null or char_length(addr_neighborhood) between 1 and 80),
++  addr_city text constraint whatsapp_order_drafts_city_length check (addr_city is null or char_length(addr_city) between 1 and 80),
++  addr_state text constraint whatsapp_order_drafts_state_check check (addr_state is null or addr_state ~ '^[A-Z]{2}$'),
++  addr_cep text constraint whatsapp_order_drafts_cep_check check (addr_cep is null or addr_cep ~ '^[0-9]{8}$'),
++  addr_reference text constraint whatsapp_order_drafts_reference_length check (addr_reference is null or char_length(addr_reference) between 1 and 120),
++  addr_city_inferred boolean not null default false,
++  -- taxa/zona resolvidas pelo BANCO a partir do endereço (a IA nunca informa taxa)
++  zone_id uuid,
++  delivery_fee numeric(12, 2)
++    constraint whatsapp_order_drafts_fee_check check (delivery_fee is null or (delivery_fee >= 0 and delivery_fee <> 'NaN'::numeric)),
++  fee_source text
++    constraint whatsapp_order_drafts_fee_source_check check (fee_source is null or fee_source = 'zone'),
++  estimated_minutes integer
++    constraint whatsapp_order_drafts_minutes_check check (estimated_minutes is null or estimated_minutes between 1 and 1440),
++  -- pagamento: só informação operacional (nenhuma cobrança)
++  expected_method text
++    constraint whatsapp_order_drafts_method_check check (expected_method is null or expected_method in ('cash', 'pix', 'debit_card', 'credit_card', 'other')),
++  cash_change_for numeric(12, 2)
++    constraint whatsapp_order_drafts_change_check check (cash_change_for is null or (cash_change_for > 0 and cash_change_for < 100000000)),
++  cash_change_answered boolean not null default false,
++  -- controle
++  version integer not null default 1 constraint whatsapp_order_drafts_version_check check (version >= 1),
++  summary_version integer,
++  summary_message_id uuid,
++  items_total numeric(12, 2) not null default 0 constraint whatsapp_order_drafts_items_total_check check (items_total >= 0),
++  grand_total numeric(12, 2) not null default 0 constraint whatsapp_order_drafts_grand_total_check check (grand_total >= 0),
++  last_customer_activity_at timestamptz not null default now(),
++  expires_at timestamptz not null default (now() + interval '60 minutes'),
++  -- idempotência do PROCESSAMENTO da cauda: o job e quantas mensagens do cliente (cauda sem resposta) já foram aplicadas ao
++  -- rascunho. Um novo processamento do MESMO job pula essas mensagens (evita duplicar itens após reagendamento).
++  last_ops_job_id uuid,
++  last_ops_tail_count integer constraint whatsapp_order_drafts_ops_tail_check check (last_ops_tail_count is null or last_ops_tail_count >= 0),
++  confirmed_at timestamptz,
++  confirmed_by_message_id uuid,
++  delivery_order_id uuid,
++  service_order_id uuid,
++  failure_code text constraint whatsapp_order_drafts_failure_length check (failure_code is null or char_length(failure_code) <= 60),
++  created_at timestamptz not null default now(),
++  updated_at timestamptz not null default now(),
++
++  constraint whatsapp_order_drafts_company_id_id_key unique (company_id, id),
++  constraint whatsapp_order_drafts_id_company_key unique (id, company_id),
++  constraint whatsapp_order_drafts_confirmed_message_key unique (confirmed_by_message_id),
++  constraint whatsapp_order_drafts_conversation_fkey
++    foreign key (conversation_id, company_id) references public.whatsapp_conversations (id, company_id),
++  constraint whatsapp_order_drafts_customer_fkey
++    foreign key (company_id, customer_id) references public.customers (company_id, id),
++  constraint whatsapp_order_drafts_zone_fkey
++    foreign key (company_id, zone_id) references public.delivery_zones (company_id, id),
++  constraint whatsapp_order_drafts_summary_message_fkey
++    foreign key (summary_message_id, company_id) references public.whatsapp_messages (id, company_id),
++  constraint whatsapp_order_drafts_confirm_message_fkey
++    foreign key (confirmed_by_message_id, company_id) references public.whatsapp_messages (id, company_id),
++  constraint whatsapp_order_drafts_delivery_order_fkey
++    foreign key (company_id, delivery_order_id) references public.delivery_orders (company_id, id),
++  constraint whatsapp_order_drafts_service_order_fkey
++    foreign key (company_id, service_order_id) references public.service_orders (company_id, id),
++
++  constraint whatsapp_order_drafts_change_method_check check (cash_change_for is null or expected_method = 'cash'),
++  constraint whatsapp_order_drafts_fee_zone_check check (fee_source is null or (zone_id is not null and delivery_fee is not null)),
++  constraint whatsapp_order_drafts_summary_check check (summary_version is null or summary_version <= version),
++  constraint whatsapp_order_drafts_awaiting_check check (status <> 'awaiting_confirmation' or (summary_version is not null and summary_message_id is not null)),
++  constraint whatsapp_order_drafts_confirmed_check check (
++    (status = 'confirmed') = (confirmed_at is not null and confirmed_by_message_id is not null and delivery_order_id is not null and service_order_id is not null)),
++  constraint whatsapp_order_drafts_failed_check check ((status = 'failed') = (failure_code is not null))
++);
++
++comment on table public.whatsapp_order_drafts is
++  'Rascunho do pedido montado pela IA na conversa (nunca é um pedido oficial). Escrita só por RPC. Endereço e observações são zerados ao cancelar, expirar, falhar ou confirmar.';
++
++-- no máximo UM rascunho aberto por conversa
++create unique index whatsapp_order_drafts_one_open
++  on public.whatsapp_order_drafts (conversation_id)
++  where status in ('collecting', 'awaiting_confirmation');
++create index whatsapp_order_drafts_conversation_idx
++  on public.whatsapp_order_drafts (company_id, conversation_id, created_at desc);
++create index whatsapp_order_drafts_expiry_idx
++  on public.whatsapp_order_drafts (expires_at)
++  where status in ('collecting', 'awaiting_confirmation');
++
++create trigger whatsapp_order_drafts_set_updated_at
++  before update on public.whatsapp_order_drafts
++  for each row execute function public.set_updated_at();
++
++-- ---------------------------------------------------------------------------
++-- 3) Itens e modificadores do rascunho
++-- ---------------------------------------------------------------------------
++create table public.whatsapp_order_draft_items (
++  id uuid primary key default gen_random_uuid(),
++  company_id uuid not null references public.companies(id) on delete cascade,
++  draft_id uuid not null,
++  position integer not null constraint whatsapp_order_draft_items_position_check check (position >= 1),
++  product_id uuid not null,
++  product_name_snapshot text not null
++    constraint whatsapp_order_draft_items_name_length check (char_length(product_name_snapshot) between 1 and 120),
++  quantity integer not null constraint whatsapp_order_draft_items_quantity_check check (quantity between 1 and 50),
++  -- preço unitário JÁ com o acréscimo dos modificadores (mesma regra do pedido oficial)
++  unit_price_snapshot numeric(12, 2) not null
++    constraint whatsapp_order_draft_items_price_check check (unit_price_snapshot >= 0 and unit_price_snapshot <> 'NaN'::numeric),
++  modifiers_unit_total numeric(12, 2) not null default 0,
++  line_total numeric(12, 2) generated always as (quantity * unit_price_snapshot) stored,
++  notes text constraint whatsapp_order_draft_items_notes_length check (notes is null or char_length(notes) between 1 and 200),
++  is_complete boolean not null default true,
++  created_at timestamptz not null default now(),
++  updated_at timestamptz not null default now(),
++  constraint whatsapp_order_draft_items_draft_fkey
++    foreign key (draft_id, company_id) references public.whatsapp_order_drafts (id, company_id) on delete cascade,
++  constraint whatsapp_order_draft_items_product_fkey
++    foreign key (company_id, product_id) references public.products (company_id, id),
++  constraint whatsapp_order_draft_items_company_id_id_key unique (company_id, id),
++  constraint whatsapp_order_draft_items_position_key unique (draft_id, position) deferrable initially immediate
++);
++create index whatsapp_order_draft_items_draft_idx on public.whatsapp_order_draft_items (draft_id);
++create trigger whatsapp_order_draft_items_set_updated_at
++  before update on public.whatsapp_order_draft_items
++  for each row execute function public.set_updated_at();
++
++create table public.whatsapp_order_draft_item_modifiers (
++  id uuid primary key default gen_random_uuid(),
++  company_id uuid not null references public.companies(id) on delete cascade,
++  draft_id uuid not null,
++  draft_item_id uuid not null,
++  modifier_option_id uuid not null,
++  group_id uuid not null,
++  group_name text not null,
++  option_name text not null,
++  modifier_type text not null,
++  price_delta numeric(12, 2) not null,
++  created_at timestamptz not null default now(),
++  constraint whatsapp_order_draft_item_modifiers_item_fkey
++    foreign key (company_id, draft_item_id) references public.whatsapp_order_draft_items (company_id, id) on delete cascade,
++  constraint whatsapp_order_draft_item_modifiers_option_fkey
++    foreign key (company_id, modifier_option_id) references public.product_modifier_options (company_id, id),
++  constraint whatsapp_order_draft_item_modifiers_unique unique (draft_item_id, modifier_option_id)
++);
++create index whatsapp_order_draft_item_modifiers_draft_idx on public.whatsapp_order_draft_item_modifiers (draft_id);
++
++-- ---------------------------------------------------------------------------
++-- 4) Eventos (append-only, sem texto do cliente, sem endereço, sem raciocínio da IA)
++-- ---------------------------------------------------------------------------
++create table public.whatsapp_order_draft_events (
++  id uuid primary key default gen_random_uuid(),
++  company_id uuid not null references public.companies(id) on delete cascade,
++  draft_id uuid not null,
++  event_type text not null
++    constraint whatsapp_order_draft_events_type_check check (event_type in (
++      'draft_created', 'item_added', 'item_removed', 'item_changed', 'modifier_set', 'fulfillment_set', 'contact_set', 'address_set',
++      'address_validated', 'payment_set', 'summary_sent', 'confirm_received', 'revalidated', 'price_changed', 'unavailable',
++      'order_created', 'handoff', 'cancelled', 'expired', 'failed')),
++  detail jsonb not null default '{}'::jsonb
++    constraint whatsapp_order_draft_events_detail_check check (jsonb_typeof(detail) = 'object' and octet_length(detail::text) <= 2000),
++  created_at timestamptz not null default now(),
++  constraint whatsapp_order_draft_events_draft_fkey
++    foreign key (draft_id, company_id) references public.whatsapp_order_drafts (id, company_id) on delete cascade
++);
++create index whatsapp_order_draft_events_draft_idx on public.whatsapp_order_draft_events (draft_id, created_at);
++create trigger whatsapp_order_draft_events_immutable
++  before update or delete on public.whatsapp_order_draft_events
++  for each row execute function public.whatsapp_guard_append_only();
++
++-- delivery_orders -> rascunho (a coluna e os CHECKs vieram na 20261021020000; a FK precisava da tabela)
++alter table public.delivery_orders
++  add constraint delivery_orders_whatsapp_draft_fkey
++    foreign key (company_id, whatsapp_order_draft_id) references public.whatsapp_order_drafts (company_id, id);
++
++-- ---------------------------------------------------------------------------
++-- 5) Guardas: máquina de estados, imutabilidade e minimização de dados
++-- ---------------------------------------------------------------------------
++create function public.guard_whatsapp_order_draft_change()
++returns trigger
++language plpgsql
++set search_path = public
++as $$
++begin
++  if new.company_id is distinct from old.company_id
++     or new.conversation_id is distinct from old.conversation_id
++     or new.created_at is distinct from old.created_at then
++    raise exception 'Empresa, conversa e criação do rascunho não podem ser alteradas.' using errcode = 'PT409';
++  end if;
++
++  -- estados terminais: nada mais muda (os dados pessoais já foram zerados na transição de entrada)
++  if old.status in ('confirmed', 'cancelled', 'expired', 'failed') then
++    raise exception 'Este rascunho já foi encerrado e não pode mais ser alterado.' using errcode = 'PT409';
++  end if;
++
++  if new.status is distinct from old.status then
++    if not (
++      (old.status = 'collecting' and new.status in ('awaiting_confirmation', 'cancelled', 'expired', 'failed'))
++      or (old.status = 'awaiting_confirmation' and new.status in ('collecting', 'confirmed', 'cancelled', 'expired', 'failed'))
++    ) then
++      raise exception 'Transição de estado do rascunho inválida: % -> %.', old.status, new.status using errcode = 'PT409';
++    end if;
++    -- minimização: nenhum estado terminal guarda endereço nem observações do pedido (cancelado, expirado, FALHO e confirmado)
++    if new.status in ('cancelled', 'expired', 'failed', 'confirmed') then
++      new.addr_street := null; new.addr_number := null; new.addr_complement := null; new.addr_neighborhood := null;
++      new.addr_city := null; new.addr_state := null; new.addr_cep := null; new.addr_reference := null; new.notes := null;
++    end if;
++  end if;
++  return new;
++end;
++$$;
++revoke execute on function public.guard_whatsapp_order_draft_change() from public, anon, authenticated;
++
++create trigger whatsapp_order_drafts_guard_change
++  before update on public.whatsapp_order_drafts
++  for each row execute function public.guard_whatsapp_order_draft_change();
++
++-- itens e modificadores só mudam enquanto o rascunho está ABERTO (a exclusão em cascata da empresa continua permitida)
++create function public.guard_whatsapp_order_draft_child()
++returns trigger
++language plpgsql
++set search_path = public
++as $$
++declare
++  v_status text;
++  v_draft uuid := case when tg_op = 'DELETE' then old.draft_id else new.draft_id end;
++begin
++  if tg_op = 'DELETE' and pg_trigger_depth() > 1 then
++    return old;
++  end if;
++  select status into v_status from public.whatsapp_order_drafts where id = v_draft;
++  if v_status is null or v_status not in ('collecting', 'awaiting_confirmation') then
++    raise exception 'Este rascunho já foi encerrado e não pode mais ser alterado.' using errcode = 'PT409';
++  end if;
++  return case when tg_op = 'DELETE' then old else new end;
++end;
++$$;
++revoke execute on function public.guard_whatsapp_order_draft_child() from public, anon, authenticated;
++
++create trigger whatsapp_order_draft_items_guard
++  before insert or update or delete on public.whatsapp_order_draft_items
++  for each row execute function public.guard_whatsapp_order_draft_child();
++create trigger whatsapp_order_draft_item_modifiers_guard
++  before insert or update or delete on public.whatsapp_order_draft_item_modifiers
++  for each row execute function public.guard_whatsapp_order_draft_child();
++
++-- ---------------------------------------------------------------------------
++-- 6) RLS e GRANTs: o app só LÊ (papel operacional + módulo whatsapp); toda escrita é por RPC
++-- ---------------------------------------------------------------------------
++alter table public.whatsapp_order_drafts enable row level security;
++alter table public.whatsapp_order_draft_items enable row level security;
++alter table public.whatsapp_order_draft_item_modifiers enable row level security;
++alter table public.whatsapp_order_draft_events enable row level security;
++
++create policy whatsapp_order_drafts_select on public.whatsapp_order_drafts
++  for select to authenticated
++  using (
++    public.company_has_module_rls(company_id, 'whatsapp')
++    and public.user_role_in_company(company_id) in ('owner', 'admin', 'attendant', 'cashier')
++  );
++create policy whatsapp_order_draft_items_select on public.whatsapp_order_draft_items
++  for select to authenticated
++  using (
++    public.company_has_module_rls(company_id, 'whatsapp')
++    and public.user_role_in_company(company_id) in ('owner', 'admin', 'attendant', 'cashier')
++  );
++create policy whatsapp_order_draft_item_modifiers_select on public.whatsapp_order_draft_item_modifiers
++  for select to authenticated
++  using (
++    public.company_has_module_rls(company_id, 'whatsapp')
++    and public.user_role_in_company(company_id) in ('owner', 'admin', 'attendant', 'cashier')
++  );
++create policy whatsapp_order_draft_events_select on public.whatsapp_order_draft_events
++  for select to authenticated
++  using (
++    public.company_has_module_rls(company_id, 'whatsapp')
++    and public.user_role_in_company(company_id) in ('owner', 'admin')
++  );
++
++revoke all on public.whatsapp_order_drafts, public.whatsapp_order_draft_items, public.whatsapp_order_draft_item_modifiers,
++  public.whatsapp_order_draft_events from public, anon, authenticated, service_role;
++grant select on public.whatsapp_order_drafts, public.whatsapp_order_draft_items, public.whatsapp_order_draft_item_modifiers,
++  public.whatsapp_order_draft_events to authenticated;

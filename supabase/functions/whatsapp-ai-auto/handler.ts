@@ -31,6 +31,8 @@ import {
   parseKnowledge,
   type KnowledgeFacts,
 } from "../_shared/ai-knowledge.ts";
+import { ORDER_EXTRACT_SCHEMA, validateExtraction } from "../_shared/ai-order.ts";
+import { runOrderFlow, type OrderFlowIo } from "../_shared/ai-order-flow.ts";
 import { authorizeInternalRequest } from "../_shared/push-core.ts";
 import { dispatchQueuedMessage, markMessageFailed, type DispatchRpcClient } from "../_shared/whatsapp-dispatch.ts";
 import { isValidGraphVersion, type GraphSender } from "../_shared/whatsapp-graph.ts";
@@ -53,6 +55,8 @@ export interface AutoDeps {
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 const MAX_JOBS = 5;
+const ORDER_TIMEOUT_MS = 18_000;
+const ORDER_MAX_OUTPUT_TOKENS = 2500;
 const CONCURRENCY = 3;
 
 function json(body: unknown, status = 200): Response {
@@ -156,7 +160,7 @@ async function commitAndDispatch(
   jobId: string,
   latest: string,
   body: string,
-  opts: { usageId: string | null; okOutcome: string; okReason: string; fallback: boolean },
+  opts: { usageId: string | null; okOutcome: string; okReason: string; fallback: boolean; onSent?: (messageId: string) => Promise<void> },
 ): Promise<string> {
   const commit = await call(c.deps.admin, "whatsapp_ai_auto_commit_send", { p_job_id: jobId, p_context_latest_message_id: latest, p_body: body });
   const res = isObj(commit.data) ? commit.data : null;
@@ -187,6 +191,8 @@ async function commitAndDispatch(
       await completeJob(c, jobId, "failed_send", "send_failed", { usageId: opts.usageId });
       return "failed_send";
     }
+    // retry de worker com a mensagem já enviada: garante o que depende do envio (ex.: marcar o resumo do pedido)
+    if (opts.onSent && (st === "sent" || st === "delivered" || st === "read")) await opts.onSent(messageId);
     await completeJob(c, jobId, opts.okOutcome, opts.okReason, { usageId: opts.usageId, handled: latest });
     return opts.okOutcome;
   }
@@ -195,11 +201,71 @@ async function commitAndDispatch(
   const graphVersion = c.deps.graphVersion as string; // validado antes de claimar
   const sent = await dispatchQueuedMessage({ admin: c.deps.admin, graph: c.deps.graph, graphVersion }, messageId);
   if (sent.ok) {
+    if (opts.onSent) await opts.onSent(messageId);
     await completeJob(c, jobId, opts.okOutcome, opts.okReason, { usageId: opts.usageId, handled: latest });
     return opts.okOutcome;
   }
   await completeJob(c, jobId, "failed_send", sent.errorCode, { usageId: opts.usageId });
   return "failed_send";
+}
+
+// IO do fluxo de PEDIDO: reaproveita a cota, o provedor, o commit/dispatch OFICIAIS e o encerramento do job do fluxo de sempre.
+function makeOrderIo(c: Ctx, jobId: string, latest: string, fallback: boolean): OrderFlowIo {
+  let usageId: string | null = null;
+  return {
+    rpc: (fn, args) => call(c.deps.admin, fn, args),
+    async extract(system, user, validate) {
+      const decider = c.deps.decider as AiDecider;
+      const rsv = await call(c.deps.admin, "whatsapp_ai_reserve_auto_usage", { p_job_id: jobId, p_provider: decider.provider, p_model: decider.model });
+      const rd = isObj(rsv.data) ? rsv.data : {};
+      if (rsv.error || (rd.result !== "reserved" && rd.result !== "blocked")) {
+        console.error("whatsapp-ai-auto: reserva de cota (pedido) falhou", { code: rsv.error?.code ?? null });
+        return { ok: false, outcome: "left_for_retry" };
+      }
+      if (rd.result === "blocked") {
+        await completeJob(c, jobId, "blocked_quota", typeof rd.reason === "string" ? rd.reason : "auto_minute");
+        return { ok: false, outcome: "blocked_quota" };
+      }
+      usageId = typeof rd.usage_id === "string" ? rd.usage_id : null;
+      if (!usageId) return { ok: false, outcome: "left_for_retry" };
+      const now = c.deps.now ?? Date.now;
+      const started = now();
+      const controller = new AbortController();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<{ ok: false; kind: "timeout" }>((resolve) => {
+        timer = setTimeout(() => { controller.abort(); resolve({ ok: false, kind: "timeout" }); }, ORDER_TIMEOUT_MS);
+      });
+      let result;
+      try {
+        result = await Promise.race([
+          decider.decide({ system, user, timeoutMs: ORDER_TIMEOUT_MS, signal: controller.signal, schema: ORDER_EXTRACT_SCHEMA as unknown as { name: string; schema: object }, maxOutputTokens: ORDER_MAX_OUTPUT_TOKENS }),
+          timeout,
+        ]);
+      } catch (e) {
+        console.error("whatsapp-ai-auto: provedor (pedido) lançou exceção", { name: e instanceof Error ? e.name : null });
+        result = { ok: false as const, kind: "provider_error" as const };
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+      const latency = now() - started;
+      if (!result.ok) {
+        await finalizeUsage(c, usageId, result.kind, null, null, latency);
+        console.error("whatsapp-ai-auto: geração (pedido) falhou", { kind: result.kind });
+        return { ok: false, outcome: await handoffOrIgnore(c, jobId, fallback, result.kind, { usageId, handled: latest, failureOutcome: result.kind }) };
+      }
+      if (!validate(result.text)) {
+        await finalizeUsage(c, usageId, "invalid_output", result.inputTokens, result.outputTokens, latency);
+        return { ok: false, outcome: await handoffOrIgnore(c, jobId, fallback, "invalid_output", { usageId, handled: latest, failureOutcome: "invalid_output" }) };
+      }
+      await finalizeUsage(c, usageId, "ok", result.inputTokens, result.outputTokens, latency);
+      return { ok: true, text: result.text };
+    },
+    reply: (body, o) => commitAndDispatch(c, jobId, latest, body, { usageId, okOutcome: o.outcome, okReason: o.reason, fallback, onSent: o.onSent }),
+    async complete(outcome, reason, o) {
+      await completeJob(c, jobId, outcome, reason, { usageId, handled: o?.handled ?? null, handoff: o?.handoff });
+      return outcome;
+    },
+  };
 }
 
 async function processJob(c: Ctx, job: JobRow): Promise<string> {
@@ -259,6 +325,16 @@ async function processJob(c: Ctx, job: JobRow): Promise<string> {
 
   // pré-filtros determinísticos: sem custo de IA
   const pre = preFilter(ctx);
+  // PEDIDO CONVERSACIONAL (só roda com order_drafts_enabled=true e as migrations aplicadas; senão devolve handled=false e o fluxo
+  // de sempre segue IGUAL). Handoffs duros (injeção, humano, jurídico, cobrança, reclamação, mídia) continuam sendo os de sempre.
+  let orderActive = false;
+  if (!(pre && pre.action === "handoff" && pre.reason_code !== "action_required")) {
+    const flow = await runOrderFlow(makeOrderIo(c, job.id, latest, fallback), {
+      jobId: job.id, latest, messages: ctx.messages, businessName: ctx.business_name, customerFirstName: ctx.customer_first_name, fallback, pre,
+    });
+    if (flow.handled) return flow.outcome;
+    orderActive = flow.active;
+  }
   if (pre) {
     if (pre.action === "ignore") {
       await completeJob(c, job.id, "ignored", pre.reason_code, { handled: latest });
@@ -278,7 +354,7 @@ async function processJob(c: Ctx, job: JobRow): Promise<string> {
   }
   const facts = parseKnowledge(lookup.data);
   // com a base ligada, pedido/compra não gasta IA: handoff direto (o automático nunca cria, anota nem reserva pedido)
-  if (facts && isOrderIntent(kQuery)) {
+  if (facts && isOrderIntent(kQuery) && !orderActive) {
     return await handoffOrIgnore(c, job.id, fallback, "action_required", { handled: latest });
   }
 

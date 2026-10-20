@@ -1,0 +1,37 @@
+diff --git a/supabase/functions/_shared/ai-auto.ts b/supabase/functions/_shared/ai-auto.ts
+index 77561e3..6e07266 100644
+--- a/supabase/functions/_shared/ai-auto.ts
++++ b/supabase/functions/_shared/ai-auto.ts
+@@ -66,6 +66,10 @@ export interface DecideRequest {
+   user: string;
+   timeoutMs: number;
+   signal: AbortSignal;
++  /** JSON Schema (strict) alternativo. Omitido = a decisão de resposta de sempre (DECISION_JSON_SCHEMA). Usado pelo extrator do pedido. */
++  schema?: { name: string; schema: object };
++  /** Teto de tokens de saída alternativo (o extrator do pedido precisa de mais que a decisão curta). */
++  maxOutputTokens?: number;
+ }
+ 
+ export type DecideResult =
+diff --git a/supabase/functions/_shared/ai-openai.ts b/supabase/functions/_shared/ai-openai.ts
+index 33390c9..ca56a22 100644
+--- a/supabase/functions/_shared/ai-openai.ts
++++ b/supabase/functions/_shared/ai-openai.ts
+@@ -97,14 +97,14 @@ export function resolveSuggester(
+ // ---------------------------------------------------------------------------
+ export const OPENAI_DECISION_MAX_OUTPUT_TOKENS = 1000;
+ 
+-export function buildOpenAiDecisionBody(model: string, req: Pick<DecideRequest, "system" | "user">): Record<string, unknown> {
++export function buildOpenAiDecisionBody(model: string, req: Pick<DecideRequest, "system" | "user" | "schema" | "maxOutputTokens">): Record<string, unknown> {
+   return {
+     model,
+     instructions: req.system,
+     input: req.user,
+-    max_output_tokens: OPENAI_DECISION_MAX_OUTPUT_TOKENS,
++    max_output_tokens: req.maxOutputTokens ?? OPENAI_DECISION_MAX_OUTPUT_TOKENS,
+     store: false,
+-    text: { format: { type: "json_schema", name: "whatsapp_auto_decision", strict: true, schema: DECISION_JSON_SCHEMA } },
++    text: { format: { type: "json_schema", name: req.schema?.name ?? "whatsapp_auto_decision", strict: true, schema: req.schema?.schema ?? DECISION_JSON_SCHEMA } },
+   };
+ }
+ 

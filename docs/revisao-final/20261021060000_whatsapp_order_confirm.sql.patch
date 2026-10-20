@@ -1,0 +1,229 @@
+diff --git a/supabase/migrations/20261021060000_whatsapp_order_confirm.sql b/supabase/migrations/20261021060000_whatsapp_order_confirm.sql
+new file mode 100644
+index 0000000..27b97e3
+--- /dev/null
++++ b/supabase/migrations/20261021060000_whatsapp_order_confirm.sql
+@@ -0,0 +1,223 @@
++-- WhatsApp pedido conversacional — passo 5: CONFIRMAÇÃO do rascunho = criação do pedido OFICIAL.
++--
++-- whatsapp_order_confirm(job, mensagem_de_confirmação) é a ÚNICA porta pela qual a IA cria pedido, e só chama o motor
++-- oficial (create_delivery_order_engine -> submit_service_order_engine): preço, modificadores, estoque, setor, produção,
++-- impressão e delivery são os de sempre. Aqui ficam só as garantias da confirmação:
++--
++--   1. contexto do job + a mensagem de confirmação tem de ser a ÚLTIMA do job (lote), do cliente, na mesma conversa, e vir
++--      DEPOIS do resumo; o resumo tem de ter sido ENVIADO (sent/delivered/read) e ser da versão atual do rascunho;
++--   2. rascunho travado (FOR UPDATE) -> produtos travados em ordem de id (controlados por estoque FOR UPDATE, os demais FOR
++--      SHARE; mesma ordem e modo do motor, sem upgrade de lock => sem deadlock entre confirmações);
++--   3. REVALIDAÇÃO contra o cadastro de agora (preço, taxa/zona, disponibilidade, estoque, modificadores, pagamento, troco).
++--      Qualquer mudança => NÃO cria pedido, volta o rascunho a 'collecting', sobe a versão e devolve o que mudou para a IA
++--      pedir NOVA confirmação (preço/taxa) ou perguntar o que remover/trocar (indisponível);
++--   4. IDEMPOTÊNCIA: client_request_id do pedido = id do rascunho (unicidade do motor), rascunho travado, mensagem de
++--      confirmação única por rascunho, índice único de pedido por rascunho. Segunda confirmação => 'already_confirmed';
++--   5. DEFESA: o subtotal e a taxa gravados pelo motor têm de ser IGUAIS aos do rascunho; qualquer erro do motor desfaz TUDO
++--      (subtransação) e o rascunho vira 'failed' (a IA diz que não conseguiu e faz handoff). Nunca "pedido confirmado" antes
++--      do commit: o chamador só afirma sucesso com result='created'.
++-- EXECUTE só para service_role.
++
++create function public.whatsapp_order_confirm(p_job_id uuid, p_confirm_message_id uuid)
++returns jsonb
++language plpgsql
++security definer
++set search_path = public
++as $$
++declare
++  v_ctx jsonb := public.whatsapp_order_ctx(p_job_id);
++  v_company uuid;
++  v_conv uuid;
++  v_d public.whatsapp_order_drafts;
++  v_done public.whatsapp_order_drafts;
++  v_msg public.whatsapp_messages;
++  v_sum public.whatsapp_messages;
++  v_before jsonb;
++  v_changes jsonb := '[]'::jsonb;
++  v_old_fee numeric(12, 2);
++  v_old_total numeric(12, 2);
++  v_state jsonb;
++  v_zone public.delivery_zones;
++  v_zone_found boolean;
++  v_settings jsonb;
++  v_items jsonb;
++  v_addr jsonb;
++  v_res jsonb;
++  v_fee numeric(12, 2);
++  v_err text;
++  v_errmsg text;
++  v_has_unavailable boolean;
++begin
++  if not (v_ctx ->> 'ok')::boolean then
++    return jsonb_build_object('result', 'blocked', 'reason', v_ctx ->> 'reason');
++  end if;
++  v_company := (v_ctx ->> 'company_id')::uuid;
++  v_conv := (v_ctx ->> 'conversation_id')::uuid;
++
++  -- 1) a confirmação é a ÚLTIMA mensagem do lote, do cliente, texto, desta conversa
++  if (v_ctx ->> 'latest_message_id')::uuid is distinct from p_confirm_message_id then
++    return jsonb_build_object('result', 'invalid', 'reason', 'not_latest_message');
++  end if;
++  select * into v_msg from public.whatsapp_messages
++   where id = p_confirm_message_id and company_id = v_company and conversation_id = v_conv and direction = 'inbound' and type = 'text';
++  if not found then
++    return jsonb_build_object('result', 'invalid', 'reason', 'message');
++  end if;
++
++  -- 2) rascunho aberto (travado) ou, se não há, o pedido já confirmado desta confirmação/recente (idempotência)
++  v_d := public.whatsapp_order_open_draft(v_company, v_conv);
++  -- "confirmar" repetido: é a MESMA mensagem (retry) ou uma das 3 mensagens do cliente que a antecedem, nos últimos 10 min,
++  -- desde que nenhum rascunho novo tenha nascido depois do pedido confirmado.
++  -- Qualquer outra conversa no meio (ou muito tempo depois) NÃO herda o pedido antigo.
++  select * into v_done from public.whatsapp_order_drafts d
++   where d.company_id = v_company and d.conversation_id = v_conv and d.status = 'confirmed'
++     and (d.confirmed_by_message_id = p_confirm_message_id
++          or (d.confirmed_at > now() - interval '10 minutes'
++              -- e nenhum rascunho NOVO (aberto, falho, cancelado...) nasceu depois desse pedido
++              and not exists (select 1 from public.whatsapp_order_drafts n where n.conversation_id = v_conv and n.created_at > d.created_at and n.id <> d.id)
++              and d.confirmed_by_message_id in (
++                select m.id from public.whatsapp_messages m
++                 where m.company_id = v_company and m.conversation_id = v_conv and m.direction = 'inbound'
++                   and (m.created_at, m.id) < (v_msg.created_at, v_msg.id)
++                 order by m.created_at desc, m.id desc limit 3)))
++   order by (d.confirmed_by_message_id = p_confirm_message_id) desc, d.confirmed_at desc limit 1;
++  if v_d.id is null then
++    if v_done.id is not null then
++      return jsonb_build_object('result', 'already_confirmed', 'delivery_order_id', v_done.delivery_order_id, 'service_order_id', v_done.service_order_id);
++    end if;
++    return jsonb_build_object('result', 'no_draft');
++  end if;
++  if v_d.status <> 'awaiting_confirmation' then
++    return jsonb_build_object('result', 'not_awaiting', 'state', public.whatsapp_order_state(v_d.id));
++  end if;
++  if v_d.summary_version is distinct from v_d.version then
++    return jsonb_build_object('result', 'stale_summary', 'state', public.whatsapp_order_state(v_d.id));
++  end if;
++  -- o resumo foi ENVIADO e a confirmação veio DEPOIS dele
++  select * into v_sum from public.whatsapp_messages
++   where id = v_d.summary_message_id and company_id = v_company and conversation_id = v_conv and direction = 'outbound'
++     and status in ('sent', 'delivered', 'read');
++  if not found then
++    return jsonb_build_object('result', 'summary_not_sent', 'state', public.whatsapp_order_state(v_d.id));
++  end if;
++  if v_msg.created_at <= v_sum.created_at then
++    return jsonb_build_object('result', 'confirm_before_summary');
++  end if;
++  perform public.whatsapp_order_event(v_company, v_d.id, 'confirm_received', jsonb_build_object('version', v_d.version));
++
++  -- 3) REVALIDAÇÃO: trava produtos (controlados FOR UPDATE; demais FOR SHARE; sempre em ordem de id)
++  perform 1 from public.products p
++   where p.company_id = v_company and p.stock_control = 'quantity'
++     and p.id in (select i.product_id from public.whatsapp_order_draft_items i where i.draft_id = v_d.id)
++   order by p.id for update;
++  perform 1 from public.products p
++   where p.company_id = v_company and p.stock_control <> 'quantity'
++     and p.id in (select i.product_id from public.whatsapp_order_draft_items i where i.draft_id = v_d.id)
++   order by p.id for share;
++
++  v_old_fee := case when v_d.fulfillment = 'delivery' then coalesce(v_d.delivery_fee, 0) else 0 end;
++  v_old_total := v_d.grand_total;
++  select coalesce(jsonb_agg(jsonb_build_object('item_id', i.id, 'name', i.product_name_snapshot, 'unit_price', i.unit_price_snapshot, 'quantity', i.quantity)
++                            order by i.position), '[]'::jsonb)
++    into v_before from public.whatsapp_order_draft_items i where i.draft_id = v_d.id;
++
++  -- taxa/zona de AGORA (a zona pode ter sido desativada, removida ou ter mudado a taxa)
++  v_settings := public.delivery_settings_effective(v_company);
++  if v_d.fulfillment = 'delivery' and v_d.addr_city is not null and v_d.addr_neighborhood is not null then
++    select * into v_zone from public.delivery_zones z
++     where z.company_id = v_company and z.is_active
++       and z.city_key = public.delivery_norm_text(v_d.addr_city) and z.neighborhood_key = public.delivery_norm_text(v_d.addr_neighborhood);
++    v_zone_found := found;
++    update public.whatsapp_order_drafts
++       set zone_id = case when v_zone_found then v_zone.id end, delivery_fee = case when v_zone_found then v_zone.fee end,
++           fee_source = case when v_zone_found then 'zone' end,
++           estimated_minutes = case when v_zone_found then coalesce(v_zone.estimated_minutes, (v_settings ->> 'delivery_minutes')::integer) end
++     where id = v_d.id;
++  end if;
++  perform public.whatsapp_order_recalc(v_d.id);   -- preço de agora (produto + opções), completude, totais, troco
++
++  select coalesce(jsonb_agg(jsonb_build_object('name', n.product_name_snapshot, 'old', o.unit_price, 'new', n.unit_price_snapshot, 'quantity', n.quantity) order by n.position), '[]'::jsonb)
++    into v_changes
++    from public.whatsapp_order_draft_items n
++    join lateral (select (e ->> 'unit_price')::numeric as unit_price from jsonb_array_elements(v_before) e where (e ->> 'item_id')::uuid = n.id) o on true
++   where n.draft_id = v_d.id and o.unit_price is distinct from n.unit_price_snapshot;
++  select * into v_d from public.whatsapp_order_drafts where id = v_d.id;
++  v_fee := case when v_d.fulfillment = 'delivery' then coalesce(v_d.delivery_fee, 0) else 0 end;
++  v_state := public.whatsapp_order_state(v_d.id);
++  v_has_unavailable := exists (select 1 from jsonb_array_elements(v_state -> 'pendings') p where p ->> 'code' = 'item_unavailable');
++
++  if jsonb_array_length(v_state -> 'pendings') > 0 then
++    -- algo deixou de valer (indisponível, opção inválida, fora da zona, forma de pagamento, troco...): volta a montar
++    update public.whatsapp_order_drafts
++       set status = 'collecting', version = version + 1, summary_version = null, summary_message_id = null
++     where id = v_d.id;
++    perform public.whatsapp_order_event(v_company, v_d.id, case when v_has_unavailable then 'unavailable' else 'revalidated' end,
++                                        jsonb_build_object('pendings', jsonb_array_length(v_state -> 'pendings')));
++    return jsonb_build_object('result', 'needs_changes', 'price_changes', v_changes, 'state', public.whatsapp_order_state(v_d.id));
++  end if;
++  if jsonb_array_length(v_changes) > 0 or v_fee is distinct from v_old_fee or v_d.grand_total is distinct from v_old_total then
++    -- preço ou taxa mudou: NÃO cria; nova confirmação sobre o resumo novo
++    update public.whatsapp_order_drafts
++       set status = 'collecting', version = version + 1, summary_version = null, summary_message_id = null
++     where id = v_d.id;
++    perform public.whatsapp_order_event(v_company, v_d.id, 'price_changed',
++                                        jsonb_build_object('old_total', v_old_total, 'new_total', v_d.grand_total, 'items', jsonb_array_length(v_changes)));
++    return jsonb_build_object('result', 'price_changed', 'price_changes', v_changes, 'old_total', v_old_total, 'old_fee', v_old_fee,
++                              'state', public.whatsapp_order_state(v_d.id));
++  end if;
++  perform public.whatsapp_order_event(v_company, v_d.id, 'revalidated', jsonb_build_object('total', v_d.grand_total));
++
++  -- 4) CRIAÇÃO pelo motor oficial (subtransação: qualquer erro desfaz o pedido inteiro)
++  select jsonb_agg(jsonb_build_object('product_id', i.product_id, 'quantity', i.quantity, 'notes', i.notes,
++           'modifier_option_ids', coalesce((select jsonb_agg(m.modifier_option_id order by m.modifier_option_id)
++                                              from public.whatsapp_order_draft_item_modifiers m where m.draft_item_id = i.id), '[]'::jsonb))
++           order by i.position)
++    into v_items from public.whatsapp_order_draft_items i where i.draft_id = v_d.id;
++  v_addr := case when v_d.fulfillment = 'delivery' then jsonb_build_object(
++              'street', v_d.addr_street, 'number', v_d.addr_number, 'complement', v_d.addr_complement, 'neighborhood', v_d.addr_neighborhood,
++              'city', v_d.addr_city, 'state', v_d.addr_state, 'cep', v_d.addr_cep, 'reference', v_d.addr_reference) end;
++  begin
++    v_res := public.create_delivery_order_engine(
++      v_company, null, 'whatsapp_ai', null, v_d.id, v_d.fulfillment, v_items, v_d.customer_id, v_d.contact_name, v_d.contact_phone,
++      null, v_addr, null, null, v_d.expected_method, v_d.cash_change_for, v_d.notes, 'whatsapp', v_conv, v_d.id);
++    -- defesa em profundidade: o que o motor gravou tem de ser IGUAL ao que o cliente confirmou
++    if (v_res ->> 'items_subtotal')::numeric is distinct from v_d.items_total
++       or coalesce((v_res ->> 'delivery_fee')::numeric, 0) is distinct from v_fee
++       or (v_res ->> 'replayed')::boolean then
++      raise exception 'totals_mismatch' using errcode = 'PT409';
++    end if;
++  exception when others then
++    v_err := sqlstate;
++    v_errmsg := sqlerrm;
++    v_res := null;
++  end;
++
++  if v_res is null then
++    if v_err = 'PT409' and (v_errmsg like 'Estoque insuficiente%' or v_errmsg like 'Este produto está indisponível%' or v_errmsg like 'Produto inativo%'
++                            or v_errmsg like 'Categoria do produto inativa%') then
++      -- corrida de estoque/disponibilidade entre a revalidação e o motor (não deveria ocorrer com os locks): volta a montar
++      update public.whatsapp_order_drafts
++         set status = 'collecting', version = version + 1, summary_version = null, summary_message_id = null
++       where id = v_d.id;
++      perform public.whatsapp_order_event(v_company, v_d.id, 'unavailable', jsonb_build_object('race', true));
++      return jsonb_build_object('result', 'needs_changes', 'price_changes', '[]'::jsonb, 'state', public.whatsapp_order_state(v_d.id));
++    end if;
++    update public.whatsapp_order_drafts set status = 'failed', failure_code = left('engine_' || coalesce(v_err, 'unknown'), 60) where id = v_d.id;
++    perform public.whatsapp_order_event(v_company, v_d.id, 'failed', jsonb_build_object('code', coalesce(v_err, 'unknown')));
++    return jsonb_build_object('result', 'failed', 'code', coalesce(v_err, 'unknown'));
++  end if;
++
++  update public.whatsapp_order_drafts
++     set status = 'confirmed', confirmed_at = now(), confirmed_by_message_id = p_confirm_message_id,
++         delivery_order_id = (v_res ->> 'delivery_order_id')::uuid, service_order_id = (v_res ->> 'service_order_id')::uuid
++   where id = v_d.id;
++  perform public.whatsapp_order_event(v_company, v_d.id, 'order_created',
++                                      jsonb_build_object('delivery_order_id', v_res ->> 'delivery_order_id', 'total', v_res -> 'total', 'fulfillment', v_d.fulfillment));
++  return jsonb_build_object('result', 'created', 'delivery_order_id', (v_res ->> 'delivery_order_id')::uuid,
++                            'service_order_id', (v_res ->> 'service_order_id')::uuid, 'total', v_res -> 'total',
++                            'fulfillment', v_d.fulfillment);
++end;
++$$;
++
++revoke execute on function public.whatsapp_order_confirm(uuid, uuid) from public, anon, authenticated;
++grant execute on function public.whatsapp_order_confirm(uuid, uuid) to service_role;

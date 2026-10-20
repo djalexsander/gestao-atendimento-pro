@@ -1,0 +1,1131 @@
+diff --git a/supabase/migrations/20261021050000_whatsapp_order_draft_rpcs.sql b/supabase/migrations/20261021050000_whatsapp_order_draft_rpcs.sql
+new file mode 100644
+index 0000000..635dc99
+--- /dev/null
++++ b/supabase/migrations/20261021050000_whatsapp_order_draft_rpcs.sql
+@@ -0,0 +1,1125 @@
++-- WhatsApp pedido conversacional — passo 4: RPCs do rascunho (resolver produto/opção, montar itens, endereço/zona, pagamento,
++-- resumo enviado, cancelar, expirar, leitura).
++--
++-- PRINCÍPIOS (todos testados):
++--   * ESCOPO POR JOB: toda RPC do worker recebe só o job. Empresa, conversa, contato e rascunho vêm do BANCO a partir do job
++--     (mesmo padrão das RPCs *_job do modo automático). O contexto exige o mesmo que o envio da resposta exige: job em
++--     processamento, conversa existente/não excluída/sem humano (ai_control=inherit, sem atribuído, não fechada), modo auto,
++--     módulos whatsapp e delivery e order_drafts_enabled=true.
++--   * O MODELO NÃO É FONTE DE NADA: produto e opção são resolvidos aqui por texto; ids, preço, taxa, zona, total e
++--     disponibilidade são do cadastro. Pedido oficial NÃO nasce aqui (só na confirmação, migration 20261021060000).
++--   * ORDEM DE LOCKS fixa (igual ao módulo): conversa -> job -> rascunho -> produtos (por id).
++--   * Rascunho aberto expira em 60 min DESLIZANTES desde a última atividade do CLIENTE (RPCs de montagem renovam; o envio do
++--     resumo e a leitura não renovam).
++--   * Toda RPC do worker: EXECUTE só para service_role. Helpers internos: EXECUTE para ninguém. Leitura da UI: authenticated.
++
++-- ---------------------------------------------------------------------------
++-- 1) Helpers internos (sem EXECUTE para nenhum papel)
++-- ---------------------------------------------------------------------------
++create function public.whatsapp_order_event(p_company_id uuid, p_draft_id uuid, p_type text, p_detail jsonb default '{}'::jsonb)
++returns void
++language sql
++security definer
++set search_path = public
++as $$
++  insert into public.whatsapp_order_draft_events (company_id, draft_id, event_type, detail)
++  values (p_company_id, p_draft_id, p_type, coalesce(p_detail, '{}'::jsonb));
++$$;
++
++-- Contexto do job (trava conversa e job NESTA ordem). ok=false => a RPC chamadora devolve result='blocked'.
++create function public.whatsapp_order_ctx(p_job_id uuid, p_expected_latest uuid default null)
++returns jsonb
++language plpgsql
++security definer
++set search_path = public
++as $$
++declare
++  v_conv_id uuid;
++  v_job public.whatsapp_ai_jobs;
++  v_conv public.whatsapp_conversations;
++  v_s public.company_whatsapp_ai_settings;
++  v_cust uuid;
++begin
++  select j.conversation_id into v_conv_id from public.whatsapp_ai_jobs j where j.id = p_job_id;
++  if v_conv_id is null then
++    return jsonb_build_object('ok', false, 'reason', 'job_not_found');
++  end if;
++  perform 1 from public.whatsapp_conversations c where c.id = v_conv_id for update;
++  select * into v_job from public.whatsapp_ai_jobs where id = p_job_id for update;
++  if not found or v_job.status <> 'processing' then
++    return jsonb_build_object('ok', false, 'reason', 'not_active');
++  end if;
++  -- CONTEXTO VELHO: entrou mensagem do cliente depois da que o worker leu. Nenhuma mutação do rascunho acontece com contexto
++  -- velho (senão o re-processamento da cauda duplicaria itens); o worker encerra o job e o seguinte lê tudo de novo.
++  if p_expected_latest is not null and v_job.latest_message_id is distinct from p_expected_latest then
++    return jsonb_build_object('ok', false, 'reason', 'stale_context');
++  end if;
++  select * into v_conv from public.whatsapp_conversations
++   where id = v_job.conversation_id and company_id = v_job.company_id and deleted_at is null;
++  if not found then
++    return jsonb_build_object('ok', false, 'reason', 'conversation_missing');
++  end if;
++  select * into v_s from public.company_whatsapp_ai_settings where company_id = v_job.company_id;
++  if not found
++     or public.whatsapp_ai_effective_mode(v_s.enabled, v_s.mode, v_s.ai_data_processing_acknowledged_at, v_s.auto_acknowledged_at) <> 'auto' then
++    return jsonb_build_object('ok', false, 'reason', 'mode_not_auto');
++  end if;
++  if not v_s.order_drafts_enabled then
++    return jsonb_build_object('ok', false, 'reason', 'order_drafts_disabled');
++  end if;
++  if not public.company_has_module(v_job.company_id, 'whatsapp') or not public.company_has_module(v_job.company_id, 'delivery') then
++    return jsonb_build_object('ok', false, 'reason', 'module_inactive');
++  end if;
++  if v_conv.ai_control <> 'inherit' or v_conv.assigned_user_id is not null then
++    return jsonb_build_object('ok', false, 'reason', 'human_control');
++  end if;
++  if v_conv.status = 'closed' then
++    return jsonb_build_object('ok', false, 'reason', 'conversation_closed');
++  end if;
++  -- cliente só entra se a conversa JÁ foi vinculada por um humano e o cadastro está ativo (nunca cria/mescla)
++  select c.id into v_cust from public.customers c
++   where c.company_id = v_conv.company_id and c.id = v_conv.customer_id and c.is_active;
++  return jsonb_build_object('ok', true, 'company_id', v_job.company_id, 'conversation_id', v_conv.id, 'job_id', v_job.id,
++    'latest_message_id', v_job.latest_message_id, 'contact_phone', v_conv.contact_phone,
++    'contact_name', nullif(btrim(coalesce(v_conv.contact_display_name, '')), ''), 'customer_id', v_cust);
++end;
++$$;
++
++-- Rascunho aberto da conversa, travado. Se venceu, vira 'expired' e devolve NULL.
++create function public.whatsapp_order_open_draft(p_company_id uuid, p_conversation_id uuid)
++returns public.whatsapp_order_drafts
++language plpgsql
++security definer
++set search_path = public
++as $$
++declare
++  v public.whatsapp_order_drafts;
++begin
++  select * into v from public.whatsapp_order_drafts d
++   where d.company_id = p_company_id and d.conversation_id = p_conversation_id and d.status in ('collecting', 'awaiting_confirmation')
++   for update;
++  if not found then
++    return null;
++  end if;
++  if v.expires_at <= now() then
++    update public.whatsapp_order_drafts set status = 'expired' where id = v.id;
++    perform public.whatsapp_order_event(v.company_id, v.id, 'expired', jsonb_build_object('by', 'lazy'));
++    return null;
++  end if;
++  return v;
++end;
++$$;
++
++-- Problemas de UM item, lidos do cadastro AGORA: indisponível, opções inválidas, grupos obrigatórios faltando, grupos acima do máximo.
++create function public.whatsapp_order_item_issues(p_item_id uuid)
++returns jsonb
++language plpgsql
++security definer
++set search_path = public
++as $$
++declare
++  v_i public.whatsapp_order_draft_items;
++  v_p public.products;
++  v_cat public.product_categories;
++  v_unavailable boolean;
++  v_bad boolean := false;
++  v_missing jsonb := '[]'::jsonb;
++  v_over jsonb := '[]'::jsonb;
++  v_g public.product_modifier_groups;
++  v_active integer;
++  v_cnt integer;
++  v_min integer;
++  v_max integer;
++  v_need integer;
++  v_opts jsonb;
++begin
++  select * into v_i from public.whatsapp_order_draft_items where id = p_item_id;
++  if not found then
++    return jsonb_build_object('unavailable', true, 'invalid_options', false, 'missing_groups', '[]'::jsonb, 'over_groups', '[]'::jsonb);
++  end if;
++  select * into v_p from public.products where company_id = v_i.company_id and id = v_i.product_id;
++  select * into v_cat from public.product_categories where company_id = v_i.company_id and id = v_p.category_id;
++  v_unavailable := v_p.id is null or not v_p.is_active or not v_p.available_for_sale or v_cat.id is null or not v_cat.is_active;
++  if not v_unavailable and v_p.stock_control = 'quantity' then
++    select coalesce(sum(x.quantity), 0) into v_need from public.whatsapp_order_draft_items x
++     where x.draft_id = v_i.draft_id and x.product_id = v_i.product_id;
++    if v_p.stock_quantity < v_need then
++      v_unavailable := true;
++    end if;
++  end if;
++
++  if exists (
++    select 1
++      from public.whatsapp_order_draft_item_modifiers m
++      join public.product_modifier_options o on o.company_id = m.company_id and o.id = m.modifier_option_id
++      join public.product_modifier_groups g on g.company_id = o.company_id and g.id = o.group_id
++     where m.draft_item_id = p_item_id
++       and (not o.is_active or not g.is_active or not exists (
++              select 1 from public.product_modifier_group_products l
++               where l.company_id = o.company_id and l.group_id = o.group_id and l.product_id = v_i.product_id))
++  ) then
++    v_bad := true;
++  end if;
++
++  for v_g in
++    select g.*
++      from public.product_modifier_groups g
++      join public.product_modifier_group_products l on l.company_id = g.company_id and l.group_id = g.id
++     where l.company_id = v_i.company_id and l.product_id = v_i.product_id and g.is_active
++     order by g.sort_order, g.name, g.id
++  loop
++    select count(*) into v_active from public.product_modifier_options o
++     where o.company_id = v_g.company_id and o.group_id = v_g.id and o.is_active;
++    select count(*) into v_cnt from public.whatsapp_order_draft_item_modifiers m
++     where m.draft_item_id = p_item_id and m.group_id = v_g.id;
++    -- grupo sem opção ativa nunca trava (mesma regra do pedido oficial)
++    v_min := least(v_g.min_selection, v_active);
++    v_max := case when v_g.selection_type = 'single' then 1 else v_g.max_selection end;
++    select coalesce(jsonb_agg(jsonb_build_object('option_id', o.id, 'name', o.name, 'price_delta', o.price_delta) order by o.sort_order, o.name, o.id), '[]'::jsonb)
++      into v_opts from public.product_modifier_options o
++     where o.company_id = v_g.company_id and o.group_id = v_g.id and o.is_active;
++    if v_cnt < v_min then
++      v_missing := v_missing || jsonb_build_array(jsonb_build_object('group_id', v_g.id, 'name', v_g.name, 'min', v_min, 'max', v_max, 'options', v_opts));
++    end if;
++    if v_max is not null and v_cnt > v_max then
++      v_over := v_over || jsonb_build_array(jsonb_build_object('group_id', v_g.id, 'name', v_g.name, 'max', v_max));
++    end if;
++  end loop;
++
++  return jsonb_build_object('unavailable', v_unavailable, 'invalid_options', v_bad, 'missing_groups', v_missing, 'over_groups', v_over);
++end;
++$$;
++
++-- Recalcula TUDO a partir do cadastro: preço (produto + opções), snapshots das opções, completude dos itens, totais e o troco.
++create function public.whatsapp_order_recalc(p_draft_id uuid)
++returns void
++language plpgsql
++security definer
++set search_path = public
++as $$
++declare
++  v_d public.whatsapp_order_drafts;
++  v_i record;
++  v_delta numeric(12, 2);
++  v_issues jsonb;
++  v_items numeric(12, 2);
++  v_fee numeric(12, 2);
++begin
++  select * into v_d from public.whatsapp_order_drafts where id = p_draft_id;
++  update public.whatsapp_order_draft_item_modifiers m
++     set group_name = g.name, option_name = o.name, modifier_type = o.modifier_type, price_delta = o.price_delta
++    from public.product_modifier_options o, public.product_modifier_groups g
++   where m.draft_id = p_draft_id and o.company_id = m.company_id and o.id = m.modifier_option_id
++     and g.company_id = o.company_id and g.id = o.group_id;
++  for v_i in select i.id, i.product_id from public.whatsapp_order_draft_items i where i.draft_id = p_draft_id loop
++    select coalesce(sum(m.price_delta), 0)::numeric(12, 2) into v_delta from public.whatsapp_order_draft_item_modifiers m where m.draft_item_id = v_i.id;
++    update public.whatsapp_order_draft_items i
++       set product_name_snapshot = p.name, unit_price_snapshot = p.sale_price + v_delta, modifiers_unit_total = v_delta
++      from public.products p
++     where i.id = v_i.id and p.company_id = i.company_id and p.id = i.product_id;
++    v_issues := public.whatsapp_order_item_issues(v_i.id);
++    update public.whatsapp_order_draft_items
++       set is_complete = (jsonb_array_length(v_issues -> 'missing_groups') = 0 and jsonb_array_length(v_issues -> 'over_groups') = 0
++                          and not (v_issues ->> 'invalid_options')::boolean)
++     where id = v_i.id;
++  end loop;
++  select coalesce(sum(line_total), 0)::numeric(12, 2) into v_items from public.whatsapp_order_draft_items where draft_id = p_draft_id;
++  v_fee := case when v_d.fulfillment = 'delivery' and v_d.fee_source = 'zone' then coalesce(v_d.delivery_fee, 0) else 0 end;
++  update public.whatsapp_order_drafts
++     set items_total = v_items,
++         grand_total = v_items + v_fee,
++         -- troco só vale se cobre o total NOVO; senão volta a ser uma pendência
++         cash_change_for = case when cash_change_for is not null and cash_change_for < v_items + v_fee then null else cash_change_for end,
++         cash_change_answered = case when cash_change_for is not null and cash_change_for < v_items + v_fee then false else cash_change_answered end
++   where id = p_draft_id;
++end;
++$$;
++
++-- Estado completo do rascunho (a IA e a UI só APRESENTAM isto; nada é calculado fora do banco).
++create function public.whatsapp_order_state(p_draft_id uuid)
++returns jsonb
++language plpgsql
++security definer
++set search_path = public
++as $$
++declare
++  d public.whatsapp_order_drafts;
++  v_settings jsonb;
++  v_methods text[];
++  v_items jsonb;
++  v_pend jsonb := '[]'::jsonb;
++  v_missing text[] := array[]::text[];
++  v_zone_name text;
++  v_city jsonb;
++  v_it record;
++  v_ready boolean;
++begin
++  select * into d from public.whatsapp_order_drafts where id = p_draft_id;
++  if not found then
++    return null;
++  end if;
++  v_settings := public.delivery_settings_effective(d.company_id);
++  select coalesce((select p.payment_methods from public.company_business_profile p where p.company_id = d.company_id), '{}'::text[]) into v_methods;
++  select z.name into v_zone_name from public.delivery_zones z where z.company_id = d.company_id and z.id = d.zone_id;
++  select case when count(distinct z.city_key) = 1 then jsonb_build_object('city', min(z.city)) end into v_city
++    from public.delivery_zones z where z.company_id = d.company_id and z.is_active;
++
++  select coalesce(jsonb_agg(jsonb_build_object(
++           'item_id', i.id, 'position', i.position, 'product_id', i.product_id, 'name', i.product_name_snapshot, 'quantity', i.quantity,
++           'unit_price', i.unit_price_snapshot, 'line_total', i.line_total, 'notes', i.notes, 'complete', i.is_complete,
++           'options', coalesce((select jsonb_agg(jsonb_build_object('option_id', m.modifier_option_id, 'group_id', m.group_id, 'group', m.group_name,
++                                  'name', m.option_name, 'price_delta', m.price_delta) order by m.group_name, m.option_name, m.id)
++                                 from public.whatsapp_order_draft_item_modifiers m where m.draft_item_id = i.id), '[]'::jsonb),
++           'issues', public.whatsapp_order_item_issues(i.id)) order by i.position), '[]'::jsonb)
++    into v_items from public.whatsapp_order_draft_items i where i.draft_id = d.id;
++
++  if jsonb_array_length(v_items) = 0 then
++    v_pend := v_pend || jsonb_build_array(jsonb_build_object('code', 'no_items'));
++  end if;
++  for v_it in select e as item from jsonb_array_elements(v_items) e loop
++    if (v_it.item -> 'issues' ->> 'unavailable')::boolean then
++      v_pend := v_pend || jsonb_build_array(jsonb_build_object('code', 'item_unavailable', 'item_id', v_it.item -> 'item_id', 'name', v_it.item -> 'name'));
++    end if;
++    if jsonb_array_length(v_it.item -> 'issues' -> 'missing_groups') > 0 then
++      v_pend := v_pend || jsonb_build_array(jsonb_build_object('code', 'item_options_required', 'item_id', v_it.item -> 'item_id',
++                                            'name', v_it.item -> 'name', 'groups', v_it.item -> 'issues' -> 'missing_groups'));
++    end if;
++    if jsonb_array_length(v_it.item -> 'issues' -> 'over_groups') > 0 or (v_it.item -> 'issues' ->> 'invalid_options')::boolean then
++      v_pend := v_pend || jsonb_build_array(jsonb_build_object('code', 'item_options_invalid', 'item_id', v_it.item -> 'item_id', 'name', v_it.item -> 'name'));
++    end if;
++  end loop;
++  if d.fulfillment is null then
++    v_pend := v_pend || jsonb_build_array(jsonb_build_object('code', 'fulfillment'));
++  end if;
++  if d.contact_name is null then
++    v_pend := v_pend || jsonb_build_array(jsonb_build_object('code', 'contact_name'));
++  end if;
++  if d.fulfillment = 'delivery' then
++    if not (v_settings ->> 'delivery_enabled')::boolean then
++      v_pend := v_pend || jsonb_build_array(jsonb_build_object('code', 'delivery_disabled'));
++    end if;
++    if d.addr_street is null then v_missing := array_append(v_missing, 'street'::text); end if;
++    if d.addr_neighborhood is null then v_missing := array_append(v_missing, 'neighborhood'::text); end if;
++    if d.addr_city is null then v_missing := array_append(v_missing, 'city'::text); end if;
++    if d.addr_state is null then v_missing := array_append(v_missing, 'state'::text); end if;
++    if cardinality(v_missing) > 0 then
++      v_pend := v_pend || jsonb_build_array(jsonb_build_object('code', 'address_incomplete', 'missing', to_jsonb(v_missing)));
++    elsif d.zone_id is null then
++      v_pend := v_pend || jsonb_build_array(jsonb_build_object('code', 'out_of_zone'));
++    end if;
++  elsif d.fulfillment = 'pickup' and not (v_settings ->> 'pickup_enabled')::boolean then
++    v_pend := v_pend || jsonb_build_array(jsonb_build_object('code', 'pickup_disabled'));
++  end if;
++  -- forma de pagamento: obrigatória quando a empresa autoriza alguma; e precisa CONTINUAR autorizada (a lista pode mudar)
++  if cardinality(v_methods) > 0 and (d.expected_method is null or d.expected_method <> all (v_methods)) then
++    v_pend := v_pend || jsonb_build_array(jsonb_build_object('code', 'payment_method'));
++  end if;
++  if d.expected_method = 'cash' and not d.cash_change_answered then
++    v_pend := v_pend || jsonb_build_array(jsonb_build_object('code', 'cash_change'));
++  end if;
++  v_ready := jsonb_array_length(v_pend) = 0;
++
++  return jsonb_build_object(
++    'draft_id', d.id, 'conversation_id', d.conversation_id, 'status', d.status, 'version', d.version, 'summary_version', d.summary_version,
++    'fulfillment', d.fulfillment, 'contact_name', d.contact_name, 'contact_phone', d.contact_phone,
++    'customer_linked', d.customer_id is not null, 'notes', d.notes,
++    'address', jsonb_build_object('street', d.addr_street, 'number', d.addr_number, 'complement', d.addr_complement,
++                                  'neighborhood', d.addr_neighborhood, 'city', d.addr_city, 'state', d.addr_state, 'cep', d.addr_cep,
++                                  'reference', d.addr_reference, 'city_inferred', d.addr_city_inferred),
++    'zone', case when d.zone_id is not null then jsonb_build_object('id', d.zone_id, 'name', v_zone_name) end,
++    'delivery_fee', d.delivery_fee, 'estimated_minutes', d.estimated_minutes,
++    'payment', jsonb_build_object('method', d.expected_method, 'change_for', d.cash_change_for, 'change_answered', d.cash_change_answered,
++                                  'authorized_methods', to_jsonb(v_methods)),
++    'items', v_items, 'items_total', d.items_total, 'grand_total', d.grand_total,
++    'pendings', v_pend, 'ready', v_ready, 'expires_at', d.expires_at,
++    'applied', jsonb_build_object('job_id', d.last_ops_job_id, 'tail_count', d.last_ops_tail_count),
++    'settings', jsonb_build_object('delivery_enabled', (v_settings ->> 'delivery_enabled')::boolean, 'pickup_enabled', (v_settings ->> 'pickup_enabled')::boolean,
++                                   'delivery_minutes', (v_settings ->> 'delivery_minutes')::integer, 'pickup_minutes', (v_settings ->> 'pickup_minutes')::integer,
++                                   'single_zone_city', v_city -> 'city'),
++    'confirmed', case when d.status = 'confirmed' then jsonb_build_object('delivery_order_id', d.delivery_order_id, 'service_order_id', d.service_order_id) end);
++end;
++$$;
++
++revoke execute on function public.whatsapp_order_event(uuid, uuid, text, jsonb) from public, anon, authenticated, service_role;
++revoke execute on function public.whatsapp_order_ctx(uuid, uuid) from public, anon, authenticated, service_role;
++revoke execute on function public.whatsapp_order_open_draft(uuid, uuid) from public, anon, authenticated, service_role;
++revoke execute on function public.whatsapp_order_item_issues(uuid) from public, anon, authenticated, service_role;
++revoke execute on function public.whatsapp_order_recalc(uuid) from public, anon, authenticated, service_role;
++revoke execute on function public.whatsapp_order_state(uuid) from public, anon, authenticated, service_role;
++
++-- ---------------------------------------------------------------------------
++-- 2) Leitura do estado (worker)
++-- ---------------------------------------------------------------------------
++create function public.whatsapp_order_get_state(p_job_id uuid)
++returns jsonb
++language plpgsql
++security definer
++set search_path = public
++as $$
++declare
++  v_ctx jsonb := public.whatsapp_order_ctx(p_job_id);
++  v_d public.whatsapp_order_drafts;
++begin
++  if not (v_ctx ->> 'ok')::boolean then
++    return jsonb_build_object('result', 'blocked', 'reason', v_ctx ->> 'reason');
++  end if;
++  v_d := public.whatsapp_order_open_draft((v_ctx ->> 'company_id')::uuid, (v_ctx ->> 'conversation_id')::uuid);
++  if v_d.id is null then
++    return jsonb_build_object('result', 'ok', 'state', null, 'latest_message_id', v_ctx -> 'latest_message_id');
++  end if;
++  return jsonb_build_object('result', 'ok', 'state', public.whatsapp_order_state(v_d.id), 'latest_message_id', v_ctx -> 'latest_message_id');
++end;
++$$;
++
++-- ---------------------------------------------------------------------------
++-- 3) Resolver produto e opção (por TEXTO; devolve ids/preço do cadastro)
++-- ---------------------------------------------------------------------------
++create function public.whatsapp_order_product_json(p_company_id uuid, p_product_id uuid)
++returns jsonb
++language sql
++stable
++security definer
++set search_path = public
++as $$
++  select jsonb_build_object(
++    'product_id', p.id, 'name', p.name, 'category', c.name, 'price', p.sale_price,
++    'available', p.available_for_sale and (p.stock_control = 'none' or p.stock_quantity > 0),
++    'groups', coalesce((
++      select jsonb_agg(jsonb_build_object(
++               'group_id', g.id, 'name', g.name, 'selection_type', g.selection_type, 'min', least(g.min_selection, (
++                 select count(*) from public.product_modifier_options o where o.company_id = g.company_id and o.group_id = g.id and o.is_active)),
++               'max', case when g.selection_type = 'single' then 1 else g.max_selection end,
++               'options', coalesce((select jsonb_agg(jsonb_build_object('option_id', o.id, 'name', o.name, 'price_delta', o.price_delta)
++                                                       order by o.sort_order, o.name, o.id)
++                                      from public.product_modifier_options o
++                                     where o.company_id = g.company_id and o.group_id = g.id and o.is_active), '[]'::jsonb))
++             order by g.sort_order, g.name, g.id)
++        from public.product_modifier_groups g
++        join public.product_modifier_group_products l on l.company_id = g.company_id and l.group_id = g.id
++       where l.company_id = p.company_id and l.product_id = p.id and g.is_active), '[]'::jsonb))
++  from public.products p
++  join public.product_categories c on c.company_id = p.company_id and c.id = p.category_id
++  where p.company_id = p_company_id and p.id = p_product_id;
++$$;
++revoke execute on function public.whatsapp_order_product_json(uuid, uuid) from public, anon, authenticated, service_role;
++
++create function public.whatsapp_order_resolve_item(p_job_id uuid, p_mention text, p_limit integer default 5)
++returns jsonb
++language plpgsql
++security definer
++set search_path = public
++as $$
++declare
++  v_ctx jsonb := public.whatsapp_order_ctx(p_job_id);
++  v_company uuid;
++  v_text text := left(btrim(coalesce(p_mention, '')), 120);
++  v_norm text;
++  v_req text[];
++  v_limit integer := least(greatest(coalesce(p_limit, 5), 1), 10);
++  v_ids uuid[];
++  v_exact uuid[];
++  v_near jsonb;
++  v_p jsonb;
++begin
++  if not (v_ctx ->> 'ok')::boolean then
++    return jsonb_build_object('result', 'blocked', 'reason', v_ctx ->> 'reason');
++  end if;
++  v_company := (v_ctx ->> 'company_id')::uuid;
++  v_norm := public.whatsapp_ai_norm_text(v_text);
++  select coalesce(array_agg(t), '{}'::text[]) into v_req
++    from jsonb_array_elements_text(public.whatsapp_ai_knowledge_query_terms(v_text) -> 'required') t;
++  if cardinality(v_req) = 0 then
++    return jsonb_build_object('result', 'none', 'near', '[]'::jsonb);
++  end if;
++
++  -- candidatos: produto ATIVO de categoria ATIVA cujo nome contém TODOS os termos do pedido
++  select coalesce(array_agg(x.id order by x.name, x.id), '{}'::uuid[]),
++         coalesce(array_agg(x.id order by x.name, x.id) filter (where x.nn = v_norm), '{}'::uuid[])
++    into v_ids, v_exact
++    from (
++      select p.id, p.name, public.whatsapp_ai_norm_text(p.name) as nn,
++             public.whatsapp_ai_knowledge_tokens(public.whatsapp_ai_norm_text(p.name)) as nt
++        from public.products p
++        join public.product_categories c on c.company_id = p.company_id and c.id = p.category_id and c.is_active
++       where p.company_id = v_company and p.is_active
++    ) x
++   where v_req <@ x.nt;
++
++  if cardinality(v_exact) = 1 then
++    v_ids := v_exact;
++  end if;
++  if cardinality(v_ids) = 0 then
++    select coalesce(jsonb_agg(jsonb_build_object('name', y.name, 'price', y.sale_price) order by y.name), '[]'::jsonb) into v_near
++      from (
++        select p.name, p.sale_price
++          from public.products p
++          join public.product_categories c on c.company_id = p.company_id and c.id = p.category_id and c.is_active
++         where p.company_id = v_company and p.is_active
++           and public.whatsapp_ai_knowledge_tokens(public.whatsapp_ai_norm_text(p.name)) && v_req
++         order by p.name limit 5
++      ) y;
++    return jsonb_build_object('result', 'none', 'near', v_near);
++  end if;
++  if cardinality(v_ids) = 1 then
++    v_p := public.whatsapp_order_product_json(v_company, v_ids[1]);
++    return jsonb_build_object('result', case when (v_p ->> 'available')::boolean then 'exact' else 'unavailable' end, 'product', v_p);
++  end if;
++  return jsonb_build_object('result', 'ambiguous',
++    'candidates', (select coalesce(jsonb_agg(public.whatsapp_order_product_json(v_company, i) order by ord), '[]'::jsonb)
++                     from unnest(v_ids[1:v_limit]) with ordinality as u(i, ord)),
++    'total_candidates', cardinality(v_ids));
++end;
++$$;
++
++create function public.whatsapp_order_resolve_option(p_job_id uuid, p_product_id uuid, p_mention text)
++returns jsonb
++language plpgsql
++security definer
++set search_path = public
++as $$
++declare
++  v_ctx jsonb := public.whatsapp_order_ctx(p_job_id);
++  v_company uuid;
++  v_text text := left(btrim(coalesce(p_mention, '')), 80);
++  v_norm text;
++  v_req text[];
++  v_all jsonb;
++  v_hits jsonb;
++  v_exact jsonb;
++begin
++  if not (v_ctx ->> 'ok')::boolean then
++    return jsonb_build_object('result', 'blocked', 'reason', v_ctx ->> 'reason');
++  end if;
++  v_company := (v_ctx ->> 'company_id')::uuid;
++  v_norm := public.whatsapp_ai_norm_text(v_text);
++  v_req := public.whatsapp_ai_knowledge_tokens(v_norm);
++  if cardinality(v_req) = 0 then
++    return jsonb_build_object('result', 'none');
++  end if;
++  select coalesce(jsonb_agg(jsonb_build_object('option_id', o.id, 'group_id', g.id, 'group', g.name, 'name', o.name, 'price_delta', o.price_delta,
++                                               'nn', public.whatsapp_ai_norm_text(o.name),
++                                               'nt', to_jsonb(public.whatsapp_ai_knowledge_tokens(public.whatsapp_ai_norm_text(o.name))))
++                            order by g.sort_order, o.sort_order, o.name, o.id), '[]'::jsonb)
++    into v_all
++    from public.product_modifier_options o
++    join public.product_modifier_groups g on g.company_id = o.company_id and g.id = o.group_id and g.is_active
++    join public.product_modifier_group_products l on l.company_id = g.company_id and l.group_id = g.id and l.product_id = p_product_id
++   where o.company_id = v_company and o.is_active;
++  select coalesce(jsonb_agg(e - 'nn' - 'nt'), '[]'::jsonb) into v_hits
++    from jsonb_array_elements(v_all) e
++   where v_req <@ (select array_agg(t) from jsonb_array_elements_text(e -> 'nt') t);
++  select coalesce(jsonb_agg(e - 'nn' - 'nt'), '[]'::jsonb) into v_exact
++    from jsonb_array_elements(v_all) e where e ->> 'nn' = v_norm;
++  if jsonb_array_length(v_exact) = 1 then
++    return jsonb_build_object('result', 'exact', 'option', v_exact -> 0);
++  end if;
++  if jsonb_array_length(v_hits) = 0 then
++    return jsonb_build_object('result', 'none');
++  end if;
++  if jsonb_array_length(v_hits) = 1 then
++    return jsonb_build_object('result', 'exact', 'option', v_hits -> 0);
++  end if;
++  return jsonb_build_object('result', 'ambiguous', 'candidates', v_hits);
++end;
++$$;
++
++-- ---------------------------------------------------------------------------
++-- 4) Montar o rascunho (lote atômico de operações: ou entra tudo, ou nada)
++-- ---------------------------------------------------------------------------
++-- ops: add_item{product_id,quantity,notes?,option_ids?} | set_quantity{item_id,quantity} | remove_item{item_id}
++--      | set_item_options{item_id,option_ids} | set_item_notes{item_id,notes} | set_fulfillment{value}
++--      | set_contact_name{value} | set_notes{value}. Lista vazia = só "tocar" (renova a validade).
++-- Erro de validação => result='invalid' com reason legível por máquina e NADA gravado (subtransação).
++create function public.whatsapp_order_apply_ops(p_job_id uuid, p_ops jsonb, p_expected_latest uuid default null, p_tail_count integer default null)
++returns jsonb
++language plpgsql
++security definer
++set search_path = public
++as $$
++declare
++  v_ctx jsonb := public.whatsapp_order_ctx(p_job_id, p_expected_latest);
++  v_company uuid;
++  v_conv uuid;
++  v_d public.whatsapp_order_drafts;
++  v_op jsonb;
++  v_idx integer := 0;
++  v_kind text;
++  v_applied integer := 0;
++  v_settings jsonb;
++  v_pid uuid;
++  v_qty integer;
++  v_notes text;
++  v_opts uuid[];
++  v_item public.whatsapp_order_draft_items;
++  v_prod public.products;
++  v_cat public.product_categories;
++  v_target uuid;
++  v_pos integer;
++  v_new_id uuid;
++  v_val text;
++begin
++  if not (v_ctx ->> 'ok')::boolean then
++    return jsonb_build_object('result', 'blocked', 'reason', v_ctx ->> 'reason');
++  end if;
++  if p_ops is null or jsonb_typeof(p_ops) <> 'array' or jsonb_array_length(p_ops) > 20 then
++    return jsonb_build_object('result', 'invalid', 'reason', 'ops');
++  end if;
++  v_company := (v_ctx ->> 'company_id')::uuid;
++  v_conv := (v_ctx ->> 'conversation_id')::uuid;
++  v_d := public.whatsapp_order_open_draft(v_company, v_conv);
++  if v_d.id is null and jsonb_array_length(p_ops) = 0 then
++    return jsonb_build_object('result', 'ok', 'state', null);
++  end if;
++
++  begin
++    if v_d.id is null then
++      if (select count(*) from public.whatsapp_order_drafts x where x.conversation_id = v_conv and x.created_at > now() - interval '1 hour') >= 10 then
++        return jsonb_build_object('result', 'blocked', 'reason', 'rate_limited');
++      end if;
++      insert into public.whatsapp_order_drafts (company_id, conversation_id, contact_name, contact_phone, customer_id)
++      values (v_company, v_conv, left(v_ctx ->> 'contact_name', 80), v_ctx ->> 'contact_phone', (v_ctx ->> 'customer_id')::uuid)
++      returning * into v_d;
++      perform public.whatsapp_order_event(v_company, v_d.id, 'draft_created', jsonb_build_object('customer_linked', v_d.customer_id is not null));
++    end if;
++    v_settings := public.delivery_settings_effective(v_company);
++
++    for v_op in select e from jsonb_array_elements(p_ops) e loop
++      v_idx := v_idx + 1;
++      v_kind := v_op ->> 'op';
++
++      if v_kind = 'add_item' then
++        v_pid := (v_op ->> 'product_id')::uuid;
++        if jsonb_typeof(v_op -> 'quantity') is distinct from 'number' then raise exception 'quantity' using errcode = 'PT400'; end if;
++        v_qty := (v_op ->> 'quantity')::numeric::integer;
++        if (v_op ->> 'quantity')::numeric <> v_qty or v_qty < 1 or v_qty > 50 then raise exception 'quantity' using errcode = 'PT400'; end if;
++        v_notes := nullif(btrim(v_op ->> 'notes'), '');
++        if v_notes is not null and char_length(v_notes) > 200 then raise exception 'notes' using errcode = 'PT400'; end if;
++        select coalesce(array_agg(distinct x::uuid order by x::uuid), '{}'::uuid[]) into v_opts
++          from jsonb_array_elements_text(coalesce(nullif(v_op -> 'option_ids', 'null'::jsonb), '[]'::jsonb)) x;
++        if cardinality(v_opts) > 30 then raise exception 'options' using errcode = 'PT400'; end if;
++        select * into v_prod from public.products where company_id = v_company and id = v_pid and is_active;
++        if not found then raise exception 'product_not_found' using errcode = 'PT400'; end if;
++        select * into v_cat from public.product_categories where company_id = v_company and id = v_prod.category_id;
++        if not found or not v_cat.is_active then raise exception 'product_not_found' using errcode = 'PT400'; end if;
++        if not v_prod.available_for_sale
++           or (v_prod.stock_control = 'quantity' and v_prod.stock_quantity < v_qty + coalesce((select sum(i.quantity) from public.whatsapp_order_draft_items i
++                                                                                                where i.draft_id = v_d.id and i.product_id = v_pid), 0)) then
++          raise exception 'product_unavailable' using errcode = 'PT400';
++        end if;
++        perform public.whatsapp_order_check_options(v_company, v_pid, v_opts);
++        -- mesma linha (produto, opções, observação) soma a quantidade
++        select i.id into v_target from public.whatsapp_order_draft_items i
++         where i.draft_id = v_d.id and i.product_id = v_pid and i.notes is not distinct from v_notes
++           and coalesce((select array_agg(m.modifier_option_id order by m.modifier_option_id) from public.whatsapp_order_draft_item_modifiers m
++                          where m.draft_item_id = i.id), '{}'::uuid[]) = v_opts
++         limit 1;
++        if v_target is not null then
++          update public.whatsapp_order_draft_items set quantity = quantity + v_qty where id = v_target;
++        else
++          if (select count(*) from public.whatsapp_order_draft_items i where i.draft_id = v_d.id) >= 30 then raise exception 'too_many_items' using errcode = 'PT400'; end if;
++          select coalesce(max(i.position), 0) + 1 into v_pos from public.whatsapp_order_draft_items i where i.draft_id = v_d.id;
++          insert into public.whatsapp_order_draft_items (company_id, draft_id, position, product_id, product_name_snapshot, quantity, unit_price_snapshot, notes)
++          values (v_company, v_d.id, v_pos, v_pid, v_prod.name, v_qty, v_prod.sale_price, v_notes) returning id into v_new_id;
++          insert into public.whatsapp_order_draft_item_modifiers (company_id, draft_id, draft_item_id, modifier_option_id, group_id, group_name, option_name, modifier_type, price_delta)
++          select v_company, v_d.id, v_new_id, o.id, g.id, g.name, o.name, o.modifier_type, o.price_delta
++            from public.product_modifier_options o join public.product_modifier_groups g on g.company_id = o.company_id and g.id = o.group_id
++           where o.company_id = v_company and o.id = any (v_opts);
++        end if;
++        perform public.whatsapp_order_event(v_company, v_d.id, 'item_added', jsonb_build_object('product_id', v_pid, 'quantity', v_qty, 'options', cardinality(v_opts)));
++
++      elsif v_kind in ('set_quantity', 'remove_item', 'set_item_options', 'set_item_notes') then
++        select * into v_item from public.whatsapp_order_draft_items where draft_id = v_d.id and id = (v_op ->> 'item_id')::uuid;
++        if not found then raise exception 'item_not_found' using errcode = 'PT400'; end if;
++        if v_kind = 'remove_item' then
++          delete from public.whatsapp_order_draft_items where id = v_item.id;
++          perform public.whatsapp_order_event(v_company, v_d.id, 'item_removed', jsonb_build_object('product_id', v_item.product_id));
++        elsif v_kind = 'set_quantity' then
++          if jsonb_typeof(v_op -> 'quantity') is distinct from 'number' then raise exception 'quantity' using errcode = 'PT400'; end if;
++          v_qty := (v_op ->> 'quantity')::numeric::integer;
++          if (v_op ->> 'quantity')::numeric <> v_qty or v_qty < 1 or v_qty > 50 then raise exception 'quantity' using errcode = 'PT400'; end if;
++          select * into v_prod from public.products where company_id = v_company and id = v_item.product_id;
++          if v_prod.stock_control = 'quantity' and v_prod.stock_quantity < v_qty + coalesce((select sum(i.quantity) from public.whatsapp_order_draft_items i
++                                                                                              where i.draft_id = v_d.id and i.product_id = v_item.product_id and i.id <> v_item.id), 0) then
++            raise exception 'product_unavailable' using errcode = 'PT400';
++          end if;
++          update public.whatsapp_order_draft_items set quantity = v_qty where id = v_item.id;
++          perform public.whatsapp_order_event(v_company, v_d.id, 'item_changed', jsonb_build_object('product_id', v_item.product_id, 'quantity', v_qty));
++        elsif v_kind = 'set_item_notes' then
++          v_notes := nullif(btrim(v_op ->> 'notes'), '');
++          if v_notes is not null and char_length(v_notes) > 200 then raise exception 'notes' using errcode = 'PT400'; end if;
++          update public.whatsapp_order_draft_items set notes = v_notes where id = v_item.id;
++          perform public.whatsapp_order_event(v_company, v_d.id, 'item_changed', jsonb_build_object('product_id', v_item.product_id, 'notes', v_notes is not null));
++        else
++          select coalesce(array_agg(distinct x::uuid order by x::uuid), '{}'::uuid[]) into v_opts
++            from jsonb_array_elements_text(coalesce(nullif(v_op -> 'option_ids', 'null'::jsonb), '[]'::jsonb)) x;
++          if cardinality(v_opts) > 30 then raise exception 'options' using errcode = 'PT400'; end if;
++          perform public.whatsapp_order_check_options(v_company, v_item.product_id, v_opts);
++          delete from public.whatsapp_order_draft_item_modifiers where draft_item_id = v_item.id;
++          insert into public.whatsapp_order_draft_item_modifiers (company_id, draft_id, draft_item_id, modifier_option_id, group_id, group_name, option_name, modifier_type, price_delta)
++          select v_company, v_d.id, v_item.id, o.id, g.id, g.name, o.name, o.modifier_type, o.price_delta
++            from public.product_modifier_options o join public.product_modifier_groups g on g.company_id = o.company_id and g.id = o.group_id
++           where o.company_id = v_company and o.id = any (v_opts);
++          perform public.whatsapp_order_event(v_company, v_d.id, 'modifier_set', jsonb_build_object('product_id', v_item.product_id, 'options', cardinality(v_opts)));
++        end if;
++
++      elsif v_kind = 'set_fulfillment' then
++        v_val := v_op ->> 'value';
++        if v_val not in ('pickup', 'delivery') then raise exception 'fulfillment' using errcode = 'PT400'; end if;
++        if v_val = 'delivery' and not (v_settings ->> 'delivery_enabled')::boolean then raise exception 'delivery_disabled' using errcode = 'PT400'; end if;
++        if v_val = 'pickup' and not (v_settings ->> 'pickup_enabled')::boolean then raise exception 'pickup_disabled' using errcode = 'PT400'; end if;
++        if v_val = 'pickup' then
++          update public.whatsapp_order_drafts
++             set fulfillment = 'pickup', addr_street = null, addr_number = null, addr_complement = null, addr_neighborhood = null, addr_city = null,
++                 addr_state = null, addr_cep = null, addr_reference = null, addr_city_inferred = false,
++                 zone_id = null, delivery_fee = null, fee_source = null, estimated_minutes = null
++           where id = v_d.id;
++        else
++          update public.whatsapp_order_drafts set fulfillment = 'delivery' where id = v_d.id;
++        end if;
++        perform public.whatsapp_order_event(v_company, v_d.id, 'fulfillment_set', jsonb_build_object('value', v_val));
++
++      elsif v_kind = 'set_contact_name' then
++        v_val := nullif(btrim(regexp_replace(coalesce(v_op ->> 'value', ''), '\s+', ' ', 'g')), '');
++        if v_val is null or char_length(v_val) > 80 then raise exception 'contact_name' using errcode = 'PT400'; end if;
++        update public.whatsapp_order_drafts set contact_name = v_val where id = v_d.id;
++        perform public.whatsapp_order_event(v_company, v_d.id, 'contact_set', '{}'::jsonb);
++
++      elsif v_kind = 'set_notes' then
++        v_val := nullif(btrim(v_op ->> 'value'), '');
++        if v_val is not null and char_length(v_val) > 300 then raise exception 'notes' using errcode = 'PT400'; end if;
++        update public.whatsapp_order_drafts set notes = v_val where id = v_d.id;
++        perform public.whatsapp_order_event(v_company, v_d.id, 'item_changed', jsonb_build_object('order_notes', v_val is not null));
++
++      else
++        raise exception 'op_unknown' using errcode = 'PT400';
++      end if;
++      v_applied := v_applied + 1;
++    end loop;
++
++    perform public.whatsapp_order_recalc(v_d.id);
++    -- atividade do CLIENTE renova a validade; qualquer mudança invalida o resumo anterior (volta a 'collecting')
++    update public.whatsapp_order_drafts
++       set version = case when v_applied > 0 then version + 1 else version end,
++           status = case when v_applied > 0 and status = 'awaiting_confirmation' then 'collecting' else status end,
++           summary_version = case when v_applied > 0 then null else summary_version end,
++           summary_message_id = case when v_applied > 0 then null else summary_message_id end,
++           last_customer_activity_at = now(),
++           expires_at = now() + interval '60 minutes',
++           last_ops_job_id = case when p_tail_count is not null then p_job_id else last_ops_job_id end,
++           last_ops_tail_count = case when p_tail_count is not null then p_tail_count else last_ops_tail_count end
++     where id = v_d.id;
++    return jsonb_build_object('result', 'ok', 'applied', v_applied, 'state', public.whatsapp_order_state(v_d.id));
++  exception
++    when sqlstate 'PT400' then
++      return jsonb_build_object('result', 'invalid', 'reason', sqlerrm, 'op_index', v_idx);
++    when invalid_text_representation or numeric_value_out_of_range or check_violation or unique_violation then
++      return jsonb_build_object('result', 'invalid', 'reason', 'invalid_value', 'op_index', v_idx);
++  end;
++end;
++$$;
++
++-- opções de um item: da empresa, ativas, de grupo ativo e VINCULADO ao produto; no máximo o limite do grupo
++create function public.whatsapp_order_check_options(p_company_id uuid, p_product_id uuid, p_option_ids uuid[])
++returns void
++language plpgsql
++stable
++security definer
++set search_path = public
++as $$
++begin
++  if cardinality(p_option_ids) = 0 then
++    return;
++  end if;
++  if (select count(*) from public.product_modifier_options o where o.company_id = p_company_id and o.id = any (p_option_ids)) <> cardinality(p_option_ids) then
++    raise exception 'option_not_found' using errcode = 'PT400';
++  end if;
++  if exists (
++    select 1 from public.product_modifier_options o
++      join public.product_modifier_groups g on g.company_id = o.company_id and g.id = o.group_id
++     where o.company_id = p_company_id and o.id = any (p_option_ids)
++       and (not o.is_active or not g.is_active or not exists (
++              select 1 from public.product_modifier_group_products l where l.company_id = o.company_id and l.group_id = o.group_id and l.product_id = p_product_id))
++  ) then
++    raise exception 'option_unavailable' using errcode = 'PT400';
++  end if;
++  if exists (
++    select 1 from public.product_modifier_options o
++      join public.product_modifier_groups g on g.company_id = o.company_id and g.id = o.group_id
++     where o.company_id = p_company_id and o.id = any (p_option_ids)
++     group by g.id, g.selection_type, g.max_selection
++    having count(*) > case when g.selection_type = 'single' then 1 else coalesce(g.max_selection, 1000) end
++  ) then
++    raise exception 'option_group_max' using errcode = 'PT400';
++  end if;
++end;
++$$;
++revoke execute on function public.whatsapp_order_check_options(uuid, uuid, uuid[]) from public, anon, authenticated, service_role;
++
++-- ---------------------------------------------------------------------------
++-- 5) Endereço (campos parciais) -> normalização oficial + ZONA ATIVA obrigatória (sem taxa padrão, sem taxa manual)
++-- ---------------------------------------------------------------------------
++create function public.whatsapp_order_set_address(p_job_id uuid, p_fields jsonb, p_expected_latest uuid default null, p_tail_count integer default null)
++returns jsonb
++language plpgsql
++security definer
++set search_path = public
++as $$
++declare
++  v_ctx jsonb := public.whatsapp_order_ctx(p_job_id, p_expected_latest);
++  v_company uuid;
++  v_d public.whatsapp_order_drafts;
++  v_settings jsonb;
++  v_k text;
++  v_street text; v_number text; v_comp text; v_neigh text; v_city text; v_state text; v_cep text; v_ref text; v_inferred boolean;
++  v_clean jsonb;
++  v_zone public.delivery_zones;
++  v_found boolean := false;
++  v_status text;
++  v_city_single text;
++begin
++  if not (v_ctx ->> 'ok')::boolean then
++    return jsonb_build_object('result', 'blocked', 'reason', v_ctx ->> 'reason');
++  end if;
++  if p_fields is null or jsonb_typeof(p_fields) <> 'object' then
++    return jsonb_build_object('result', 'invalid', 'reason', 'fields');
++  end if;
++  v_company := (v_ctx ->> 'company_id')::uuid;
++  v_d := public.whatsapp_order_open_draft(v_company, (v_ctx ->> 'conversation_id')::uuid);
++  if v_d.id is null then
++    return jsonb_build_object('result', 'invalid', 'reason', 'no_draft');
++  end if;
++  if v_d.fulfillment is distinct from 'delivery' then
++    return jsonb_build_object('result', 'invalid', 'reason', 'not_delivery');
++  end if;
++  v_settings := public.delivery_settings_effective(v_company);
++  if not (v_settings ->> 'delivery_enabled')::boolean then
++    return jsonb_build_object('result', 'invalid', 'reason', 'delivery_disabled');
++  end if;
++  for v_k in select jsonb_object_keys(p_fields) loop
++    if v_k not in ('street', 'number', 'complement', 'neighborhood', 'city', 'state', 'cep', 'reference') then
++      return jsonb_build_object('result', 'invalid', 'reason', 'field_unknown');
++    end if;
++  end loop;
++
++  -- mescla: campo presente (vazio = limpar) substitui; ausente mantém
++  v_street := case when p_fields ? 'street' then nullif(btrim(regexp_replace(coalesce(p_fields ->> 'street', ''), '\s+', ' ', 'g')), '') else v_d.addr_street end;
++  v_number := case when p_fields ? 'number' then nullif(btrim(regexp_replace(coalesce(p_fields ->> 'number', ''), '\s+', ' ', 'g')), '') else v_d.addr_number end;
++  v_comp := case when p_fields ? 'complement' then nullif(btrim(regexp_replace(coalesce(p_fields ->> 'complement', ''), '\s+', ' ', 'g')), '') else v_d.addr_complement end;
++  v_neigh := case when p_fields ? 'neighborhood' then nullif(btrim(regexp_replace(coalesce(p_fields ->> 'neighborhood', ''), '\s+', ' ', 'g')), '') else v_d.addr_neighborhood end;
++  v_city := case when p_fields ? 'city' then nullif(btrim(regexp_replace(coalesce(p_fields ->> 'city', ''), '\s+', ' ', 'g')), '') else v_d.addr_city end;
++  v_state := case when p_fields ? 'state' then nullif(upper(btrim(coalesce(p_fields ->> 'state', ''))), '') else v_d.addr_state end;
++  v_cep := case when p_fields ? 'cep' then nullif(regexp_replace(coalesce(p_fields ->> 'cep', ''), '\D', '', 'g'), '') else v_d.addr_cep end;
++  v_ref := case when p_fields ? 'reference' then nullif(btrim(regexp_replace(coalesce(p_fields ->> 'reference', ''), '\s+', ' ', 'g')), '') else v_d.addr_reference end;
++  v_inferred := case when p_fields ? 'city' and v_city is not null then false else v_d.addr_city_inferred end;
++
++  -- P2: a cidade só é inferida quando TODAS as zonas ativas são da mesma cidade (e aparece no resumo para o cliente confirmar).
++  -- A UF não existe no cadastro de zonas/empresa: nunca é inferida (a IA pergunta).
++  if v_city is null then
++    select case when count(distinct z.city_key) = 1 then min(z.city) end into v_city_single
++      from public.delivery_zones z where z.company_id = v_company and z.is_active;
++    if v_city_single is not null then
++      v_city := v_city_single; v_inferred := true;
++    end if;
++  end if;
++
++  begin
++    if v_street is not null and v_neigh is not null and v_city is not null and v_state is not null then
++      -- validação OFICIAL (rua, bairro, cidade, UF válida, CEP de 8 dígitos, limites)
++      v_clean := public.delivery_clean_address(null, v_cep, v_street, v_number, v_comp, v_neigh, v_city, v_state, v_ref, null, null);
++      select * into v_zone from public.delivery_zones z
++       where z.company_id = v_company and z.is_active
++         and z.city_key = public.delivery_norm_text(v_clean ->> 'city')
++         and z.neighborhood_key = public.delivery_norm_text(v_clean ->> 'neighborhood');
++      v_found := found;
++      update public.whatsapp_order_drafts
++         set addr_street = v_clean ->> 'street', addr_number = v_clean ->> 'number', addr_complement = v_clean ->> 'complement',
++             addr_neighborhood = v_clean ->> 'neighborhood', addr_city = v_clean ->> 'city', addr_state = v_clean ->> 'state',
++             addr_cep = v_clean ->> 'cep', addr_reference = v_clean ->> 'reference', addr_city_inferred = v_inferred,
++             zone_id = case when v_found then v_zone.id end, delivery_fee = case when v_found then v_zone.fee end,
++             fee_source = case when v_found then 'zone' end,
++             estimated_minutes = case when v_found then coalesce(v_zone.estimated_minutes, (v_settings ->> 'delivery_minutes')::integer) end
++       where id = v_d.id;
++      v_status := case when v_found then 'ok' else 'out_of_zone' end;
++      perform public.whatsapp_order_event(v_company, v_d.id, 'address_validated', jsonb_build_object('zone_found', v_found));
++    else
++      -- incompleto: guarda o que veio (limites do CHECK) e zera zona/taxa
++      update public.whatsapp_order_drafts
++         set addr_street = v_street, addr_number = v_number, addr_complement = v_comp, addr_neighborhood = v_neigh, addr_city = v_city,
++             addr_state = v_state, addr_cep = v_cep, addr_reference = v_ref, addr_city_inferred = v_inferred,
++             zone_id = null, delivery_fee = null, fee_source = null, estimated_minutes = null
++       where id = v_d.id;
++      v_status := 'incomplete';
++      perform public.whatsapp_order_event(v_company, v_d.id, 'address_set', '{}'::jsonb);
++    end if;
++  exception
++    when sqlstate 'PT400' then
++      return jsonb_build_object('result', 'invalid', 'reason', 'address_invalid', 'message', sqlerrm);
++    when check_violation or string_data_right_truncation then
++      return jsonb_build_object('result', 'invalid', 'reason', 'address_invalid');
++  end;
++
++  perform public.whatsapp_order_recalc(v_d.id);
++  update public.whatsapp_order_drafts
++     set version = version + 1,
++         status = case when status = 'awaiting_confirmation' then 'collecting' else status end,
++         summary_version = null, summary_message_id = null,
++         last_customer_activity_at = now(), expires_at = now() + interval '60 minutes',
++         last_ops_job_id = case when p_tail_count is not null then p_job_id else last_ops_job_id end,
++         last_ops_tail_count = case when p_tail_count is not null then p_tail_count else last_ops_tail_count end
++   where id = v_d.id;
++  return jsonb_build_object('result', 'ok', 'address_status', v_status, 'state', public.whatsapp_order_state(v_d.id));
++end;
++$$;
++
++-- ---------------------------------------------------------------------------
++-- 6) Pagamento: informação operacional (nenhuma cobrança)
++-- ---------------------------------------------------------------------------
++create function public.whatsapp_order_set_payment(
++  p_job_id uuid,
++  p_method text default null,
++  p_change_needed boolean default null,
++  p_change_for numeric default null,
++  p_expected_latest uuid default null,
++  p_tail_count integer default null
++)
++returns jsonb
++language plpgsql
++security definer
++set search_path = public
++as $$
++declare
++  v_ctx jsonb := public.whatsapp_order_ctx(p_job_id, p_expected_latest);
++  v_company uuid;
++  v_d public.whatsapp_order_drafts;
++  v_methods text[];
++  v_method text;
++  v_change numeric(12, 2);
++  v_answered boolean;
++begin
++  if not (v_ctx ->> 'ok')::boolean then
++    return jsonb_build_object('result', 'blocked', 'reason', v_ctx ->> 'reason');
++  end if;
++  v_company := (v_ctx ->> 'company_id')::uuid;
++  v_d := public.whatsapp_order_open_draft(v_company, (v_ctx ->> 'conversation_id')::uuid);
++  if v_d.id is null then
++    return jsonb_build_object('result', 'invalid', 'reason', 'no_draft');
++  end if;
++  select coalesce((select p.payment_methods from public.company_business_profile p where p.company_id = v_company), '{}'::text[]) into v_methods;
++  if cardinality(v_methods) = 0 then
++    return jsonb_build_object('result', 'invalid', 'reason', 'no_methods_configured');
++  end if;
++
++  v_method := coalesce(p_method, v_d.expected_method);
++  if p_method is not null and p_method <> all (v_methods) then
++    return jsonb_build_object('result', 'invalid', 'reason', 'method_not_authorized');
++  end if;
++  v_change := v_d.cash_change_for;
++  v_answered := v_d.cash_change_answered;
++  if p_method is not null and p_method is distinct from v_d.expected_method then
++    v_change := null; v_answered := false;            -- trocou de forma: a pergunta do troco recomeça
++  end if;
++  if v_method is distinct from 'cash' then
++    v_change := null; v_answered := false;
++  end if;
++  if p_change_needed is not null then
++    if v_method is distinct from 'cash' then
++      return jsonb_build_object('result', 'invalid', 'reason', 'change_needs_cash');
++    end if;
++    if p_change_needed then
++      if p_change_for is null or p_change_for <= 0 or p_change_for >= 100000000 or p_change_for <> round(p_change_for, 2) then
++        return jsonb_build_object('result', 'invalid', 'reason', 'change_value');
++      end if;
++      if p_change_for < v_d.grand_total then
++        return jsonb_build_object('result', 'invalid', 'reason', 'change_below_total', 'grand_total', v_d.grand_total);
++      end if;
++      v_change := p_change_for; v_answered := true;
++    else
++      v_change := null; v_answered := true;
++    end if;
++  end if;
++  update public.whatsapp_order_drafts
++     set expected_method = v_method, cash_change_for = v_change, cash_change_answered = v_answered,
++         version = version + 1, status = case when status = 'awaiting_confirmation' then 'collecting' else status end,
++         summary_version = null, summary_message_id = null,
++         last_customer_activity_at = now(), expires_at = now() + interval '60 minutes',
++         last_ops_job_id = case when p_tail_count is not null then p_job_id else last_ops_job_id end,
++         last_ops_tail_count = case when p_tail_count is not null then p_tail_count else last_ops_tail_count end
++   where id = v_d.id;
++  perform public.whatsapp_order_event(v_company, v_d.id, 'payment_set', jsonb_build_object('method', v_method, 'change', v_change is not null));
++  return jsonb_build_object('result', 'ok', 'state', public.whatsapp_order_state(v_d.id));
++end;
++$$;
++
++-- ---------------------------------------------------------------------------
++-- 7) Resumo ENVIADO (só vale depois que a mensagem do resumo existe e a versão ainda é a mesma)
++-- ---------------------------------------------------------------------------
++create function public.whatsapp_order_mark_summary_sent(p_job_id uuid, p_message_id uuid, p_expected_version integer, p_expected_latest uuid default null)
++returns jsonb
++language plpgsql
++security definer
++set search_path = public
++as $$
++declare
++  v_ctx jsonb := public.whatsapp_order_ctx(p_job_id, p_expected_latest);
++  v_company uuid;
++  v_d public.whatsapp_order_drafts;
++  v_state jsonb;
++  v_msg public.whatsapp_messages;
++begin
++  if not (v_ctx ->> 'ok')::boolean then
++    return jsonb_build_object('result', 'blocked', 'reason', v_ctx ->> 'reason');
++  end if;
++  v_company := (v_ctx ->> 'company_id')::uuid;
++  v_d := public.whatsapp_order_open_draft(v_company, (v_ctx ->> 'conversation_id')::uuid);
++  if v_d.id is null then
++    return jsonb_build_object('result', 'invalid', 'reason', 'no_draft');
++  end if;
++  if v_d.version <> p_expected_version then
++    return jsonb_build_object('result', 'stale', 'version', v_d.version);
++  end if;
++  select * into v_msg from public.whatsapp_messages
++   where id = p_message_id and company_id = v_company and conversation_id = v_d.conversation_id
++     and direction = 'outbound' and origin = 'ai_auto' and ai_job_id = p_job_id and status in ('queued', 'sent', 'delivered', 'read');
++  if not found then
++    return jsonb_build_object('result', 'invalid', 'reason', 'message');
++  end if;
++  v_state := public.whatsapp_order_state(v_d.id);
++  if not (v_state ->> 'ready')::boolean then
++    return jsonb_build_object('result', 'invalid', 'reason', 'pendings', 'pendings', v_state -> 'pendings');
++  end if;
++  -- não renova a validade: só a atividade do cliente renova
++  update public.whatsapp_order_drafts
++     set status = 'awaiting_confirmation', summary_version = version, summary_message_id = p_message_id
++   where id = v_d.id;
++  perform public.whatsapp_order_event(v_company, v_d.id, 'summary_sent', jsonb_build_object('version', v_d.version, 'total', v_d.grand_total));
++  return jsonb_build_object('result', 'ok', 'state', public.whatsapp_order_state(v_d.id));
++end;
++$$;
++
++-- ---------------------------------------------------------------------------
++-- 8) Cancelar antes da confirmação
++-- ---------------------------------------------------------------------------
++create function public.whatsapp_order_cancel(p_job_id uuid, p_expected_latest uuid default null)
++returns jsonb
++language plpgsql
++security definer
++set search_path = public
++as $$
++declare
++  v_ctx jsonb := public.whatsapp_order_ctx(p_job_id, p_expected_latest);
++  v_company uuid;
++  v_d public.whatsapp_order_drafts;
++  v_conf public.whatsapp_order_drafts;
++begin
++  if not (v_ctx ->> 'ok')::boolean then
++    return jsonb_build_object('result', 'blocked', 'reason', v_ctx ->> 'reason');
++  end if;
++  v_company := (v_ctx ->> 'company_id')::uuid;
++  v_d := public.whatsapp_order_open_draft(v_company, (v_ctx ->> 'conversation_id')::uuid);
++  if v_d.id is not null then
++    update public.whatsapp_order_drafts set status = 'cancelled' where id = v_d.id;
++    perform public.whatsapp_order_event(v_company, v_d.id, 'cancelled', '{}'::jsonb);
++    return jsonb_build_object('result', 'cancelled');
++  end if;
++  -- depois de pedido oficial a IA NÃO cancela: o chamador faz handoff
++  select * into v_conf from public.whatsapp_order_drafts
++   where company_id = v_company and conversation_id = (v_ctx ->> 'conversation_id')::uuid and status = 'confirmed'
++     and confirmed_at > now() - interval '24 hours'
++   order by confirmed_at desc limit 1;
++  if found then
++    return jsonb_build_object('result', 'already_confirmed', 'delivery_order_id', v_conf.delivery_order_id);
++  end if;
++  return jsonb_build_object('result', 'no_draft');
++end;
++$$;
++
++-- ---------------------------------------------------------------------------
++-- 9) Expiração (pg_cron; sem EXECUTE para nenhum papel)
++-- ---------------------------------------------------------------------------
++create function public.whatsapp_order_expire_due()
++returns integer
++language plpgsql
++security definer
++set search_path = public
++as $$
++declare
++  v_n integer := 0;
++begin
++  with due as (
++    -- SKIP LOCKED: se uma confirmação/edição está com o rascunho em mãos, a varredura NÃO espera (e não entra em ciclo de lock);
++    -- o rascunho é pego na próxima rodada (5 min) ou pelo vencimento preguiçoso de quem o abrir.
++    update public.whatsapp_order_drafts set status = 'expired'
++     where id in (select d.id from public.whatsapp_order_drafts d
++                   where d.status in ('collecting', 'awaiting_confirmation') and d.expires_at <= now()
++                   for update skip locked)
++    returning company_id, id
++  ), ev as (
++    insert into public.whatsapp_order_draft_events (company_id, draft_id, event_type, detail)
++    select company_id, id, 'expired', jsonb_build_object('by', 'cron') from due returning 1
++  )
++  select count(*) into v_n from due;
++  return v_n;
++end;
++$$;
++
++do $$
++begin
++  if exists (select 1 from pg_namespace where nspname = 'cron') then
++    perform cron.schedule('gap-whatsapp-order-expire', '*/5 * * * *', 'select public.whatsapp_order_expire_due()');
++  end if;
++end;
++$$;
++
++-- ---------------------------------------------------------------------------
++-- 10) Leitura da UI (atendente): rascunho aberto OU o último da conversa
++-- ---------------------------------------------------------------------------
++create function public.whatsapp_order_draft_get(p_conversation_id uuid)
++returns jsonb
++language plpgsql
++security definer
++set search_path = public
++as $$
++declare
++  v_conv public.whatsapp_conversations;
++  v_id uuid;
++begin
++  if auth.uid() is null then
++    raise exception 'Sessão inválida.' using errcode = 'PT401';
++  end if;
++  select * into v_conv from public.whatsapp_conversations where id = p_conversation_id and deleted_at is null;
++  if not found or public.user_role_in_company(v_conv.company_id) is null then
++    raise exception 'Conversa não encontrada.' using errcode = 'PT404';
++  end if;
++  perform public.whatsapp_assert_reader(v_conv.company_id);
++  select d.id into v_id from public.whatsapp_order_drafts d
++   where d.company_id = v_conv.company_id and d.conversation_id = v_conv.id
++   order by (d.status in ('collecting', 'awaiting_confirmation')) desc, d.created_at desc limit 1;
++  if v_id is null then
++    return null;
++  end if;
++  return public.whatsapp_order_state(v_id);
++end;
++$$;
++
++-- ---------------------------------------------------------------------------
++-- 11) ACL: RPCs do worker só para service_role; leitura da UI só para authenticated; varredura para ninguém
++-- ---------------------------------------------------------------------------
++revoke execute on function public.whatsapp_order_get_state(uuid) from public, anon, authenticated;
++revoke execute on function public.whatsapp_order_resolve_item(uuid, text, integer) from public, anon, authenticated;
++revoke execute on function public.whatsapp_order_resolve_option(uuid, uuid, text) from public, anon, authenticated;
++revoke execute on function public.whatsapp_order_apply_ops(uuid, jsonb, uuid, integer) from public, anon, authenticated;
++revoke execute on function public.whatsapp_order_set_address(uuid, jsonb, uuid, integer) from public, anon, authenticated;
++revoke execute on function public.whatsapp_order_set_payment(uuid, text, boolean, numeric, uuid, integer) from public, anon, authenticated;
++revoke execute on function public.whatsapp_order_mark_summary_sent(uuid, uuid, integer, uuid) from public, anon, authenticated;
++revoke execute on function public.whatsapp_order_cancel(uuid, uuid) from public, anon, authenticated;
++grant execute on function public.whatsapp_order_get_state(uuid) to service_role;
++grant execute on function public.whatsapp_order_resolve_item(uuid, text, integer) to service_role;
++grant execute on function public.whatsapp_order_resolve_option(uuid, uuid, text) to service_role;
++grant execute on function public.whatsapp_order_apply_ops(uuid, jsonb, uuid, integer) to service_role;
++grant execute on function public.whatsapp_order_set_address(uuid, jsonb, uuid, integer) to service_role;
++grant execute on function public.whatsapp_order_set_payment(uuid, text, boolean, numeric, uuid, integer) to service_role;
++grant execute on function public.whatsapp_order_mark_summary_sent(uuid, uuid, integer, uuid) to service_role;
++grant execute on function public.whatsapp_order_cancel(uuid, uuid) to service_role;
++revoke execute on function public.whatsapp_order_expire_due() from public, anon, authenticated, service_role;
++revoke execute on function public.whatsapp_order_draft_get(uuid) from public, anon, service_role;
++grant execute on function public.whatsapp_order_draft_get(uuid) to authenticated;
