@@ -383,7 +383,9 @@ const fulfillmentLabel = (f: string | null) => (f === "delivery" ? "entrega" : f
 const payWhen = (f: string | null) => (f === "delivery" ? "na entrega" : "na retirada");
 
 export function renderItemLine(it: OrderItem): string[] {
-  const out = [`${it.quantity}x ${plain(it.name, 80)} — ${brl(it.line_total)}`];
+  // quantidade > 1: mostra também o valor unitário (apresentação; = total da linha / quantidade, já calculado pelo banco)
+  const each = it.quantity > 1 ? ` — ${brl(Number(it.line_total) / it.quantity)} cada` : "";
+  const out = [`${it.quantity}x ${plain(it.name, 80)}${each} — ${brl(it.line_total)}`];
   if (it.options.length) out.push(`   com ${it.options.map((o) => plain(o.name, 40)).join(", ")}`);
   if (it.notes) out.push(`   obs.: ${plain(it.notes, 100)}`);
   return out;
