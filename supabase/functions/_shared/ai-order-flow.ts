@@ -11,8 +11,8 @@
 //  * Toda resposta ao cliente é template. "Pedido confirmado" só com result='created' vindo do banco.
 import { norm, type AutoMessage } from "./ai-auto.ts";
 import {
-  MSG_ALREADY_CONFIRMED, MSG_CANCEL_AFTER_ORDER, MSG_CANCELLED, MSG_FAILED, MSG_NOT_FOUND, MSG_NO_DRAFT, MSG_REPROMPT, MSG_TOO_BIG,
-  boundedTail, buildOrderSystemPrompt, buildOrderUserBlock, classifyConfirmationBatch, decideQuantity, hasOrderVerb, isCancelIntent, matchItem,
+  LEGACY_SHOW_OPTIONS_RE, MSG_ALREADY_CONFIRMED, MSG_CANCEL_AFTER_ORDER, MSG_CANCELLED, MSG_CHOICE_GIVEUP, MSG_FAILED, MSG_NOT_FOUND, MSG_NO_DRAFT, MSG_REPROMPT, MSG_TOO_BIG,
+  boundedTail, countChoiceAsks, parseChoiceQuestion, pickChoice, renderChoice, buildOrderSystemPrompt, buildOrderUserBlock, classifyConfirmationBatch, decideQuantity, hasOrderVerb, isCancelIntent, matchItem,
   nextQuestion, parseOrderState, plain, removalIntent, renderAmbiguous, renderAskQuantity, renderCreated, renderPriceChanges, renderSummary,
   renderUnavailable, renderZoneAmbiguous, startsWithQuantity, validateExtraction, brl, PAYMENT_LABELS,
   type ExtractedOp, type OrderState,
@@ -45,8 +45,8 @@ class FlowAbort extends Error { constructor(public outcome: string, public reaso
 
 const DISABLED_REASONS = new Set(["order_drafts_disabled", "mode_not_auto", "module_inactive"]);
 const EDIT_RE = /(alterar|mudar|trocar|tirar|tira|remover|retirar|adicionar|colocar|coloca) /;
-const OUR_QUESTION_RE = /^(quantos |atendemos mais de um bairro|qual voc[eê] prefere|para .*:|para a entrega|prefere retirada|ser[aá] (entrega|retirada)|como prefere pagar|vai precisar de troco|em nome de quem|o que voc[eê] gostaria|n[aã]o encontrei esse item|preciso rever|n[aã]o entregamos|no momento n[aã]o)/;
-const isOurQuestion = (t: string | null) => !!t && OUR_QUESTION_RE.test(norm(t).replace(/^anotei[^\n]*\n/, ""));
+const OUR_QUESTION_RE = /^(quantos |atendemos mais de um bairro|qual voc[eê] prefere|para .*:|para a entrega|prefere retirada|ser[aá] (entrega|retirada)|como prefere pagar|vai precisar de troco|em nome de quem|o que voc[eê] gostaria|n[aã]o encontrei esse item|n[aã]o encontrei exatamente|n[aã]o consegui identificar|para [^\n]*encontrei est|preciso rever|n[aã]o entregamos|no momento n[aã]o)/;
+const isOurQuestion = (t: string | null) => !!t && (OUR_QUESTION_RE.test(norm(t).replace(/^anotei[^\n]*\n/, "")) || !!parseChoiceQuestion(t));
 const isMissingFunction = (e: { code?: string; message: string }) => e.code === "42883" || e.code === "PGRST202" || /could not find the function|does not exist/i.test(e.message);
 
 interface Ack { kind: "add" | "remove" | "change"; text: string }
@@ -87,6 +87,31 @@ export async function runOrderFlow(io: OrderFlowIo, input: OrderFlowInput): Prom
       return { handled: false, active: true };
     }
 
+    let pendingChoiceBlock: string | null = null;
+    // 1b) resposta a uma pergunta de ESCOLHA nossa ("Para coca lata (2 unidades), encontrei estas opções: ..."): resolvida aqui, SEM
+    //     modelo, mantendo a quantidade que estava pendente. Nunca vira handoff por ambiguidade; só após 3 tentativas seguidas sem entender.
+    const choice = texts.length > 0 ? parseChoiceQuestion(lastBot) : null;
+    if (choice) {
+      const last = texts[texts.length - 1];
+      const pick = pickChoice(last, choice.options);
+      if (pick.kind === "one") {
+        const exec = await executeExtraction(io, input, state, [addOpFor(choice.options[pick.index], choice.qty)], `${joined} ${choice.qty ?? ""}`, true, inbound.length, lastBot);
+        if (exec.kind === "legacy") return { handled: false, active: true };
+        return { handled: true, outcome: await sendComposed(io, input, exec) };
+      }
+      // frase longa, com verbo de pedido ou quantidade: é OUTRA instrução (ex.: "quero também um guaraná") => segue para o extrator
+      const newInstruction = hasOrderVerb(last) || startsWithQuantity(last) || norm(last).replace(/[^a-z0-9 ]+/g, " ").trim().split(/\s+/).length > 4 || classifyConfirmationBatch([last]) === "confirm";
+      // várias opções compatíveis ("coca"): pergunta de novo sem chamar o modelo (ele perderia a quantidade pendente)
+      if (!newInstruction && pick.kind === "many") return { handled: true, outcome: await reaskChoice(io, input, choice.block) };
+      // nenhuma opção reconhecida: o extrator ainda pode entender outra instrução; se não entender nada, pergunta de novo
+      if (!newInstruction && pick.kind === "none") pendingChoiceBlock = choice.block;
+    }
+
+    // 1c) "sim" à pergunta ANTIGA "Quer que eu mostre as opções disponíveis?" (conversas que ainda a têm no histórico): mostra o cardápio real
+    if (texts.length > 0 && lastBot && LEGACY_SHOW_OPTIONS_RE.test(lastBot) && classifyConfirmationBatch(texts) === "ambiguous_ack") {
+      return { handled: true, outcome: await io.reply(await menuText(io, input), { outcome: "replied", reason: "order_question" }) };
+    }
+
     // 2a) "confirmar" SEM resumo pendente (repetido depois do pedido, ou antes de o resumo existir): o banco decide
     //     (already_confirmed / not_awaiting / no_draft); nunca cai no fluxo de conversa livre.
     if (texts.length > 0 && state?.status !== "awaiting_confirmation" && classifyConfirmationBatch(texts) === "confirm") {
@@ -101,11 +126,11 @@ export async function runOrderFlow(io: OrderFlowIo, input: OrderFlowInput): Prom
     }
 
     // 3) filtros do fluxo antigo que NÃO são do pedido
-    if (input.pre?.reason_code === "action_required" && !(state && EDIT_RE.test(norm(joined) + " "))) return { handled: false, active: true };
-    if (input.pre?.action === "ignore" && state && state.status === "collecting" && texts.length > 0) {
+    if (!pendingChoiceBlock && input.pre?.reason_code === "action_required" && !(state && EDIT_RE.test(norm(joined) + " "))) return { handled: false, active: true };
+    if (!pendingChoiceBlock && input.pre?.action === "ignore" && state && state.status === "collecting" && texts.length > 0) {
       return { handled: true, outcome: await respondFromState(io, input, state) };   // "ok" no meio da montagem: repete a pergunta
     }
-    if (input.pre?.action === "ignore") return { handled: false, active: true };
+    if (!pendingChoiceBlock && input.pre?.action === "ignore") return { handled: false, active: true };
 
     // D5: item só entra com intenção clara de pedido (verbo de pedido, quantidade no começo com pedido aberto, ou resposta a uma
     // pergunta nossa). Pergunta informativa ("tem espeto de carne?") nunca adiciona item.
@@ -127,8 +152,13 @@ export async function runOrderFlow(io: OrderFlowIo, input: OrderFlowInput): Prom
       return { handled: true, outcome: await io.complete("invalid_output", "invalid_output", { handled: latest, handoff: input.fallback }) };
     }
     const extraction = v.extraction;
+    if (pendingChoiceBlock && extraction.operations.length === 0) return { handled: true, outcome: await reaskChoice(io, input, pendingChoiceBlock) };
     if (!state && !extraction.order_intent) return { handled: false, active: true };
-    if (extraction.inquiry_only && extraction.operations.length === 0) return { handled: false, active: true };
+    if (extraction.inquiry_only && extraction.operations.length === 0) {
+      // "sim"/"ok" solto com pedido em montagem: repete o próximo passo do pedido (NUNCA cai no fluxo de conhecimento => handoff)
+      if (state && state.status === "collecting" && classifyConfirmationBatch(texts) === "ambiguous_ack") return { handled: true, outcome: await respondFromState(io, input, state) };
+      return { handled: false, active: true };
+    }
 
     const exec = await executeExtraction(io, input, state, extraction.operations, joined, orderish, inbound.length, lastBot);
     if (exec.kind === "legacy") return { handled: false, active: true };
@@ -269,8 +299,14 @@ async function executeExtraction(
         if (!orderish || !op.product_text) break;            // pergunta informativa NÃO adiciona item
         considered++;
         const rr = await resolveItem(op.product_text);
-        if (rr.result === "ambiguous") { const c = (rr.candidates as Array<{ name: string; price: number | string }>) ?? []; questions.push(renderAmbiguous(c)); break; }
-        if (rr.result === "none") { questions.push(MSG_NOT_FOUND); break; }
+        if (rr.result === "ambiguous" || rr.result === "none") {
+          // opções REAIS na mesma resposta (sem "quer que eu mostre?") e a quantidade pendente fica registrada na própria pergunta
+          const pend = decideQuantity(op, text);
+          const pq = pend.kind === "qty" ? pend.qty : null;
+          const c = ((rr.result === "ambiguous" ? rr.candidates : rr.near) as Array<{ name: string; price: number | string }> | undefined) ?? [];
+          questions.push(c.length > 0 ? renderChoice(op.product_text, pq, c, rr.result === "ambiguous" ? "ambiguous" : "near") : MSG_NOT_FOUND);
+          break;
+        }
         const prod = isObj(rr.product) ? rr.product : null;
         if (!prod) break;
         if (rr.result === "unavailable") { notes.push(renderUnavailable(String(prod.name))); break; }
@@ -424,6 +460,30 @@ async function executeExtraction(
     else if (r.reason === "change_value" || r.reason === "change_needs_cash") questions.push("Para quanto você precisa de troco?");
   }
   return { kind: "reply", state, acks, notes, questions };
+}
+
+/** Repete a lista de opções (até 3 perguntas seguidas); depois disso encaminha à equipe, sem laço infinito. */
+async function reaskChoice(io: OrderFlowIo, input: OrderFlowInput, block: string): Promise<string> {
+  if (countChoiceAsks(input.messages) >= 3) return io.reply(MSG_CHOICE_GIVEUP, { outcome: "handoff", reason: "order_unresolved" });
+  return io.reply(clampBody(`Não consegui identificar qual você quer.\n${block}`), { outcome: "replied", reason: "order_question" });
+}
+
+/** Operação sintética "adicionar item" para a escolha do cliente (texto = nome exato da opção; quantidade = a que ficou pendente). */
+function addOpFor(productText: string, qty: number | null): ExtractedOp {
+  return {
+    op: "add_item", product_text: productText, to_text: null, quantity: qty, quantity_kind: qty ? "explicit" : "unclear", options_text: [], notes: null, value: null,
+    needs_change: null, amount: null, street: null, number: null, complement: null, neighborhood: null, city: null, state: null, cep: null, reference: null,
+  };
+}
+
+/** Cardápio real (categorias) para o "sim" a "Quer que eu mostre as opções?"; sem base de conhecimento: pede o nome do item. */
+async function menuText(io: OrderFlowIo, input: OrderFlowInput): Promise<string> {
+  const r = await io.rpc("whatsapp_ai_lookup_knowledge_job", { p_job_id: input.jobId, p_query: "cardápio", p_limit: 8 });
+  const cats = r.error || !isObj(r.data) || r.data.enabled !== true || !Array.isArray(r.data.categories)
+    ? []
+    : (r.data.categories as unknown[]).map((c) => (isObj(c) && typeof c.name === "string" ? plain(c.name, 40) : "")).filter(Boolean).slice(0, 12);
+  return cats.length > 0 ? `Nosso cardápio tem: ${cats.join(", ")}.
+Diga o item que você quer (por exemplo, "2 coca zero") e eu anoto.` : "Claro! Diga o nome do item que você quer e eu anoto.";
 }
 
 function mapInvalid(reason: string, u: Unit, notes: string[], questions: string[]): void {

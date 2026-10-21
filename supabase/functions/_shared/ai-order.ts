@@ -398,7 +398,10 @@ export function matchItem(items: OrderItem[], text: string | null): ItemMatch {
 // Templates (nada de texto livre do modelo)
 // ---------------------------------------------------------------------------
 export const MSG_REPROMPT = "Para enviar o pedido, responda CONFIRMAR. Se quiser alterar algo, é só me dizer.";
-export const MSG_NOT_FOUND = "Não encontrei esse item no cardápio. Quer que eu mostre as opções disponíveis?";
+export const MSG_NOT_FOUND = "Não encontrei esse item no cardápio. Pode me dizer o nome de outro item?";
+/** Pergunta ANTIGA (já presente em conversas existentes): "Quer que eu mostre as opções disponíveis?". Um "sim" a ela mostra o cardápio. */
+export const LEGACY_SHOW_OPTIONS_RE = /quer que eu mostre as op[cç][oõ]es/i;
+export const MSG_CHOICE_GIVEUP = "Não consegui identificar qual item você quer. Vou chamar a equipe para ajudar.";
 export const MSG_NO_DRAFT = "Não encontrei um pedido em andamento. Quer fazer um pedido?";
 export const MSG_CANCELLED = "Pedido cancelado. Se quiser fazer outro, é só me dizer.";
 export const MSG_CANCEL_AFTER_ORDER = "Seu pedido já foi enviado para produção, então não consigo cancelar por aqui. Vou chamar a equipe para ajudar.";
@@ -500,6 +503,81 @@ export function renderPriceChanges(changes: Array<{ name: string; old: number | 
   if (oldFee !== null && newFee !== null && Number(oldFee) !== Number(newFee)) lines.push(`A taxa de entrega mudou de ${brl(oldFee)} para ${brl(newFee)}.`);
   lines.push(`O novo total é ${brl(newTotal)}.`);
   return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Escolha entre opções REAIS (ambiguidade / item parecido). A pergunta carrega a QUANTIDADE ("(2 unidades)") e as opções, então
+// a resposta do cliente ("Coca Zero", "2", "a primeira") é resolvida SEM modelo e sem perder a quantidade (stateless: o estado é a
+// própria última mensagem nossa).
+// ---------------------------------------------------------------------------
+export interface ChoiceOption { name: string; price: number | string }
+export function renderChoice(mention: string, qty: number | null, cands: ChoiceOption[], kind: "ambiguous" | "near"): string {
+  const opts = cands.slice(0, 5);
+  const m = plain(mention, 50);
+  const q = qty && qty > 0 ? ` (${qty} ${qty === 1 ? "unidade" : "unidades"})` : "";
+  const lead = kind === "near"
+    ? `Não encontrei exatamente ${m}${q}. Opções parecidas:`
+    : opts.length === 1 ? `Para ${m}${q}, encontrei esta opção:` : `Para ${m}${q}, encontrei estas opções:`;
+  return [lead, ...opts.map((c) => `• ${plain(c.name, 80)} — ${brl(c.price)}`), opts.length === 1 ? "É essa que você quer?" : "Qual você prefere?"].join("\n");
+}
+
+export interface ChoiceQuestion { qty: number | null; options: string[]; block: string }
+/** A última mensagem NOSSA é uma pergunta de escolha (renderChoice)? Devolve quantidade pendente, nomes das opções e o bloco para repetir. */
+export function parseChoiceQuestion(text: string | null): ChoiceQuestion | null {
+  if (!text) return null;
+  const lines = text.split("\n");
+  const lead = lines.findIndex((l) => /(encontrei estas? op[cç](?:[oõ]es|[aã]o):|op[cç][oõ]es parecidas:)\s*$/i.test(l));
+  if (lead < 0) return null;
+  const options: string[] = [];
+  for (const l of lines.slice(lead + 1)) {
+    const m = /^•\s+(.+?)\s+—\s+R\$\s*[\d.,]+\s*$/.exec(l);
+    if (m) options.push(m[1]);
+  }
+  if (options.length === 0) return null;
+  const q = /\((\d{1,3}) unidades?\)/.exec(lines[lead]);
+  return { qty: q ? Number(q[1]) : null, options, block: lines.slice(lead).join("\n") };
+}
+/** Quantas perguntas de escolha NOSSAS seguidas (sem outra mensagem nossa no meio) terminam o histórico: limita o laço de re-perguntas. */
+export function countChoiceAsks(messages: Array<{ direction: string; text: string }>): number {
+  let n = 0;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].direction !== "outbound") continue;
+    if (parseChoiceQuestion(messages[i].text)) n++;
+    else break;
+  }
+  return n;
+}
+
+const CHOICE_FILLER = new Set(["quero", "prefiro", "vou", "querer", "pode", "ser", "essa", "esse", "opcao", "numero", "entao", "ai", "mesmo", "favor", "pf", "pfv", "sim"]);
+const DIET_TOKENS = new Set(["zero", "diet", "light"]);
+const NORMALISH = new Set(["normal", "tradicional", "comum"]);
+const ORDINALS: Record<string, number> = { primeira: 1, primeiro: 1, segunda: 2, segundo: 2, terceira: 3, terceiro: 3, quarta: 4, quarto: 4, quinta: 5, quinto: 5 };
+export type ChoicePick = { kind: "one"; index: number } | { kind: "many" } | { kind: "none" };
+/**
+ * Qual das opções o cliente escolheu? Determinístico e conservador: número ("2", "a 2"), ordinal ("a segunda"), nome (todos os termos
+ * da resposta existem no nome da opção) ou "normal/tradicional/comum" (a única opção SEM zero/diet/light). Mais de uma compatível
+ * => many (pergunta de novo); nenhuma => none. Com UMA opção só, "sim"/"essa" confirmam.
+ */
+export function pickChoice(reply: string, options: string[]): ChoicePick {
+  const f = flat(reply);
+  if (!f || options.length === 0) return { kind: "none" };
+  const num = /^(?:a |o |opcao |numero )?(\d{1,2})$/.exec(f);
+  if (num) { const i = Number(num[1]) - 1; return i >= 0 && i < options.length ? { kind: "one", index: i } : { kind: "none" }; }
+  const w0 = f.split(" ").filter((w) => !["a", "o"].includes(w));
+  if (w0.length === 1 && w0[0] in ORDINALS) { const i = ORDINALS[w0[0]] - 1; return i < options.length ? { kind: "one", index: i } : { kind: "none" }; }
+  if (w0.length === 1 && (w0[0] === "ultima" || w0[0] === "ultimo")) return { kind: "one", index: options.length - 1 };
+  if (options.length === 1 && /^(sim|quero|essa|esse|isso|claro|pode ser|pode|isso mesmo|quero sim|essa mesmo)$/.test(f)) return { kind: "one", index: 0 };
+  let toks = tokenize(reply).filter((t) => !CHOICE_FILLER.has(t));
+  const normalish = toks.some((t) => NORMALISH.has(t));
+  toks = toks.filter((t) => !NORMALISH.has(t));
+  if (toks.length === 0 && !normalish) return { kind: "none" };
+  const tokOf = options.map((o) => tokenize(o));
+  const hits: number[] = [];
+  options.forEach((_, i) => {
+    if (normalish && tokOf[i].some((t) => DIET_TOKENS.has(t))) return;
+    if (toks.every((t) => tokOf[i].includes(t))) hits.push(i);
+  });
+  return hits.length === 1 ? { kind: "one", index: hits[0] } : hits.length === 0 ? { kind: "none" } : { kind: "many" };
 }
 
 export function renderAmbiguous(candidates: Array<{ name: string; price: number | string }>): string {
