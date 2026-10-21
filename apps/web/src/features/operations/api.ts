@@ -2,6 +2,8 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabaseClient";
 import type { OpenSession, ServicePanelData } from "./panel";
 import { toReceivable, type DeliveryReceivable, type RawReceivable } from "./deliveryReceivables";
+import { describeOrderError } from "../orders/ordersLogic";
+import { toSettlementGroup, toSettlementResult, type RawSettlementGroup, type SettlementGroup, type SettlementResult } from "./courierSettlement";
 
 const LOAD_ERROR = "Não foi possível carregar as comandas e mesas agora. Tente novamente.";
 const OPEN_ERROR = "Não foi possível abrir o atendimento agora. Tente novamente.";
@@ -21,6 +23,12 @@ export interface ServicePanelSource {
   // Caixa: contas de delivery/retirada (pendentes de QUALQUER data + pagas recentes). Opcional: só o Caixa usa.
   // `hidden` = a empresa não usa o módulo ou o papel não recebe (a seção simplesmente não aparece).
   loadReceivables?(companyId: string): Promise<{ data: DeliveryReceivable[] | null; error: string | null; hidden: boolean }>;
+  // Caixa (Fase 4B): recebimentos em custódia dos entregadores, por entregador. `hidden` = papel sem acesso ou módulo desligado.
+  loadSettlements?(companyId: string): Promise<{ data: SettlementGroup[] | null; error: string | null; hidden: boolean }>;
+  // Confirma o acerto dos recibos escolhidos (o servidor usa o fechamento oficial; PT412 = abra o caixa). MESMO requestId = mesma operação.
+  settleCourier?(companyId: string, courierUserId: string, receiptIds: string[], requestId: string): Promise<{ data: SettlementResult | null; error: string | null; needsCash: boolean }>;
+  // Owner/admin: anula um recebimento ANTES do acerto (histórico mantido).
+  voidCourierReceipt?(receiptId: string, reason: string): Promise<{ error: string | null }>;
   // Avisa (sem dados) quando um atendimento da empresa é aberto/fechado em qualquer aparelho.
   // Devolve a função que encerra a assinatura. Opcional: fontes simuladas podem não ter.
   subscribe?(companyId: string, onChange: () => void): () => void;
@@ -52,6 +60,39 @@ export const supabaseServicePanelSource: ServicePanelSource = {
       return { data: null, error: hidden ? null : "Não foi possível carregar delivery e retirada agora.", hidden };
     }
     return { data: ((data ?? []) as RawReceivable[]).map(toReceivable), error: null, hidden: false };
+  },
+
+  async loadSettlements(companyId) {
+    const { data, error } = await supabase.rpc("list_courier_settlements", { p_company_id: companyId });
+    if (error) {
+      const hidden = !!error.code?.startsWith("PT");
+      if (!hidden) console.error("Falha ao carregar o acerto de entregadores:", error.code ?? error.message);
+      return { data: null, error: hidden ? null : "Não foi possível carregar o acerto de entregadores agora.", hidden };
+    }
+    return { data: ((data ?? []) as RawSettlementGroup[]).map(toSettlementGroup), error: null, hidden: false };
+  },
+
+  async settleCourier(companyId, courierUserId, receiptIds, requestId) {
+    const { data, error } = await supabase.rpc("settle_courier_receipts", {
+      p_company_id: companyId,
+      p_courier_user_id: courierUserId,
+      p_receipt_ids: receiptIds,
+      p_client_request_id: requestId,
+    });
+    if (error) {
+      console.error("Falha ao confirmar o acerto:", error.code ?? "sem código");
+      return { data: null, error: describeOrderError(error, "Não foi possível confirmar o acerto agora. Tente novamente."), needsCash: error.code === "PT412" };
+    }
+    return { data: toSettlementResult(data as Parameters<typeof toSettlementResult>[0]), error: null, needsCash: false };
+  },
+
+  async voidCourierReceipt(receiptId, reason) {
+    const { error } = await supabase.rpc("void_courier_receipt", { p_receipt_id: receiptId, p_reason: reason });
+    if (error) {
+      console.error("Falha ao anular o recebimento:", error.code ?? "sem código");
+      return { error: describeOrderError(error, "Não foi possível anular o recebimento agora.") };
+    }
+    return { error: null };
   },
 
   async open(pointId, customerName, customerId) {
@@ -112,6 +153,15 @@ export const supabaseServicePanelSource: ServicePanelSource = {
           { event: "*", schema: "public", table: "delivery_orders", filter: `company_id=eq.${companyId}` },
           () => {
             rtLog("delivery_orders change received");
+            onChange();
+          },
+        )
+        // recebimento do entregador / acerto: o card "Com entregador" e a fila de acerto mudam
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "delivery_courier_receipts", filter: `company_id=eq.${companyId}` },
+          () => {
+            rtLog("delivery_courier_receipts change received");
             onChange();
           },
         )

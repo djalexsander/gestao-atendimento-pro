@@ -68,6 +68,8 @@ export interface DeliverySource {
   create(args: CreateArgs): Promise<Result<CreatedDelivery>>;
   setStatus(deliveryOrderId: string, status: "out_for_delivery" | "delivered" | "picked_up"): Promise<Result<null>>;
   cancel(deliveryOrderId: string, reason: string): Promise<Result<null>>;
+  // Entregador: registra o recebimento (custódia; NADA entra no caixa até o acerto). O MESMO requestId em nova tentativa nunca duplica.
+  registerCourierPayment(deliveryOrderId: string, method: string, amountReceived: number | null, requestId: string): Promise<Result<null>>;
   assignCourier(deliveryOrderId: string, courierUserId: string | null): Promise<Result<null>>;
   couriers(companyId: string): Promise<Result<CourierOption[]>>;
   quote(companyId: string, fulfillment: Fulfillment, city: string | null, neighborhood: string | null): Promise<Result<DeliveryQuote>>;
@@ -175,6 +177,17 @@ export const supabaseDeliverySource: DeliverySource = {
   async setStatus(deliveryOrderId, status) {
     const { error } = await supabase.rpc("set_delivery_status", { p_delivery_order_id: deliveryOrderId, p_status: status, p_note: null });
     return error ? fail(error) : { data: null, error: null };
+  },
+
+  async registerCourierPayment(deliveryOrderId, method, amountReceived, requestId) {
+    const { error } = await supabase.rpc("courier_register_payment", {
+      p_delivery_order_id: deliveryOrderId,
+      p_method: method,
+      p_amount_received: amountReceived,
+      p_client_request_id: requestId,
+      p_note: null,
+    });
+    return error ? fail(error, "Não foi possível registrar o recebimento agora. Tente novamente.") : { data: null, error: null };
   },
 
   async cancel(deliveryOrderId, reason) {

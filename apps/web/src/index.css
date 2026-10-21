@@ -5446,3 +5446,20 @@ button {
 .op-fin-pending { color: var(--warning); border-color: var(--warning); }
 .op-fin-paid { color: var(--success); border-color: var(--success); }
 .op-fin-refunded, .op-fin-no_charge { color: var(--text-muted); }
+.op-fin-custody { color: var(--accent, #2563eb); border-color: var(--accent, #2563eb); }
+.op-card-fin-custody { border-left: 3px solid var(--accent, #2563eb); }
+.dl-pay-held { border: 1px solid var(--accent, #2563eb); border-radius: 10px; padding: 12px; background: var(--surface-2, transparent); }
+.dl-pay-paid { border: 1px solid var(--success); border-radius: 10px; padding: 12px; }
+.dl-pay-register { border: 1px solid var(--border); border-radius: 10px; padding: 12px; display: grid; gap: 10px; }
+.dl-pay-line { margin-top: 6px; }
+.dl-pay-button { width: 100%; min-height: 48px; }
+.modal:has(.dl-settle) { max-width: 640px; }
+.dl-settle { display: grid; gap: 12px; min-width: 0; }
+.dl-settle-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; max-height: 50vh; overflow: auto; }
+.dl-settle-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.dl-settle-check { display: flex; gap: 10px; align-items: flex-start; flex: 1 1 220px; min-width: 0; }
+.dl-settle-check input { margin-top: 4px; width: 20px; height: 20px; }
+.dl-settle-amount { white-space: nowrap; }
+.dl-settle-void { display: flex; flex-wrap: wrap; gap: 8px; flex: 1 1 100%; }
+.dl-settle-void input { flex: 1 1 200px; min-width: 0; }
+.dl-settle-total { font-size: 1.1rem; }

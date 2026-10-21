@@ -1,7 +1,7 @@
 // Delivery / Retirada no Caixa (Fase 4A): lógica PURA das contas de delivery/retirada mostradas junto das comandas/mesas.
 // Não há financeiro paralelo: o status financeiro é DERIVADO no banco (list_delivery_receivables) a partir da sessão e dos
 // pagamentos oficiais; aqui só se tipa, se filtra, se busca e se rotula.
-import { FINANCIAL_LABEL, LOGISTIC_LABEL, METHOD_LABEL, type ExpectedMethod, type FinancialStatus, type LogisticStatus } from "../delivery/deliveryLogic";
+import { CUSTODY_LABEL, FINANCIAL_LABEL, LOGISTIC_LABEL, METHOD_LABEL, toCustody, type CourierCustody, type ExpectedMethod, type FinancialStatus, type LogisticStatus, type RawCourierCustody } from "../delivery/deliveryLogic";
 
 export interface RawReceivable {
   delivery_order_id: string;
@@ -25,6 +25,7 @@ export interface RawReceivable {
   delivered_at: string | null;
   picked_up_at: string | null;
   closed_at: string | null;
+  courier_custody?: RawCourierCustody | null;
 }
 
 export interface DeliveryReceivable {
@@ -48,6 +49,8 @@ export interface DeliveryReceivable {
   deliveredAt: string | null;
   pickedUpAt: string | null;
   closedAt: string | null;
+  /** Recebido pelo entregador e ainda NÃO acertado no Caixa (continua "pendente" no financeiro oficial). */
+  courierCustody: CourierCustody | null;
 }
 
 const num = (v: number | string | null | undefined): number => Number(v ?? 0);
@@ -74,18 +77,20 @@ export function toReceivable(r: RawReceivable): DeliveryReceivable {
     deliveredAt: r.delivered_at,
     pickedUpAt: r.picked_up_at,
     closedAt: r.closed_at,
+    courierCustody: toCustody(r.courier_custody),
   };
 }
 
 /** O que o Caixa mostra: tudo, só comandas/mesas, só delivery/retirada, ou só o que falta receber. */
-export type CashierView = "all" | "points" | "delivery" | "receivable";
+export type CashierView = "all" | "points" | "delivery" | "receivable" | "settlement";
 export const VIEW_LABEL: Record<CashierView, string> = {
   all: "Todos",
   points: "Comandas / Mesas",
   delivery: "Delivery / Retirada",
   receivable: "A receber",
+  settlement: "Acerto de entregadores",
 };
-export const VIEW_ORDER: readonly CashierView[] = ["all", "points", "delivery", "receivable"];
+export const VIEW_ORDER: readonly CashierView[] = ["all", "points", "delivery", "receivable", "settlement"];
 
 function normalize(value: string): string {
   return value.normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase();
@@ -98,11 +103,15 @@ export const FULFILLMENT_TITLE: Record<"delivery" | "pickup", string> = { delive
 export const receivableTitle = (r: Pick<DeliveryReceivable, "fulfillment" | "shortCode">): string => `${FULFILLMENT_TITLE[r.fulfillment]} #${r.shortCode}`;
 
 /** Quanto falta receber já com o pedido entregue/retirado: o que precisa de destaque. */
-export const isOverdueToCollect = (r: Pick<DeliveryReceivable, "financialStatus" | "status">): boolean =>
-  r.financialStatus === "pending" && (r.status === "delivered" || r.status === "picked_up");
+export const isOverdueToCollect = (r: Pick<DeliveryReceivable, "financialStatus" | "status"> & { courierCustody?: CourierCustody | null }): boolean =>
+  r.financialStatus === "pending" && !r.courierCustody && (r.status === "delivered" || r.status === "picked_up");
 
 export const operationalLabel = (r: Pick<DeliveryReceivable, "status">): string => LOGISTIC_LABEL[r.status];
-export const financialLabel = (r: Pick<DeliveryReceivable, "financialStatus">): string => FINANCIAL_LABEL[r.financialStatus];
+/** "A receber" ou, com o valor na mão do entregador, "Com entregador · aguardando acerto" (nunca "Pago" antes do acerto). */
+export const financialLabel = (r: Pick<DeliveryReceivable, "financialStatus"> & { courierCustody?: CourierCustody | null }): string =>
+  r.financialStatus === "pending" && r.courierCustody ? CUSTODY_LABEL : FINANCIAL_LABEL[r.financialStatus];
+export const financialTone = (r: Pick<DeliveryReceivable, "financialStatus"> & { courierCustody?: CourierCustody | null }): string =>
+  r.financialStatus === "pending" && r.courierCustody ? "custody" : r.financialStatus;
 export const expectedMethodLabel = (r: Pick<DeliveryReceivable, "expectedMethod">): string | null => (r.expectedMethod ? METHOD_LABEL[r.expectedMethod] : null);
 
 /** Busca: cliente, código curto (com ou sem #), telefone (só dígitos), tipo ("delivery"/"retirada") e forma pretendida. */
@@ -117,7 +126,7 @@ export function matchesReceivable(r: DeliveryReceivable, query: string): boolean
 
 /** Lista filtrada pela visão e pela busca. "A receber" = SOMENTE pendentes; "Todos" e "Delivery" incluem pagos recentes. */
 export function filterReceivables(list: DeliveryReceivable[], view: CashierView, query: string): DeliveryReceivable[] {
-  if (view === "points") return [];
+  if (view === "points" || view === "settlement") return [];
   return list.filter((r) => (view === "receivable" ? r.financialStatus === "pending" : true) && matchesReceivable(r, query));
 }
 

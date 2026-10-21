@@ -404,7 +404,13 @@ export function SessionOrderScreen({
             request={() => documentsSource.customerBill(sessionId)}
           />
         )}
-        {canCheckout && header && canOrder && (
+        {header?.delivery?.custody && (
+          <p className="dl-pay dl-pay-held" role="status" data-testid="custody-notice">
+            <strong>Com o entregador · aguardando acerto</strong>
+            <span className="muted"> · {header.delivery.custody.courierName ?? "O entregador"} recebeu {formatReais(header.delivery.custody.amount)} do cliente. Confirme em “Acerto de entregadores” no Caixa; este pedido só conta como pago depois do acerto.</span>
+          </p>
+        )}
+        {canCheckout && header && canOrder && !header.delivery?.custody && (
           <button className="btn-primary btn-auto" type="button" disabled={checkoutChecking} onClick={() => void startCheckout()}>
             {isDelivery ? "Receber / Fechar conta" : "Fechar conta"}
           </button>

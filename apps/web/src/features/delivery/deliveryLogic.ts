@@ -53,6 +53,41 @@ export const FINANCIAL_LABEL: Record<FinancialStatus, string> = {
   no_charge: "Sem cobrança",
 };
 
+// Valor em CUSTÓDIA do entregador: recebido na rua, ainda NÃO acertado no Caixa (o financeiro oficial segue "A receber").
+export interface CourierCustody {
+  receiptId: string;
+  courierUserId: string;
+  courierName: string | null;
+  method: ExpectedMethod;
+  amount: number;
+  amountReceived: number | null;
+  changeAmount: number;
+  receivedAt: string;
+}
+export interface RawCourierCustody {
+  receipt_id: string;
+  courier_user_id: string;
+  courier_name: string | null;
+  method: ExpectedMethod;
+  amount: number | string;
+  amount_received: number | string | null;
+  change_amount: number | string;
+  received_at: string;
+}
+export function toCustody(raw: RawCourierCustody | null | undefined): CourierCustody | null {
+  if (!raw) return null;
+  return {
+    receiptId: raw.receipt_id,
+    courierUserId: raw.courier_user_id,
+    courierName: raw.courier_name,
+    method: raw.method,
+    amount: Number(raw.amount),
+    amountReceived: raw.amount_received === null || raw.amount_received === undefined ? null : Number(raw.amount_received),
+    changeAmount: Number(raw.change_amount ?? 0),
+    receivedAt: raw.received_at,
+  };
+}
+
 export interface DeliveryAddress {
   street: string | null;
   number: string | null;
@@ -98,6 +133,7 @@ export interface DeliveryRow {
   createdAt: string;
   financialStatus: FinancialStatus;
   paidAmount: number;
+  courierCustody: CourierCustody | null;
 }
 
 // Linha crua de list_delivery_orders (snake_case, numeric como string/number).
@@ -138,6 +174,7 @@ export interface RawDeliveryRow {
   created_at: string;
   financial_status?: FinancialStatus;
   paid_amount?: number | string;
+  courier_custody?: RawCourierCustody | null;
 }
 
 const num = (v: number | string | null | undefined): number => Number(v ?? 0);
@@ -178,6 +215,7 @@ export function toDeliveryRow(raw: RawDeliveryRow): DeliveryRow {
     // servidor atual manda o status; sem ele (versão antiga) vale só o que é certo: sessão aberta = a receber, nunca "pago"
     financialStatus: raw.financial_status ?? (raw.delivery_status === "canceled" ? "no_charge" : raw.session_status === "open" ? "pending" : "paid"),
     paidAmount: num(raw.paid_amount),
+    courierCustody: toCustody(raw.courier_custody),
   };
 }
 
@@ -674,9 +712,11 @@ export function zoneFormProblem(f: ZoneForm): string | null {
 export const BLOCKED_TEXT = "O módulo Delivery não está liberado para esta empresa.";
 
 /** Texto do selo financeiro do card/detalhe. Nunca "Pago" sem pagamento real registrado. */
-export function financialBadge(row: Pick<DeliveryRow, "financialStatus">): { label: string; tone: "pending" | "paid" | "muted" } {
+export function financialBadge(row: Pick<DeliveryRow, "financialStatus"> & { courierCustody?: CourierCustody | null }): { label: string; tone: "pending" | "paid" | "muted" | "custody" } {
   switch (row.financialStatus) {
     case "pending":
+      // recebido pelo entregador, ainda não acertado: NÃO é "Pago" (o financeiro oficial só muda no acerto do Caixa)
+      if (row.courierCustody) return { label: CUSTODY_LABEL, tone: "custody" };
       return { label: FINANCIAL_LABEL.pending, tone: "pending" };
     case "paid":
       return { label: FINANCIAL_LABEL.paid, tone: "paid" };
@@ -685,4 +725,52 @@ export function financialBadge(row: Pick<DeliveryRow, "financialStatus">): { lab
     default:
       return { label: FINANCIAL_LABEL.no_charge, tone: "muted" };
   }
+}
+
+export const CUSTODY_LABEL = "Com entregador · aguardando acerto";
+
+// ---- Recebimento pelo ENTREGADOR (celular) ------------------------------------------------------------------------------
+export type CourierPaymentState =
+  | { kind: "none" }
+  | { kind: "paid" }                       // já recebido no Caixa: o entregador NÃO registra de novo
+  | { kind: "held"; custody: CourierCustody } // eu recebi; aguardando acerto no Caixa
+  | { kind: "register" };                  // pode registrar o recebimento
+
+/** O que a tela do entregador mostra para o pagamento deste pedido. Pedido pago NUNCA permite novo recebimento. */
+export function courierPaymentState(row: Pick<DeliveryRow, "fulfillment" | "status" | "financialStatus" | "courierCustody" | "total">): CourierPaymentState {
+  if (row.fulfillment !== "delivery" || row.status === "canceled") return { kind: "none" };
+  if (row.financialStatus === "paid" || row.financialStatus === "refunded") return { kind: "paid" };
+  if (row.courierCustody) return { kind: "held", custody: row.courierCustody };
+  if (row.financialStatus === "pending" && (row.status === "out_for_delivery" || row.status === "delivered") && row.total > 0) return { kind: "register" };
+  return { kind: "none" };
+}
+
+export interface CourierPaymentDraft {
+  method: ExpectedMethod;
+  /** Só dinheiro: texto do valor que o cliente entregou (ex.: "50,00"); vazio = valor exato. */
+  receivedText: string;
+}
+
+/** Pré-preenche com a forma pretendida e, em dinheiro com "troco para" suficiente, o valor entregue. Tudo editável. */
+export function courierDraftFor(row: Pick<DeliveryRow, "expectedMethod" | "cashChangeFor" | "total">): CourierPaymentDraft {
+  const method = row.expectedMethod ?? "cash";
+  const receivedText = method === "cash" && row.cashChangeFor !== null && row.cashChangeFor >= row.total && row.total > 0 ? row.cashChangeFor.toFixed(2).replace(".", ",") : "";
+  return { method, receivedText };
+}
+
+const parseReceived = (t: string): number | null => {
+  const v = t.trim().replace(/^R\$\s*/, "").replace(/\./g, "").replace(",", ".");
+  if (v === "") return null;
+  const n = Number(v);
+  return Number.isFinite(n) ? Math.round(n * 100) / 100 : NaN;
+};
+
+/** Valor que vai ao servidor (null = exato) e o troco a devolver. O servidor valida de novo. */
+export function courierPaymentCalc(total: number, d: CourierPaymentDraft): { received: number | null; change: number; error: string | null } {
+  if (d.method !== "cash") return { received: null, change: 0, error: null };
+  const p = parseReceived(d.receivedText);
+  if (p === null) return { received: null, change: 0, error: null };
+  if (Number.isNaN(p) || p <= 0) return { received: null, change: 0, error: "Informe um valor válido, ex.: 50,00." };
+  if (p < total) return { received: p, change: 0, error: "O valor recebido em dinheiro não pode ser menor que o total do pedido." };
+  return { received: p, change: Math.round((p - total) * 100) / 100, error: null };
 }

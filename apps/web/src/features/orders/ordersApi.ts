@@ -38,7 +38,7 @@ export interface SessionHeader {
   fulfillment: "delivery" | "pickup" | null;
   deliveryFee: number;
   // Delivery/retirada: dados para o recebimento no Caixa (forma PRETENDIDA e "troco para" só pré-preenchem; o servidor decide).
-  delivery: { deliveryOrderId: string; deliveryStatus: string; expectedMethod: "cash" | "pix" | "debit_card" | "credit_card" | "other" | null; cashChangeFor: number | null } | null;
+  delivery: { deliveryOrderId: string; deliveryStatus: string; expectedMethod: "cash" | "pix" | "debit_card" | "credit_card" | "other" | null; cashChangeFor: number | null; custody: { courierName: string | null; method: string; amount: number; receivedAt: string } | null } | null;
   point: { id: string; type: "command" | "table"; code: string; displayName: string } | null;
 }
 
@@ -165,7 +165,20 @@ export const supabaseOrdersSource: OrdersSource = {
       // pedido cancelado: a taxa não conta (mesmo critério do fechamento no servidor)
       deliveryFee = dd.delivery_status === "canceled" ? 0 : Number(dd.delivery_fee);
       fulfillment = dd.fulfillment;
+      // valor já recebido pelo entregador e ainda NÃO acertado: o Caixa não recebe de novo (o acerto é em "Acerto de entregadores")
+      let custody: NonNullable<SessionHeader["delivery"]>["custody"] = null;
+      const rc = await supabase
+        .from("delivery_courier_receipts")
+        .select("courier_user_id, payment_method, amount, received_at")
+        .eq("delivery_order_id", dd.id)
+        .eq("status", "held")
+        .maybeSingle();
+      if (rc.data) {
+        const cn = await loadProfileNames([rc.data.courier_user_id as string]);
+        custody = { courierName: cn.get(rc.data.courier_user_id as string) ?? null, method: rc.data.payment_method as string, amount: Number(rc.data.amount), receivedAt: rc.data.received_at as string };
+      }
       delivery = {
+        custody,
         deliveryOrderId: dd.id,
         deliveryStatus: dd.delivery_status,
         expectedMethod: dd.expected_method,

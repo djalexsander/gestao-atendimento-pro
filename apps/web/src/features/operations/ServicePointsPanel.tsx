@@ -7,12 +7,17 @@ import { createCoalescedRunner } from "../orders/coalesce";
 import { CAN_ALWAYS_CREATE_CUSTOMER } from "../system/systemLogic";
 import { useOperationalPreferences } from "../system/useOperationalPreferences";
 import { OpenSessionDialog } from "./PointDialogs";
+import { CourierSettlementPanel } from "./CourierSettlementPanel";
+import { pendingSettlementCount, type SettlementGroup } from "./courierSettlement";
+import { OpenCashDialog } from "../cash/CashDialogs";
+import { supabaseCashSource, type CashSource } from "../cash/cashApi";
 import {
   VIEW_LABEL,
   VIEW_ORDER,
   expectedMethodLabel,
   filterReceivables,
   financialLabel,
+  financialTone,
   isOverdueToCollect,
   operationalLabel,
   pendingCount,
@@ -77,7 +82,7 @@ function DeliveryCard({ item, onSelect }: { item: DeliveryReceivable; onSelect: 
         <span className="op-card-line">{item.customerName}</span>
         <span className="op-card-line">
           <span className={`status-badge dl-state-${item.status}`}>{operationalLabel(item)}</span>
-          <span className={`op-fin op-fin-${item.financialStatus}`}>{financialLabel(item)}</span>
+          <span className={`op-fin op-fin-${financialTone(item)}`}>{financialLabel(item)}</span>
         </span>
         <span className="op-card-line op-card-total">
           <strong>{formatReais(item.total)}</strong>
@@ -130,9 +135,11 @@ function PointCard({ point, showCustomer, onSelect }: { point: ServicePoint; sho
 export function ServicePointsPanel({
   variant,
   source = supabaseServicePanelSource,
+  cashSource = supabaseCashSource,
 }: {
   variant: "attendant" | "cashier";
   source?: ServicePanelSource;
+  cashSource?: CashSource;
 }) {
   const navigate = useNavigate();
   const { activeMembership, profile } = useAuth();
@@ -152,6 +159,10 @@ export function ServicePointsPanel({
   const [receivables, setReceivables] = useState<DeliveryReceivable[] | null>(null);
   const [receivablesHidden, setReceivablesHidden] = useState(true);
   const [receivablesError, setReceivablesError] = useState<string | null>(null);
+  // Acerto de entregadores (custódia): fila por entregador; some em silêncio para quem não pode ver
+  const [settlements, setSettlements] = useState<SettlementGroup[] | null>(null);
+  const [settlementsHidden, setSettlementsHidden] = useState(true);
+  const [openCashFor, setOpenCashFor] = useState(false);
   const { prefs, loaded: prefsLoaded } = useOperationalPreferences(companyId);
   const typeInitialized = useRef(false);
   const allowQuick = prefs.allowQuickCustomerCreate || CAN_ALWAYS_CREATE_CUSTOMER.includes(activeMembership?.role ?? "");
@@ -172,11 +183,16 @@ export function ServicePointsPanel({
     const current = ++requestId.current;
     setRefreshing(true);
     const wantsDelivery = variant === "cashier" && !!source.loadReceivables;
-    const [result, rec] = await Promise.all([
+    const [result, rec, set] = await Promise.all([
       source.load(companyId),
       wantsDelivery ? source.loadReceivables!(companyId) : Promise.resolve(null),
+      wantsDelivery && source.loadSettlements ? source.loadSettlements(companyId) : Promise.resolve(null),
     ]);
     if (current !== requestId.current) return result.data;
+    if (set) {
+      setSettlementsHidden(set.hidden);
+      if (set.data) setSettlements(set.data);
+    }
     if (rec) {
       setReceivablesHidden(rec.hidden);
       setReceivablesError(rec.error);
@@ -231,13 +247,19 @@ export function ServicePointsPanel({
   );
   const counts = useMemo(() => countByStatus(points, { query, type }), [points, query, type]);
   const showDeliverySection = variant === "cashier" && !receivablesHidden && receivables !== null;
-  const effectiveView: CashierView = showDeliverySection ? view : "all";
+  const effectiveView: CashierView = showDeliverySection ? (view === "settlement" && !(!settlementsHidden && settlements !== null) ? "all" : view) : "all";
+  const canVoid = activeMembership?.role === "owner" || activeMembership?.role === "admin";
   const showPoints = effectiveView === "all" || effectiveView === "points";
+  const settlementContent = effectiveView === "settlement" && companyId && settlements !== null ? (
+    <CourierSettlementPanel companyId={companyId} groups={settlements} source={source} canVoid={canVoid} onChanged={() => void reload()} onNeedCash={() => setOpenCashFor(true)} />
+  ) : null;
   const deliveryShown = useMemo(
     () => (showDeliverySection ? filterReceivables(receivables ?? [], effectiveView, query) : []),
     [showDeliverySection, receivables, effectiveView, query],
   );
   const toReceive = useMemo(() => pendingCount(receivables ?? [], query), [receivables, query]);
+  const showSettlement = showDeliverySection && !settlementsHidden && settlements !== null;
+  const settleCount = pendingSettlementCount(settlements ?? []);
 
   function focusSearch() {
     if (keepSearchFocused) requestAnimationFrame(() => searchRef.current?.focus());
@@ -351,7 +373,8 @@ export function ServicePointsPanel({
       );
     content = (
       <>
-        {effectiveView !== "points" && effectiveView !== "all" && deliveryContent}
+        {settlementContent}
+        {effectiveView !== "points" && effectiveView !== "all" && effectiveView !== "settlement" && deliveryContent}
         {effectiveView === "all" && (
           <>
             {deliveryShown.length > 0 && (
@@ -420,10 +443,11 @@ export function ServicePointsPanel({
 
       {data && showDeliverySection && (
         <div className="op-filters op-views" role="group" aria-label="Mostrar">
-          {VIEW_ORDER.map((v) => (
+          {VIEW_ORDER.filter((v) => v !== "settlement" || showSettlement).map((v) => (
             <button key={v} type="button" className="op-chip" aria-pressed={effectiveView === v} data-testid={`view-${v}`} onClick={() => setView(v)}>
               {VIEW_LABEL[v]}
               {v === "receivable" && <span className="op-chip-count">{toReceive}</span>}
+              {v === "settlement" && <span className="op-chip-count">{settleCount}</span>}
             </button>
           ))}
         </div>
@@ -468,6 +492,16 @@ export function ServicePointsPanel({
       {notice && <div className="form-notice">{notice}</div>}
 
       {content}
+
+      {openCashFor && companyId && (
+        <OpenCashDialog
+          source={cashSource}
+          companyId={companyId}
+          notice="Abra o caixa antes de confirmar o acerto do entregador."
+          onOpened={() => { setOpenCashFor(false); setNotice("Caixa aberto. Confirme o acerto novamente."); }}
+          onClose={() => setOpenCashFor(false)}
+        />
+      )}
 
       {dialog?.kind === "open" && (
         <OpenSessionDialog

@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { formatReais } from "../../lib/money";
 import { Modal } from "../employees/Modal";
 import { OrderWhatsappNotice } from "../whatsapp/OrderWhatsappNotice";
+import { CourierPaymentBox } from "./CourierPaymentBox";
 import type { CompanyRole } from "../../lib/types";
 import type { CourierOption, DeliveryDetail as Detail, DeliverySource } from "./deliveryApi";
 import {
@@ -13,6 +14,7 @@ import {
   METHOD_LABEL,
   TIMING_LABEL,
   availableActions,
+  courierPaymentState,
   etaOf,
   formatAddressLine,
   formatCep,
@@ -32,6 +34,10 @@ const EVENT_LABEL: Record<string, string> = {
   courier_assigned: "Entregador",
   fee_overridden: "Taxa ajustada",
   canceled: "Pedido cancelado",
+  payment_received: "Pagamento recebido no Caixa",
+  courier_payment_received: "Recebido pelo entregador",
+  courier_payment_voided: "Recebimento do entregador anulado",
+  courier_settlement_completed: "Acertado no Caixa",
 };
 
 function describeEvent(e: Detail["events"][number], courierName: (id: string) => string | null): string {
@@ -148,6 +154,9 @@ export function DeliveryDetail({
           <div><dt>{row.fulfillment === "pickup" ? "Previsão de retirada" : "Previsão de entrega"}</dt><dd>{formatTime(eta)}</dd></div>
           <div><dt>Forma pretendida</dt><dd>{TIMING_LABEL[row.paymentTiming]}{row.expectedMethod ? ` · ${METHOD_LABEL[row.expectedMethod]}` : ""}</dd></div>
           <div><dt>Situação financeira</dt><dd><span className={`dl-fin dl-fin-${financialBadge(row).tone}`}>{financialBadge(row).label}</span>{row.financialStatus === "paid" && row.paidAmount > 0 ? ` · ${formatReais(row.paidAmount)}` : ""}</dd></div>
+          {row.courierCustody && !isCourier && (
+            <div><dt>Com o entregador</dt><dd>{row.courierCustody.courierName ?? "Entregador"} · {METHOD_LABEL[row.courierCustody.method]} · <strong>{formatReais(row.courierCustody.amount)}</strong>{row.courierCustody.changeAmount > 0 ? ` (troco ${formatReais(row.courierCustody.changeAmount)})` : ""} · às {formatTime(row.courierCustody.receivedAt)}</dd></div>
+          )}
           {row.cashChangeFor !== null && <div><dt>Troco para</dt><dd><strong>{formatReais(row.cashChangeFor)}</strong></dd></div>}
           {row.notes && <div><dt>Observação</dt><dd>{row.notes}</dd></div>}
           {row.fulfillment === "delivery" && <div><dt>Entregador</dt><dd>{row.courierName ?? "Sem entregador"}</dd></div>}
@@ -189,7 +198,8 @@ export function DeliveryDetail({
             <div className="dl-total"><dt>Total</dt><dd>{formatReais(row.total)}</dd></div>
           </dl>
         )}
-        {isCourier && row.paymentTiming === "on_delivery" && row.status !== "canceled" && (
+        {isCourier && <CourierPaymentBox row={row} source={source} onDone={onChanged} />}
+        {isCourier && row.paymentTiming === "on_delivery" && row.status !== "canceled" && row.financialStatus === "pending" && !row.courierCustody && row.status === "confirmed" && (
           <p className="dl-courier-total">
             Valor a receber do cliente: <strong>{formatReais(row.total)}</strong>
             <span className="muted"> · informação operacional (o recebimento é registrado no Caixa).</span>
@@ -198,7 +208,7 @@ export function DeliveryDetail({
         {isCourier && row.paymentTiming === "on_order" && row.financialStatus === "paid" && (
           <p className="dl-courier-total">Pagamento já registrado no Caixa: não há nada a cobrar do cliente.</p>
         )}
-        {isCourier && row.paymentTiming === "on_order" && row.financialStatus === "pending" && (
+        {isCourier && row.paymentTiming === "on_order" && row.financialStatus === "pending" && courierPaymentState(row).kind === "none" && (
           <p className="dl-courier-total">Este pedido ainda não tem pagamento registrado no Caixa. Confirme com o Caixa antes de entregar sem cobrar.</p>
         )}
 
