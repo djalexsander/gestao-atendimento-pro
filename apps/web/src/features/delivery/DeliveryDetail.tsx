@@ -17,6 +17,7 @@ import {
   formatAddressLine,
   formatCep,
   formatPhone,
+  financialBadge,
   formatTime,
   isOperator,
   shortId,
@@ -145,7 +146,8 @@ export function DeliveryDetail({
             </>
           )}
           <div><dt>{row.fulfillment === "pickup" ? "Previsão de retirada" : "Previsão de entrega"}</dt><dd>{formatTime(eta)}</dd></div>
-          <div><dt>Pagamento</dt><dd>{TIMING_LABEL[row.paymentTiming]}{row.expectedMethod ? ` · ${METHOD_LABEL[row.expectedMethod]}` : ""}</dd></div>
+          <div><dt>Forma pretendida</dt><dd>{TIMING_LABEL[row.paymentTiming]}{row.expectedMethod ? ` · ${METHOD_LABEL[row.expectedMethod]}` : ""}</dd></div>
+          <div><dt>Situação financeira</dt><dd><span className={`dl-fin dl-fin-${financialBadge(row).tone}`}>{financialBadge(row).label}</span>{row.financialStatus === "paid" && row.paidAmount > 0 ? ` · ${formatReais(row.paidAmount)}` : ""}</dd></div>
           {row.cashChangeFor !== null && <div><dt>Troco para</dt><dd><strong>{formatReais(row.cashChangeFor)}</strong></dd></div>}
           {row.notes && <div><dt>Observação</dt><dd>{row.notes}</dd></div>}
           {row.fulfillment === "delivery" && <div><dt>Entregador</dt><dd>{row.courierName ?? "Sem entregador"}</dd></div>}
@@ -193,8 +195,11 @@ export function DeliveryDetail({
             <span className="muted"> · informação operacional (o recebimento é registrado no Caixa).</span>
           </p>
         )}
-        {isCourier && row.paymentTiming === "on_order" && (
-          <p className="dl-courier-total">Pagamento já feito no pedido: não há nada a cobrar do cliente.</p>
+        {isCourier && row.paymentTiming === "on_order" && row.financialStatus === "paid" && (
+          <p className="dl-courier-total">Pagamento já registrado no Caixa: não há nada a cobrar do cliente.</p>
+        )}
+        {isCourier && row.paymentTiming === "on_order" && row.financialStatus === "pending" && (
+          <p className="dl-courier-total">Este pedido ainda não tem pagamento registrado no Caixa. Confirme com o Caixa antes de entregar sem cobrar.</p>
         )}
 
         {detail && detail.events.length > 0 && (

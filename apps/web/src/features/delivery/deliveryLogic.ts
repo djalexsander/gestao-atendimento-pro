@@ -26,7 +26,7 @@ export const PRODUCTION_LABEL: Record<Exclude<ProductionState, null>, string> = 
   ready: "Pronto",
 };
 export const TIMING_LABEL: Record<PaymentTiming, string> = {
-  on_order: "Pago no pedido",
+  on_order: "Pagamento no pedido",
   on_delivery: "Pagar na entrega",
   on_pickup: "Pagar na retirada",
 };
@@ -42,6 +42,15 @@ export const FEE_SOURCE_LABEL: Record<FeeSource, string> = {
   default: "Taxa padrão",
   manual: "Taxa manual",
   none: "Sem taxa",
+};
+
+// Situação FINANCEIRA derivada do estado oficial da sessão/pagamentos (nunca do "momento de pagamento" informado no pedido).
+export type FinancialStatus = "pending" | "paid" | "refunded" | "no_charge";
+export const FINANCIAL_LABEL: Record<FinancialStatus, string> = {
+  pending: "A receber",
+  paid: "Pago",
+  refunded: "Estornado",
+  no_charge: "Sem cobrança",
 };
 
 export interface DeliveryAddress {
@@ -87,6 +96,8 @@ export interface DeliveryRow {
   notes: string | null;
   sessionStatus: "open" | "closed";
   createdAt: string;
+  financialStatus: FinancialStatus;
+  paidAmount: number;
 }
 
 // Linha crua de list_delivery_orders (snake_case, numeric como string/number).
@@ -125,6 +136,8 @@ export interface RawDeliveryRow {
   notes: string | null;
   session_status: "open" | "closed";
   created_at: string;
+  financial_status?: FinancialStatus;
+  paid_amount?: number | string;
 }
 
 const num = (v: number | string | null | undefined): number => Number(v ?? 0);
@@ -162,6 +175,9 @@ export function toDeliveryRow(raw: RawDeliveryRow): DeliveryRow {
     notes: raw.notes,
     sessionStatus: raw.session_status,
     createdAt: raw.created_at,
+    // servidor atual manda o status; sem ele (versão antiga) vale só o que é certo: sessão aberta = a receber, nunca "pago"
+    financialStatus: raw.financial_status ?? (raw.delivery_status === "canceled" ? "no_charge" : raw.session_status === "open" ? "pending" : "paid"),
+    paidAmount: num(raw.paid_amount),
   };
 }
 
@@ -656,3 +672,17 @@ export function zoneFormProblem(f: ZoneForm): string | null {
 }
 
 export const BLOCKED_TEXT = "O módulo Delivery não está liberado para esta empresa.";
+
+/** Texto do selo financeiro do card/detalhe. Nunca "Pago" sem pagamento real registrado. */
+export function financialBadge(row: Pick<DeliveryRow, "financialStatus">): { label: string; tone: "pending" | "paid" | "muted" } {
+  switch (row.financialStatus) {
+    case "pending":
+      return { label: FINANCIAL_LABEL.pending, tone: "pending" };
+    case "paid":
+      return { label: FINANCIAL_LABEL.paid, tone: "paid" };
+    case "refunded":
+      return { label: FINANCIAL_LABEL.refunded, tone: "muted" };
+    default:
+      return { label: FINANCIAL_LABEL.no_charge, tone: "muted" };
+  }
+}

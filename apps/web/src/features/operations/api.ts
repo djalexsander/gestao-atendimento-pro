@@ -1,6 +1,7 @@
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase } from "../../lib/supabaseClient";
 import type { OpenSession, ServicePanelData } from "./panel";
+import { toReceivable, type DeliveryReceivable, type RawReceivable } from "./deliveryReceivables";
 
 const LOAD_ERROR = "Não foi possível carregar as comandas e mesas agora. Tente novamente.";
 const OPEN_ERROR = "Não foi possível abrir o atendimento agora. Tente novamente.";
@@ -17,6 +18,9 @@ export interface ServicePanelSource {
     customerName: string | null,
     customerId?: string | null,
   ): Promise<{ session: OpenSession | null; error: string | null; conflict: boolean }>;
+  // Caixa: contas de delivery/retirada (pendentes de QUALQUER data + pagas recentes). Opcional: só o Caixa usa.
+  // `hidden` = a empresa não usa o módulo ou o papel não recebe (a seção simplesmente não aparece).
+  loadReceivables?(companyId: string): Promise<{ data: DeliveryReceivable[] | null; error: string | null; hidden: boolean }>;
   // Avisa (sem dados) quando um atendimento da empresa é aberto/fechado em qualquer aparelho.
   // Devolve a função que encerra a assinatura. Opcional: fontes simuladas podem não ter.
   subscribe?(companyId: string, onChange: () => void): () => void;
@@ -37,6 +41,17 @@ export const supabaseServicePanelSource: ServicePanelSource = {
       return { data: null, error: error.code?.startsWith("PT") ? error.message : LOAD_ERROR };
     }
     return { data: data as ServicePanelData, error: null };
+  },
+
+  async loadReceivables(companyId) {
+    const { data, error } = await supabase.rpc("list_delivery_receivables", { p_company_id: companyId });
+    if (error) {
+      // PT4xx = sem permissão/módulo desligado: a seção some em silêncio; qualquer outro erro é avisado
+      const hidden = !!error.code?.startsWith("PT");
+      if (!hidden) console.error("Falha ao carregar delivery/retirada no Caixa:", error.code ?? error.message);
+      return { data: null, error: hidden ? null : "Não foi possível carregar delivery e retirada agora.", hidden };
+    }
+    return { data: ((data ?? []) as RawReceivable[]).map(toReceivable), error: null, hidden: false };
   },
 
   async open(pointId, customerName, customerId) {
@@ -88,6 +103,15 @@ export const supabaseServicePanelSource: ServicePanelSource = {
           { event: "*", schema: "public", table: "service_sessions", filter: `company_id=eq.${companyId}` },
           () => {
             rtLog("service_sessions change received");
+            onChange();
+          },
+        )
+        // delivery/retirada: entregue/retirado muda o card sem mexer na sessão
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "delivery_orders", filter: `company_id=eq.${companyId}` },
+          () => {
+            rtLog("delivery_orders change received");
             onChange();
           },
         )

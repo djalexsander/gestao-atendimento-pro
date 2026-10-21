@@ -5422,3 +5422,23 @@ button {
 @media (min-width: 901px) and (max-width: 1200px) {
   .wa-panes { grid-template-columns: minmax(190px, 240px) minmax(0, 1fr) minmax(150px, 190px); gap: 8px; }
 }
+
+/* Situação financeira (Delivery e Caixa): derivada do pagamento real, nunca da forma informada no pedido */
+.dl-fin { font-weight: 700; }
+.dl-fin-pending { color: var(--warning); }
+.dl-fin-paid { color: var(--success); }
+.dl-fin-muted { color: var(--text-muted); }
+
+/* Caixa: delivery / retirada junto das comandas e mesas (Fase 4A) */
+.op-section-title { margin: 8px 0 6px; font-size: 14px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.op-views { margin-bottom: 4px; }
+.op-card-delivery { border-left: 4px solid var(--accent); }
+.op-card-delivery .op-card-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.op-card-delivery .op-card-total { font-size: 15px; }
+.op-card-fin-pending { border-left-color: var(--warning); }
+.op-card-overdue { background: var(--warning-bg); border-color: var(--warning); }
+.op-card-fin-paid, .op-card-fin-refunded, .op-card-fin-no_charge { opacity: 0.78; border-left-color: var(--success); }
+.op-fin { font-size: 12px; font-weight: 700; border-radius: 999px; padding: 1px 8px; border: 1px solid var(--border); }
+.op-fin-pending { color: var(--warning); border-color: var(--warning); }
+.op-fin-paid { color: var(--success); border-color: var(--success); }
+.op-fin-refunded, .op-fin-no_charge { color: var(--text-muted); }

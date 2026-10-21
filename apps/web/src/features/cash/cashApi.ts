@@ -77,6 +77,8 @@ export interface CashSource {
   refundPayment(paymentId: string, amount: number, reason: string): Promise<{ error: string | null }>;
   // Recebe e fecha a conta. Total, quitação e troco são validados no servidor.
   closeAccount(sessionId: string, payments: PaymentPayload[]): Promise<CloseAccountResult>;
+  // Delivery/retirada: recebe pela RPC idempotente (mesmo núcleo financeiro). O MESMO requestId em nova tentativa devolve o recebimento já confirmado.
+  receiveDelivery(deliveryOrderId: string, payments: PaymentPayload[], requestId: string): Promise<CloseAccountResult>;
   // Administrativo
   // Mais recentes primeiro; `limit` cresce com "Carregar mais". hasMore = existe registro além do limite.
   listCashSessions(
@@ -283,6 +285,19 @@ export const supabaseCashSource: CashSource = {
     });
     if (error) {
       console.error("Falha ao fechar a conta:", error.code);
+      return { error: describeOrderError(error, CLOSE_ACCOUNT_ERROR), noOpenCash: error.code === NO_OPEN_CASH_CODE };
+    }
+    return { error: null };
+  },
+
+  async receiveDelivery(deliveryOrderId, payments, requestId) {
+    const { error } = await supabase.rpc("receive_delivery_order", {
+      p_delivery_order_id: deliveryOrderId,
+      p_payments: payments,
+      p_client_request_id: requestId,
+    });
+    if (error) {
+      console.error("Falha ao receber o delivery:", error.code);
       return { error: describeOrderError(error, CLOSE_ACCOUNT_ERROR), noOpenCash: error.code === NO_OPEN_CASH_CODE };
     }
     return { error: null };

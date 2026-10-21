@@ -37,6 +37,8 @@ export interface SessionHeader {
   kind: "point" | "delivery";
   fulfillment: "delivery" | "pickup" | null;
   deliveryFee: number;
+  // Delivery/retirada: dados para o recebimento no Caixa (forma PRETENDIDA e "troco para" só pré-preenchem; o servidor decide).
+  delivery: { deliveryOrderId: string; deliveryStatus: string; expectedMethod: "cash" | "pix" | "debit_card" | "credit_card" | "other" | null; cashChangeFor: number | null } | null;
   point: { id: string; type: "command" | "table"; code: string; displayName: string } | null;
 }
 
@@ -148,20 +150,27 @@ export const supabaseOrdersSource: OrdersSource = {
     // Delivery: taxa e tipo vêm de delivery_orders (leitura liberada a owner/admin/cashier/attendant com o módulo).
     let deliveryFee = 0;
     let fulfillment: SessionHeader["fulfillment"] = null;
+    let delivery: SessionHeader["delivery"] = null;
     if (kind === "delivery") {
       const d = await supabase
         .from("delivery_orders")
-        .select("delivery_fee, fulfillment, delivery_status")
+        .select("id, delivery_fee, fulfillment, delivery_status, expected_method, cash_change_for")
         .eq("service_session_id", sessionId)
         .maybeSingle();
       if (d.error || !d.data) {
         console.error("Falha ao carregar o delivery:", d.error?.code);
         return { data: null, error: LOAD_ERROR };
       }
-      const dd = d.data as { delivery_fee: number | string; fulfillment: "delivery" | "pickup"; delivery_status: string };
+      const dd = d.data as { id: string; delivery_fee: number | string; fulfillment: "delivery" | "pickup"; delivery_status: string; expected_method: NonNullable<SessionHeader["delivery"]>["expectedMethod"]; cash_change_for: number | string | null };
       // pedido cancelado: a taxa não conta (mesmo critério do fechamento no servidor)
       deliveryFee = dd.delivery_status === "canceled" ? 0 : Number(dd.delivery_fee);
       fulfillment = dd.fulfillment;
+      delivery = {
+        deliveryOrderId: dd.id,
+        deliveryStatus: dd.delivery_status,
+        expectedMethod: dd.expected_method,
+        cashChangeFor: dd.cash_change_for === null ? null : Number(dd.cash_change_for),
+      };
     }
 
     const names = await loadProfileNames([row.opened_by]);
@@ -176,6 +185,7 @@ export const supabaseOrdersSource: OrdersSource = {
         kind,
         fulfillment,
         deliveryFee,
+        delivery,
         point,
       },
       error: null,

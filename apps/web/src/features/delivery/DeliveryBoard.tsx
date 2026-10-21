@@ -13,6 +13,7 @@ import {
   SECTION_TITLE,
   applyLocalFilters,
   etaOf,
+  financialBadge,
   formatTime,
   groupBySection,
   isOperator,
@@ -54,7 +55,10 @@ function DeliveryCard({ row, isCourier, onOpen }: { row: DeliveryRow; isCourier:
         </span>
         <span className="dl-card-line dl-card-foot">
           <strong>{formatReais(row.total)}</strong>
-          <span className="muted">{row.expectedMethod ? METHOD_LABEL[row.expectedMethod] : row.paymentTiming === "on_order" ? "Pago" : "A receber"}</span>
+          <span className="muted">
+            {row.expectedMethod ? `${METHOD_LABEL[row.expectedMethod]} · ` : ""}
+            <span className={`dl-fin dl-fin-${financialBadge(row).tone}`}>{financialBadge(row).label}</span>
+          </span>
         </span>
         {!isCourier && row.fulfillment === "delivery" && (
           <span className="dl-card-line muted">{row.courierName ?? "Sem entregador"}</span>

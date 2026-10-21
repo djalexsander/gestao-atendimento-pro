@@ -8,6 +8,21 @@ import { CAN_ALWAYS_CREATE_CUSTOMER } from "../system/systemLogic";
 import { useOperationalPreferences } from "../system/useOperationalPreferences";
 import { OpenSessionDialog } from "./PointDialogs";
 import {
+  VIEW_LABEL,
+  VIEW_ORDER,
+  expectedMethodLabel,
+  filterReceivables,
+  financialLabel,
+  isOverdueToCollect,
+  operationalLabel,
+  pendingCount,
+  receivableTitle,
+  resolveReceivableScan,
+  type CashierView,
+  type DeliveryReceivable,
+} from "./deliveryReceivables";
+import { formatReais } from "../../lib/money";
+import {
   countByStatus,
   filterPoints,
   formatOpenedShort,
@@ -41,6 +56,38 @@ const EMPTY_TEXT = {
 } as const;
 
 type OpenDialog = { kind: "open"; point: ServicePoint };
+
+// Card de delivery/retirada no Caixa: tipo + código curto, cliente, situação operacional e FINANCEIRA, total e forma pretendida.
+function DeliveryCard({ item, onSelect }: { item: DeliveryReceivable; onSelect: (item: DeliveryReceivable) => void }) {
+  const method = expectedMethodLabel(item);
+  const overdue = isOverdueToCollect(item);
+  const label = [receivableTitle(item), item.customerName, operationalLabel(item), financialLabel(item), formatReais(item.total)].join(", ");
+  return (
+    <li>
+      <button
+        type="button"
+        className={`op-card op-card-delivery op-card-fin-${item.financialStatus}${overdue ? " op-card-overdue" : ""}`}
+        aria-label={label}
+        data-testid="delivery-card"
+        onClick={() => onSelect(item)}
+      >
+        <span className="op-card-head">
+          <span className="op-card-title">{receivableTitle(item)}</span>
+        </span>
+        <span className="op-card-line">{item.customerName}</span>
+        <span className="op-card-line">
+          <span className={`status-badge dl-state-${item.status}`}>{operationalLabel(item)}</span>
+          <span className={`op-fin op-fin-${item.financialStatus}`}>{financialLabel(item)}</span>
+        </span>
+        <span className="op-card-line op-card-total">
+          <strong>{formatReais(item.total)}</strong>
+          {method && <span className="op-card-muted"> · {method}</span>}
+          {item.cashChangeFor !== null && item.financialStatus === "pending" && <span className="op-card-muted"> · troco p/ {formatReais(item.cashChangeFor)}</span>}
+        </span>
+      </button>
+    </li>
+  );
+}
 
 function PointCard({ point, showCustomer, onSelect }: { point: ServicePoint; showCustomer: boolean; onSelect: (point: ServicePoint) => void }) {
   const status = statusOf(point);
@@ -100,6 +147,11 @@ export function ServicePointsPanel({
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState<StatusFilter>("all");
   const [typeChoice, setTypeChoice] = useState<TypeFilter>(null);
+  // Caixa: delivery/retirada junto das comandas/mesas (a mesma conta, o mesmo fechamento oficial)
+  const [view, setView] = useState<CashierView>("all");
+  const [receivables, setReceivables] = useState<DeliveryReceivable[] | null>(null);
+  const [receivablesHidden, setReceivablesHidden] = useState(true);
+  const [receivablesError, setReceivablesError] = useState<string | null>(null);
   const { prefs, loaded: prefsLoaded } = useOperationalPreferences(companyId);
   const typeInitialized = useRef(false);
   const allowQuick = prefs.allowQuickCustomerCreate || CAN_ALWAYS_CREATE_CUSTOMER.includes(activeMembership?.role ?? "");
@@ -119,8 +171,17 @@ export function ServicePointsPanel({
     if (!companyId) return null;
     const current = ++requestId.current;
     setRefreshing(true);
-    const result = await source.load(companyId);
+    const wantsDelivery = variant === "cashier" && !!source.loadReceivables;
+    const [result, rec] = await Promise.all([
+      source.load(companyId),
+      wantsDelivery ? source.loadReceivables!(companyId) : Promise.resolve(null),
+    ]);
     if (current !== requestId.current) return result.data;
+    if (rec) {
+      setReceivablesHidden(rec.hidden);
+      setReceivablesError(rec.error);
+      if (rec.data) setReceivables(rec.data);
+    }
     setRefreshing(false);
     setLoading(false);
     if (result.error || !result.data) {
@@ -130,7 +191,7 @@ export function ServicePointsPanel({
     setLoadError(null);
     setData(result.data);
     return result.data;
-  }, [companyId, source]);
+  }, [companyId, source, variant]);
 
   useEffect(() => {
     void reload();
@@ -169,6 +230,14 @@ export function ServicePointsPanel({
     [points, query, status, type],
   );
   const counts = useMemo(() => countByStatus(points, { query, type }), [points, query, type]);
+  const showDeliverySection = variant === "cashier" && !receivablesHidden && receivables !== null;
+  const effectiveView: CashierView = showDeliverySection ? view : "all";
+  const showPoints = effectiveView === "all" || effectiveView === "points";
+  const deliveryShown = useMemo(
+    () => (showDeliverySection ? filterReceivables(receivables ?? [], effectiveView, query) : []),
+    [showDeliverySection, receivables, effectiveView, query],
+  );
+  const toReceive = useMemo(() => pendingCount(receivables ?? [], query), [receivables, query]);
 
   function focusSearch() {
     if (keepSearchFocused) requestAnimationFrame(() => searchRef.current?.focus());
@@ -194,6 +263,13 @@ export function ServicePointsPanel({
     setDialog({ kind: "open", point });
   }
 
+  // Delivery/retirada: abre a MESMA tela de conta do Caixa (itens, taxa, total e "Receber / Fechar conta").
+  function openDelivery(item: DeliveryReceivable) {
+    setNotice(null);
+    setScanMessage(null);
+    navigate(`${OPERATIONAL_PATH[area]}/${item.sessionId}`);
+  }
+
   // Enter na busca (o leitor USB digita o código e manda Enter): acha o ponto na hora, sem
   // olhar os filtros. Se não achar, recarrega uma vez (pode ser um ponto recém-cadastrado).
   async function handleSearchSubmit(event: FormEvent) {
@@ -205,11 +281,18 @@ export function ServicePointsPanel({
 
     let target = resolveScan(points, value);
     if (!target) {
+      // não é comanda/mesa: um único delivery/retirada que a busca encontra abre a conta dele
+      const hit = showDeliverySection ? resolveReceivableScan(receivables ?? [], value) : null;
+      if (hit) {
+        setQuery("");
+        openDelivery(hit);
+        return;
+      }
       const fresh = await reload();
       target = fresh ? resolveScan(fresh.points, value) : null;
     }
     if (!target) {
-      setScanMessage(`Nenhuma comanda ou mesa encontrada para “${value}”.`);
+      setScanMessage(`Nenhuma comanda, mesa${showDeliverySection ? ", delivery ou retirada" : ""} encontrada para “${value}”.`);
       searchRef.current?.select(); // o próximo código lido substitui este
       return;
     }
@@ -239,8 +322,54 @@ export function ServicePointsPanel({
     return null;
   }
 
+  const pointsContent = (() => {
+    if (!data) return null;
+    if (points.length === 0) return <p className="op-state">{EMPTY_TEXT[mode]}</p>;
+    if (shown.length === 0) return <p className="op-state">Nada encontrado com esses filtros.</p>;
+    return (
+      <ul className={prefs.compactCards ? "op-grid" : "op-grid op-grid-comfy"} role="list">
+        {shown.map((point) => (
+          <PointCard key={point.id} point={point} showCustomer={prefs.showCustomerOnCard} onSelect={openPoint} />
+        ))}
+      </ul>
+    );
+  })();
+
   let content;
-  if (loading && !data) {
+  if (showDeliverySection && data) {
+    const deliveryContent =
+      deliveryShown.length === 0 ? (
+        <p className="op-state" data-testid="delivery-empty">
+          {effectiveView === "receivable" ? "Nenhuma conta de delivery ou retirada a receber." : "Nenhum delivery ou retirada encontrado."}
+        </p>
+      ) : (
+        <ul className="op-grid op-grid-comfy" role="list" aria-label="Delivery e retirada">
+          {deliveryShown.map((item) => (
+            <DeliveryCard key={item.deliveryOrderId} item={item} onSelect={openDelivery} />
+          ))}
+        </ul>
+      );
+    content = (
+      <>
+        {effectiveView !== "points" && effectiveView !== "all" && deliveryContent}
+        {effectiveView === "all" && (
+          <>
+            {deliveryShown.length > 0 && (
+              <section aria-label="Delivery e retirada">
+                <h3 className="op-section-title">Delivery / Retirada</h3>
+                {deliveryContent}
+              </section>
+            )}
+            <section aria-label="Comandas e mesas">
+              {deliveryShown.length > 0 && <h3 className="op-section-title">Comandas / Mesas</h3>}
+              {pointsContent}
+            </section>
+          </>
+        )}
+        {effectiveView === "points" && pointsContent}
+      </>
+    );
+  } else if (loading && !data) {
     content = <p className="op-state">Carregando comandas e mesas…</p>;
   } else if (!data) {
     content = (
@@ -250,18 +379,8 @@ export function ServicePointsPanel({
         </button>
       </div>
     );
-  } else if (points.length === 0) {
-    content = <p className="op-state">{EMPTY_TEXT[mode]}</p>;
-  } else if (shown.length === 0) {
-    content = <p className="op-state">Nada encontrado com esses filtros.</p>;
   } else {
-    content = (
-      <ul className={prefs.compactCards ? "op-grid" : "op-grid op-grid-comfy"} role="list">
-        {shown.map((point) => (
-          <PointCard key={point.id} point={point} showCustomer={prefs.showCustomerOnCard} onSelect={openPoint} />
-        ))}
-      </ul>
-    );
+    content = pointsContent;
   }
 
   return (
@@ -299,7 +418,18 @@ export function ServicePointsPanel({
         </button>
       </form>
 
-      {data && (
+      {data && showDeliverySection && (
+        <div className="op-filters op-views" role="group" aria-label="Mostrar">
+          {VIEW_ORDER.map((v) => (
+            <button key={v} type="button" className="op-chip" aria-pressed={effectiveView === v} data-testid={`view-${v}`} onClick={() => setView(v)}>
+              {VIEW_LABEL[v]}
+              {v === "receivable" && <span className="op-chip-count">{toReceive}</span>}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {data && showPoints && (
         <div className="op-filters" role="group" aria-label="Filtros">
           {STATUS_CHIPS.map((chip) => (
             <button
@@ -333,6 +463,7 @@ export function ServicePointsPanel({
       )}
 
       {loadError && <div className="form-error">{loadError}</div>}
+      {receivablesError && <div className="form-error">{receivablesError}</div>}
       {scanMessage && <div className="form-error">{scanMessage}</div>}
       {notice && <div className="form-notice">{notice}</div>}
 

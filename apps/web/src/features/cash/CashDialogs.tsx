@@ -1,7 +1,9 @@
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import { formatReais } from "../../lib/money";
 import { Modal } from "../employees/Modal";
 import type { CashSession, CashSource } from "./cashApi";
+import { expectedMethodLabel, receiptPrefill } from "../operations/deliveryReceivables";
+import type { ExpectedMethod } from "../delivery/deliveryLogic";
 import {
   canFinalize,
   closingNotesRequired,
@@ -363,6 +365,7 @@ export function CheckoutDialog({
   sessionId,
   pointLabel,
   totalReais,
+  delivery,
   onNeedCash,
   onDone,
   onClose,
@@ -371,12 +374,25 @@ export function CheckoutDialog({
   sessionId: string;
   pointLabel: string;
   totalReais: number;
+  // Delivery/retirada: forma PRETENDIDA e "troco para" só PRÉ-PREENCHEM (tudo editável); o recebimento usa a RPC idempotente.
+  delivery?: { deliveryOrderId: string; expectedMethod: ExpectedMethod | null; cashChangeFor: number | null } | null;
   onNeedCash: () => void; // caixa fechado/inexistente: a tela oferece "Abrir caixa"
   onDone: () => void;
   onClose: () => void;
 }) {
   const totalCents = Math.round(totalReais * 100);
-  const [drafts, setDrafts] = useState<PaymentDraft[]>(() => (totalCents > 0 ? [newDraft("pix", suggestedAmountText(totalCents))] : []));
+  const [drafts, setDrafts] = useState<PaymentDraft[]>(() => {
+    if (totalCents <= 0) return [];
+    if (!delivery) return [newDraft("pix", suggestedAmountText(totalCents))];
+    const pre = receiptPrefill(delivery.expectedMethod, delivery.cashChangeFor, totalReais);
+    return [{ ...newDraft(pre.method, suggestedAmountText(totalCents)), received: pre.receivedText }];
+  });
+  // Um pedido de recebimento por abertura do diálogo: tentar de novo (rede/clique duplo) reaproveita o MESMO id e nunca duplica.
+  const requestId = useRef<string>(
+    typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : "xxxxxxxx-xxxx-4xxx-8xxx-xxxxxxxxxxxx".replace(/x/g, () => Math.floor(Math.random() * 16).toString(16)),
+  );
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -404,7 +420,8 @@ export function CheckoutDialog({
     if (!finalizable || submitting) return;
     setError(null);
     setSubmitting(true);
-    const result = await source.closeAccount(sessionId, toPaymentPayload(drafts));
+    const payload = toPaymentPayload(drafts);
+    const result = delivery ? await source.receiveDelivery(delivery.deliveryOrderId, payload, requestId.current) : await source.closeAccount(sessionId, payload);
     setSubmitting(false);
     if (result.error === null) {
       onDone();
@@ -418,11 +435,18 @@ export function CheckoutDialog({
   }
 
   return (
-    <Modal title="Fechar conta" onClose={submitting ? () => undefined : onClose}>
+    <Modal title={delivery ? "Receber / Fechar conta" : "Fechar conta"} onClose={submitting ? () => undefined : onClose}>
       <form onSubmit={handleSubmit}>
         <p className="modal-text">
           <strong>{pointLabel}</strong>
         </p>
+        {delivery && (
+          <p className="field-hint" data-testid="checkout-intended">
+            Forma pretendida pelo cliente: <strong>{expectedMethodLabel({ expectedMethod: delivery.expectedMethod }) ?? "não informada"}</strong>
+            {delivery.cashChangeFor !== null ? <> · troco para <strong>{formatReais(delivery.cashChangeFor)}</strong></> : null}
+            . Confirme a forma REAL recebida: você pode alterar.
+          </p>
+        )}
         <dl className="checkout-summary">
           <div>
             <dt>Total da conta</dt>

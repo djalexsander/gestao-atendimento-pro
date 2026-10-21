@@ -406,7 +406,7 @@ export function SessionOrderScreen({
         )}
         {canCheckout && header && canOrder && (
           <button className="btn-primary btn-auto" type="button" disabled={checkoutChecking} onClick={() => void startCheckout()}>
-            Fechar conta
+            {isDelivery ? "Receber / Fechar conta" : "Fechar conta"}
           </button>
         )}
       </div>
@@ -426,6 +426,7 @@ export function SessionOrderScreen({
           sessionId={sessionId}
           pointLabel={sessionLabel}
           totalReais={checkoutTotal}
+          delivery={header.delivery ? { deliveryOrderId: header.delivery.deliveryOrderId, expectedMethod: header.delivery.expectedMethod, cashChangeFor: header.delivery.cashChangeFor } : null}
           onNeedCash={() => setCheckoutStage("open-cash")}
           onDone={() => setCheckoutStage("done")}
           onClose={() => {
