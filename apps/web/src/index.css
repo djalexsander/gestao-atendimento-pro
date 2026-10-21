@@ -258,6 +258,10 @@ button {
   gap: 16px;
   font-size: 14px;
   color: var(--text-muted);
+  /* quando não cabe na linha (ex.: 768 px com todos os atalhos), quebra em linhas em vez de estourar a página */
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .company-switcher {
