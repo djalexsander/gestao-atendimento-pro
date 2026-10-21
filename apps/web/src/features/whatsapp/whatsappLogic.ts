@@ -560,3 +560,80 @@ export function aiSettingsError(
   }
   return null;
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Chat estilo WhatsApp (Fase 3): regras PURAS de rolagem. A identidade de uma mensagem é o id; mudar status/erro de uma
+// mensagem que já existe NUNCA é "mensagem nova" (não rola, não conta).
+// ---------------------------------------------------------------------------------------------------------------------
+/** Distância (px) do fim a partir da qual o usuário já é considerado "lendo o histórico". */
+export const NEAR_BOTTOM_PX = 120;
+/** A rolagem automática por envio próprio só vale logo depois do envio (evita puxar o usuário muito tempo depois). */
+export const OWN_SEND_WINDOW_MS = 15_000;
+
+export interface ScrollMetrics {
+  scrollTop: number;
+  clientHeight: number;
+  scrollHeight: number;
+}
+
+/** Perto do fim da área de mensagens? (inclui o caso de conteúdo menor que a área.) */
+export function isNearBottom(m: ScrollMetrics, threshold = NEAR_BOTTOM_PX): boolean {
+  return m.scrollHeight - m.scrollTop - m.clientHeight <= threshold;
+}
+
+/** Ids de mensagens que ainda não tinham sido vistas nesta conversa. `seen === null` = 1ª carga (nada é "novo"). */
+export function detectNewMessageIds(seen: ReadonlySet<string> | null, next: ReadonlyArray<Pick<MessageRow, "id">>): string[] {
+  if (seen === null) return [];
+  return next.filter((m) => !seen.has(m.id)).map((m) => m.id);
+}
+
+export interface ScrollPlanInput {
+  /** true na primeira carga desta conversa (abrir/trocar de conversa). */
+  firstLoad: boolean;
+  /** Mensagens realmente novas (por id) desta atualização. */
+  newMessages: ReadonlyArray<Pick<MessageRow, "id" | "direction">>;
+  /** O usuário estava perto do fim ANTES desta atualização? */
+  nearBottom: boolean;
+  /** O atendente acabou de enviar (dentro da janela de OWN_SEND_WINDOW_MS)? */
+  ownSendPending: boolean;
+  /** Contador atual de "novas mensagens" ainda não vistas. */
+  unread: number;
+}
+export interface ScrollPlan {
+  scrollToEnd: boolean;
+  unread: number;
+  /** O envio próprio foi consumido por esta atualização (a mensagem dele chegou). */
+  consumedOwnSend: boolean;
+}
+
+/** Decide se rola ao fim e quanto vale o contador. Mensagem atualizada (status) não passa por aqui como "nova". */
+export function planMessageScroll(i: ScrollPlanInput): ScrollPlan {
+  if (i.firstLoad) return { scrollToEnd: true, unread: 0, consumedOwnSend: false };
+  if (i.newMessages.length === 0) return { scrollToEnd: false, unread: i.unread, consumedOwnSend: false };
+  // a mensagem que o atendente acabou de enviar sempre leva ao fim, mesmo lendo o histórico
+  if (i.ownSendPending && i.newMessages.some((m) => m.direction === "outbound")) return { scrollToEnd: true, unread: 0, consumedOwnSend: true };
+  if (i.nearBottom) return { scrollToEnd: true, unread: 0, consumedOwnSend: false };
+  return { scrollToEnd: false, unread: i.unread + i.newMessages.length, consumedOwnSend: false };
+}
+
+/** Rótulo do botão flutuante. */
+export function newMessagesLabel(count: number): string {
+  return count <= 1 ? "↓ Novas mensagens" : `↓ ${count} novas mensagens`;
+}
+
+/** Espaço mínimo confortável para o chat; abaixo disso (teclado virtual aberto, celular deitado) o painel passa a ocupar a janela toda. */
+export const CHAT_COMFORT_PX = 300;
+
+export interface FillPlan {
+  height: number;
+  /** Se não for null, rolar a PÁGINA até este y para o painel encostar no topo da janela (cabeçalho do app sai de cena). */
+  scrollPageTo: number | null;
+}
+
+/** Altura do painel do chat: ocupa o que sobra da janela (visual viewport, que encolhe com o teclado virtual). */
+export function fillPlan(viewportHeight: number, topInDocument: number, bottomGap: number): FillPlan {
+  const room = Math.floor(viewportHeight - topInDocument - bottomGap);
+  if (room >= CHAT_COMFORT_PX) return { height: room, scrollPageTo: null };
+  // sem espaço (teclado aberto): o painel ocupa a janela e o cabeçalho do app rola para fora
+  return { height: Math.max(200, Math.floor(viewportHeight - 8)), scrollPageTo: Math.max(0, Math.floor(topInDocument - 4)) };
+}

@@ -3,6 +3,7 @@ import { useAuth } from "../../app/useAuth";
 import { createCoalescedRunner } from "../orders/coalesce";
 import { supabaseWhatsappSource, type WhatsappSource } from "./whatsappApi";
 import { Modal } from "../employees/Modal";
+import { useChatScroll, useFillViewport } from "./useChatScroll";
 import {
   AI_BADGE_EDITED_TEXT,
   AI_BADGE_TEXT,
@@ -33,6 +34,7 @@ import {
   formatClock,
   formatWaPhone,
   isMediaType,
+  newMessagesLabel,
   listTime,
   messageText,
   statusActions,
@@ -97,7 +99,13 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
   const aiRunning = useRef(false);
   const selectedRef = useRef<string | null>(null);
   selectedRef.current = selectedId;
-  const bottomRef = useRef<HTMLDivElement | null>(null);
+  // celular: atendente/status ficam recolhidos (o chat usa a altura) e o painel do cliente vira uma tela própria
+  const [detailsOpen, setDetailsOpen] = useState(false);
+  const [sideOpen, setSideOpen] = useState(false);
+  const inboxRef = useRef<HTMLDivElement | null>(null);
+  // Chat com rolagem própria: só mensagem NOVA (id novo) rola/conta; status (sent/delivered/read) não
+  const chat = useChatScroll(selectedId, messages);
+  useFillViewport(inboxRef);
   // Mesmo texto reenviado depois de falha de REDE (sem resposta) reutiliza o mesmo pedido: nunca duplica a mensagem.
   const pendingRequest = useRef<{ text: string; id: string } | null>(null);
 
@@ -175,6 +183,8 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
     setMenuOpen(false);
     setConfirmDelete(false);
     setDeleteError(null);
+    setDetailsOpen(false);
+    setSideOpen(false);
     setAiState(AI_IDLE);
     setAiError(null);
     aiRunning.current = false;
@@ -185,9 +195,10 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
     void source.markRead(selectedId).then(() => requestConversations());
   }, [companyId, selectedId, source, requestMessages, requestSuggestions, requestConversations]);
 
+  // A conversa aberta sumiu da caixa (excluída por outra pessoa/aparelho): limpa o painel, o contador e o composer
   useEffect(() => {
-    bottomRef.current?.scrollIntoView?.({ block: "end" });
-  }, [messages]);
+    if (selectedId && conversations !== null && !conversations.some((c) => c.id === selectedId)) setSelectedId(null);
+  }, [conversations, selectedId]);
 
   const visible = useMemo(() => applyFilter(conversations ?? [], filter, search, userId), [conversations, filter, search, userId]);
   const unread = useMemo(() => totalUnread(conversations ?? []), [conversations]);
@@ -248,6 +259,7 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
       setDraft("");
       setAiState(AI_IDLE);
       setAiError(null);
+      chat.notifyOwnSend(); // a mensagem enviada leva ao fim, mesmo lendo o histórico
     }
     requestMessages();
     requestConversations();
@@ -297,7 +309,7 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
   const known = agents.some((a) => a.userId === assignee);
 
   return (
-    <div className={`wa-inbox${selected ? " wa-has-selected" : ""}`}>
+    <div ref={inboxRef} className={`wa-inbox${selected ? " wa-has-selected" : ""}${sideOpen ? " wa-side-open" : ""}`}>
       <div className="wa-header">
         <div>
           <strong>WhatsApp</strong>
@@ -383,7 +395,7 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
           </ul>
         </section>
 
-        <section className="wa-chat" aria-label="Conversa">
+        <section className={`wa-chat${detailsOpen ? " wa-details-open" : ""}`} aria-label="Conversa">
           {!selected ? (
             <p className="op-state wa-empty">Selecione uma conversa para ver as mensagens.</p>
           ) : (
@@ -397,6 +409,14 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
                   <div className="muted">
                     {formatWaPhone(selected.phone)} · {STATUS_LABEL[selected.status]}
                   </div>
+                </div>
+                <div className="wa-head-toggles">
+                  <button type="button" className="btn-secondary btn-small wa-detail-toggle" aria-expanded={detailsOpen} onClick={() => setDetailsOpen((o) => !o)}>
+                    Atendimento
+                  </button>
+                  <button type="button" className="btn-secondary btn-small wa-side-toggle" onClick={() => setSideOpen(true)}>
+                    Cliente
+                  </button>
                 </div>
               </div>
 
@@ -482,7 +502,8 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
               )}
               {actionError && <div className="form-error" role="alert">{actionError}</div>}
 
-              <div className="wa-messages" role="log" aria-live="polite">
+              <div className="wa-messages-wrap">
+              <div className="wa-messages" role="log" aria-live="polite" aria-relevant="additions" aria-label="Mensagens da conversa" ref={chat.scrollerRef} onScroll={chat.onScroll}>
                 {messages === null && <p className="op-state">Carregando…</p>}
                 {messages?.length === 0 && <p className="op-state">Sem mensagens.</p>}
                 {messages?.map((m) => (
@@ -500,7 +521,12 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
                     )}
                   </div>
                 ))}
-                <div ref={bottomRef} />
+              </div>
+              {chat.unread > 0 && (
+                <button type="button" className="wa-new-messages" onClick={chat.jumpToEnd} data-testid="wa-new-messages">
+                  {newMessagesLabel(chat.unread)}
+                </button>
+              )}
               </div>
 
               <div className="wa-composer">
@@ -584,7 +610,12 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
             <p className="muted">Os dados do cliente aparecem aqui.</p>
           ) : (
             <>
-              <h3 className="wa-side-title">Cliente</h3>
+              <div className="wa-side-head">
+                <button type="button" className="btn-secondary btn-small wa-side-back" onClick={() => setSideOpen(false)}>
+                  ← Conversa
+                </button>
+                <h3 className="wa-side-title">Cliente</h3>
+              </div>
               {suggestions === null && <p className="muted">Carregando…</p>}
               {suggestions?.linked && (
                 <div className="wa-customer">
