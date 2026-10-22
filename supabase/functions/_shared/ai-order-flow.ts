@@ -12,7 +12,7 @@
 import { norm, type AutoMessage } from "./ai-auto.ts";
 import {
   LEGACY_SHOW_OPTIONS_RE, MSG_ALREADY_CONFIRMED, MSG_CANCEL_AFTER_ORDER, MSG_CANCELLED, MSG_CHOICE_GIVEUP, MSG_FAILED, MSG_NOT_FOUND, MSG_NO_DRAFT, MSG_REPROMPT, MSG_TOO_BIG,
-  boundedTail, countChoiceAsks, parseChoiceQuestion, pickChoice, renderChoice, buildOrderSystemPrompt, buildOrderUserBlock, classifyConfirmationBatch, decideQuantity, hasOrderVerb, isCancelIntent, matchItem,
+  boundedTail, countChoiceAsks, parseChoiceQuestion, parseLetterReply, pickChoice, renderChoice, renderLetterChoice, MSG_CHOICE_EXPIRED, buildOrderSystemPrompt, buildOrderUserBlock, classifyConfirmationBatch, decideQuantity, hasOrderVerb, isCancelIntent, matchItem,
   nextQuestion, parseOrderState, plain, removalIntent, renderAmbiguous, renderAskQuantity, renderCreated, renderPriceChanges, renderSummary,
   renderUnavailable, renderZoneAmbiguous, startsWithQuantity, validateExtraction, brl, PAYMENT_LABELS,
   type ExtractedOp, type OrderState,
@@ -88,23 +88,60 @@ export async function runOrderFlow(io: OrderFlowIo, input: OrderFlowInput): Prom
     }
 
     let pendingChoiceBlock: string | null = null;
-    // 1b) resposta a uma pergunta de ESCOLHA nossa ("Para coca lata (2 unidades), encontrei estas opções: ..."): resolvida aqui, SEM
-    //     modelo, mantendo a quantidade que estava pendente. Nunca vira handoff por ambiguidade; só após 3 tentativas seguidas sem entender.
-    const choice = texts.length > 0 ? parseChoiceQuestion(lastBot) : null;
-    if (choice) {
-      const last = texts[texts.length - 1];
-      const pick = pickChoice(last, choice.options);
-      if (pick.kind === "one") {
-        const exec = await executeExtraction(io, input, state, [addOpFor(choice.options[pick.index], choice.qty)], `${joined} ${choice.qty ?? ""}`, true, inbound.length, lastBot);
-        if (exec.kind === "legacy") return { handled: false, active: true };
-        return { handled: true, outcome: await sendComposed(io, input, exec) };
+    // 1b) desambiguação ATIVA (contexto PERSISTIDO no banco): letra/ordinal/nome é resolvido AQUI, sem modelo, e o item entra com a
+    //     quantidade guardada. Sem contexto ativo "A" não significa nada. Ambiguidade nunca vira handoff (só após 3 tentativas seguidas).
+    const ch = texts.length > 0 ? await getChoice(io, jobId) : null;
+    const lastTxt = texts.length > 0 ? texts[texts.length - 1] : "";
+    const newInstruction = hasOrderVerb(lastTxt) || startsWithQuantity(lastTxt) || norm(lastTxt).replace(/[^a-z0-9 ]+/g, " ").trim().split(/\s+/).length > 4 || classifyConfirmationBatch([lastTxt]) === "confirm";
+    if (ch?.active) {
+      const act = ch.active;
+      const names = act.options.map((o) => o.name ?? "");
+      const li = parseLetterReply(lastTxt);
+      const byName = li === null ? pickChoice(lastTxt, names) : null;
+      const idx = li !== null ? (li < act.options.length ? li : -1) : byName?.kind === "one" ? byName.index : -1;
+      const live = act.options.filter((o) => o.active);   // a lista que volta ao cliente só mostra o que ainda pode ser pedido (as letras originais não mudam)
+      if (live.length === 0) {
+        await io.rpc("whatsapp_order_choice_cancel", { p_job_id: jobId });
+        return { handled: true, outcome: await io.reply(`${MSG_NOT_FOUND}`, { outcome: "replied", reason: "order_question" }) };
       }
-      // frase longa, com verbo de pedido ou quantidade: é OUTRA instrução (ex.: "quero também um guaraná") => segue para o extrator
-      const newInstruction = hasOrderVerb(last) || startsWithQuantity(last) || norm(last).replace(/[^a-z0-9 ]+/g, " ").trim().split(/\s+/).length > 4 || classifyConfirmationBatch([last]) === "confirm";
-      // várias opções compatíveis ("coca"): pergunta de novo sem chamar o modelo (ele perderia a quantidade pendente)
-      if (!newInstruction && pick.kind === "many") return { handled: true, outcome: await reaskChoice(io, input, choice.block) };
-      // nenhuma opção reconhecida: o extrator ainda pode entender outra instrução; se não entender nada, pergunta de novo
-      if (!newInstruction && pick.kind === "none") pendingChoiceBlock = choice.block;
+      const block = renderLetterChoice(act.source, live.map((o) => o.name ?? ""), "ambiguous", live.map((o) => o.letter));
+      if (idx >= 0) {
+        const r = await io.rpc("whatsapp_order_choice_resolve", { p_job_id: jobId, p_choice_id: act.choiceId, p_letter: act.options[idx].letter, p_message_id: latest, p_expected_latest: latest, p_tail_count: inbound.length });
+        const d = isObj(r.data) ? r.data : null;
+        if (r.error || !d) throw new FlowAbort("left_for_retry", "rpc_error");
+        if (d.result === "blocked") {
+          if (d.reason === "stale_context") throw new StaleContext();
+          if (d.reason === "human_control") throw new FlowAbort("aborted_human", "ai_paused");
+          throw new FlowAbort("aborted_mode", String(d.reason ?? "blocked"));
+        }
+        if (d.result === "ok" && isObj(d.product)) return { handled: true, outcome: await sendComposed(io, input, choiceExec(state, d)) };
+        if (d.result === "apply_failed") return { handled: true, outcome: await sendComposed(io, input, choiceFailedExec(state, d)) };
+        if (d.result === "product_inactive") return { handled: true, outcome: await reaskChoice(io, input, block, "Essa opção não está mais disponível.") };
+        if (d.result === "expired") return { handled: true, outcome: await io.reply(MSG_CHOICE_EXPIRED, { outcome: "replied", reason: "order_question" }) };
+        // already_resolved / not_found: o contexto mudou entre a leitura e a escolha; segue o fluxo normal
+      } else if (li !== null || byName?.kind === "many") {
+        return { handled: true, outcome: await reaskChoice(io, input, block) };   // letra fora da lista ou nome que serve para várias opções
+      } else if (newInstruction) {
+        await io.rpc("whatsapp_order_choice_cancel", { p_job_id: jobId });   // o cliente mudou de assunto/pedido: o contexto antigo deixa de valer
+      } else {
+        pendingChoiceBlock = block;   // o extrator ainda pode entender outra coisa; se não entender nada, pergunta de novo
+      }
+    } else if (ch && (ch.expired || (parseLetterReply(lastTxt) !== null && !!parseChoiceQuestion(lastBot)))) {
+      // contexto expirado (ou já resolvido) e o cliente respondeu só com uma letra: não adivinha, pede o item de novo
+      return { handled: true, outcome: await io.reply(MSG_CHOICE_EXPIRED, { outcome: "replied", reason: "order_question" }) };
+    } else {
+      // compatibilidade: pergunta de escolha ANTIGA (bullets) ainda no histórico de conversas existentes, sem contexto no banco
+      const choice = texts.length > 0 ? parseChoiceQuestion(lastBot) : null;
+      if (choice) {
+        const pick = pickChoice(lastTxt, choice.options);
+        if (pick.kind === "one") {
+          const exec = await executeExtraction(io, input, state, [addOpFor(choice.options[pick.index], choice.qty)], `${joined} ${choice.qty ?? ""}`, true, inbound.length, lastBot);
+          if (exec.kind === "legacy") return { handled: false, active: true };
+          return { handled: true, outcome: await sendComposed(io, input, exec) };
+        }
+        if (!newInstruction && pick.kind === "many") return { handled: true, outcome: await reaskChoice(io, input, choice.block) };
+        if (!newInstruction && pick.kind === "none") pendingChoiceBlock = choice.block;
+      }
     }
 
     // 1c) "sim" à pergunta ANTIGA "Quer que eu mostre as opções disponíveis?" (conversas que ainda a têm no histórico): mostra o cardápio real
@@ -276,6 +313,7 @@ async function executeExtraction(
   let payment = null as { method: string | null; needsChange: boolean | null; amount: number | null } | null;
   let state = state0;
   let considered = 0;
+  let choiceOpened = false;
   // quantidade "viva" de cada linha dentro deste lote (várias retiradas na mesma mensagem não podem usar o estado velho)
   const qtyNow = new Map<string, number>();
   const liveQty = (i: { item_id: string; quantity: number }) => qtyNow.get(i.item_id) ?? i.quantity;
@@ -300,11 +338,25 @@ async function executeExtraction(
         considered++;
         const rr = await resolveItem(op.product_text);
         if (rr.result === "ambiguous" || rr.result === "none") {
-          // opções REAIS na mesma resposta (sem "quer que eu mostre?") e a quantidade pendente fica registrada na própria pergunta
+          // opções REAIS na mesma resposta, por LETRA; a quantidade/observação ficam num contexto PERSISTENTE (não dependem da memória do worker)
           const pend = decideQuantity(op, text);
           const pq = pend.kind === "qty" ? pend.qty : null;
-          const c = ((rr.result === "ambiguous" ? rr.candidates : rr.near) as Array<{ name: string; price: number | string }> | undefined) ?? [];
-          questions.push(c.length > 0 ? renderChoice(op.product_text, pq, c, rr.result === "ambiguous" ? "ambiguous" : "near") : MSG_NOT_FOUND);
+          const kind = rr.result === "ambiguous" ? "ambiguous" : "near";
+          const c = ((rr.result === "ambiguous" ? rr.candidates : rr.near) as Array<{ product_id?: string; name: string; price: number | string }> | undefined) ?? [];
+          const total = rr.result === "ambiguous" ? Number(rr.total_candidates ?? c.length) : c.length;
+          if (c.length === 0) { questions.push(MSG_NOT_FOUND); break; }
+          if (total > 5) { questions.push(`Encontrei muitas opções de ${plain(op.product_text, 50)}. Pode me dizer mais detalhes do item (o nome completo)?`); break; }
+          if (choiceOpened) { notes.push(`Para ${plain(op.product_text, 50)}, me diga depois qual você quer.`); break; }
+          const ids = c.map((x) => (typeof x.product_id === "string" ? x.product_id : ""));
+          if (ids.every(Boolean)) {
+            const o = await io.rpc("whatsapp_order_choice_open", { p_job_id: jobId, p_source_text: op.product_text, p_quantity: pq, p_notes: op.notes, p_product_ids: ids, p_expected_latest: latest });
+            const od = isObj(o.data) ? o.data : null;
+            if (od && od.result === "blocked" && od.reason === "stale_context") throw new StaleContext();
+            if (od && od.result === "blocked" && od.reason === "human_control") throw new FlowAbort("aborted_human", "ai_paused");
+            if (!o.error && od && od.result === "ok") { choiceOpened = true; questions.push(renderLetterChoice(op.product_text, c.map((x) => x.name), kind)); break; }
+          }
+          // sem contexto persistido (migration ausente/falha): pergunta no formato antigo, sem letra (a resposta é lida da própria mensagem)
+          questions.push(renderChoice(op.product_text, pq, c, kind));
           break;
         }
         const prod = isObj(rr.product) ? rr.product : null;
@@ -462,10 +514,45 @@ async function executeExtraction(
   return { kind: "reply", state, acks, notes, questions };
 }
 
-/** Repete a lista de opções (até 3 perguntas seguidas); depois disso encaminha à equipe, sem laço infinito. */
-async function reaskChoice(io: OrderFlowIo, input: OrderFlowInput, block: string): Promise<string> {
-  if (countChoiceAsks(input.messages) >= 3) return io.reply(MSG_CHOICE_GIVEUP, { outcome: "handoff", reason: "order_unresolved" });
-  return io.reply(clampBody(`Não consegui identificar qual você quer.\n${block}`), { outcome: "replied", reason: "order_question" });
+interface ActiveChoice { choiceId: string; source: string; quantity: number | null; options: Array<{ letter: string; productId: string; name: string | null; active: boolean }> }
+/** Contexto de desambiguação ATIVO da conversa do job (o banco expira o vencido). null = função ausente (migration ainda não aplicada). */
+async function getChoice(io: OrderFlowIo, jobId: string): Promise<{ active: ActiveChoice | null; expired: boolean } | null> {
+  const r = await io.rpc("whatsapp_order_choice_get", { p_job_id: jobId });
+  if (r.error) {
+    if (!isMissingFunction(r.error)) console.error("whatsapp-order: choice_get falhou", { code: r.error.code ?? null });
+    return null;
+  }
+  const d = isObj(r.data) ? r.data : null;
+  if (!d || d.result === "blocked") return null;
+  if (d.result !== "ok" || typeof d.choice_id !== "string" || !Array.isArray(d.options)) return { active: null, expired: d.expired === true };
+  const options = (d.options as unknown[]).filter(isObj).map((o) => ({ letter: String(o.letter), productId: String(o.product_id), name: typeof o.name === "string" ? o.name : null, active: o.active === true && o.available !== false }));
+  if (options.length === 0) return { active: null, expired: false };
+  return { active: { choiceId: d.choice_id, source: typeof d.source_text === "string" ? d.source_text : "o item", quantity: typeof d.quantity === "number" ? d.quantity : null, options }, expired: false };
+}
+
+/** Resultado de whatsapp_order_choice_resolve: o banco JÁ aplicou o item (quantidade e observação guardadas) na mesma transação da escolha. */
+function choiceExec(state: OrderState | null, d: Record<string, unknown>): Extract<Exec, { kind: "reply" }> {
+  const prod = isObj(d.product) ? d.product : {};
+  const qty = typeof d.quantity === "number" ? d.quantity : null;
+  if (d.applied !== true || !qty) return { kind: "reply", state, acks: [], notes: [], questions: [renderAskQuantity(String(prod.name ?? "o item"))] };
+  return { kind: "reply", state: parseOrderState(d.state) ?? state, acks: [{ kind: "add", text: `${qty}x ${plain(String(prod.name ?? ""), 80)}` }], notes: [], questions: [] };
+}
+function choiceFailedExec(state: OrderState | null, d: Record<string, unknown>): Extract<Exec, { kind: "reply" }> {
+  const prod = isObj(d.product) ? d.product : {};
+  const qty = typeof d.quantity === "number" ? d.quantity : 1;
+  const notes: string[] = [];
+  const questions: string[] = [];
+  mapInvalid(String(d.reason ?? ""), { ops: [], acks: [{ kind: "add", text: `${qty}x ${plain(String(prod.name ?? "esse item"), 80)}` }] }, notes, questions);
+  return { kind: "reply", state, acks: [], notes, questions };
+}
+
+/** Repete a lista (até 3 perguntas seguidas); depois cancela o contexto e encaminha à equipe, sem laço infinito. */
+async function reaskChoice(io: OrderFlowIo, input: OrderFlowInput, block: string, lead = "Não consegui identificar qual você quer."): Promise<string> {
+  if (countChoiceAsks(input.messages) >= 3) {
+    await io.rpc("whatsapp_order_choice_cancel", { p_job_id: input.jobId });
+    return io.reply(MSG_CHOICE_GIVEUP, { outcome: "handoff", reason: "order_unresolved" });
+  }
+  return io.reply(clampBody(`${lead}\n${block}`), { outcome: "replied", reason: "order_question" });
 }
 
 /** Operação sintética "adicionar item" para a escolha do cliente (texto = nome exato da opção; quantidade = a que ficou pendente). */

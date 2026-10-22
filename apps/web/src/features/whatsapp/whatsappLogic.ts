@@ -74,6 +74,13 @@ export interface ConnectionSummary {
   mode: "test" | "live" | null;
   displayPhoneNumber: string | null;
   businessName: string | null;
+  /** Módulo WhatsApp contratado. false = histórico em SOMENTE LEITURA (sem enviar, atribuir, fechar, excluir). Ausente = true. */
+  moduleActive: boolean;
+  moduleIa: boolean;
+  connectedAt: string | null;
+  disconnectedAt: string | null;
+  unreadTotal: number;
+  openConversations: number;
 }
 
 export const FILTER_LABEL: Record<ConversationFilter, string> = {
@@ -90,6 +97,7 @@ export const STATUS_LABEL: Record<ConversationStatus, string> = { open: "Aberta"
 
 /** Papéis que enxergam o WhatsApp (espelha o banco: production e courier ficam de fora). */
 export const WHATSAPP_ROLES: readonly CompanyRole[] = ["owner", "admin", "attendant", "cashier"];
+export const READONLY_MODULE_TEXT = "O módulo WhatsApp não está contratado. O histórico continua disponível para consulta, sem envio.";
 export const canUseWhatsapp = (role: CompanyRole | null | undefined): boolean => !!role && WHATSAPP_ROLES.includes(role);
 
 // ---------------------------------------------------------------------------
@@ -267,6 +275,12 @@ export function toConnectionSummary(raw: unknown): ConnectionSummary {
     mode: o.mode === "live" ? "live" : o.mode === "test" ? "test" : null,
     displayPhoneNumber: typeof o.display_phone_number === "string" ? o.display_phone_number : null,
     businessName: typeof o.business_name === "string" ? o.business_name : null,
+    moduleActive: o.module_whatsapp !== false,
+    moduleIa: o.module_ia === true,
+    connectedAt: typeof o.connected_at === "string" ? o.connected_at : null,
+    disconnectedAt: typeof o.disconnected_at === "string" ? o.disconnected_at : null,
+    unreadTotal: typeof o.unread_total === "number" ? o.unread_total : 0,
+    openConversations: typeof o.open_conversations === "number" ? o.open_conversations : 0,
   };
 }
 
@@ -289,9 +303,10 @@ export function windowState(lastInboundAt: string | null | undefined, now: Date 
 export const OUTSIDE_WINDOW_TEXT = "Fora da janela de atendimento. Será necessário usar um template aprovado.";
 export const MAX_BODY_LENGTH = 4096;
 
-export type ComposerBlock = "closed" | "window" | "empty" | "too_long" | null;
+export type ComposerBlock = "module" | "closed" | "window" | "empty" | "too_long" | null;
 /** Por que o composer não pode enviar agora (null = pode). */
-export function composerBlock(c: Pick<ConversationRow, "status" | "lastInboundAt">, body: string, now: Date = new Date()): ComposerBlock {
+export function composerBlock(c: Pick<ConversationRow, "status" | "lastInboundAt">, body: string, now: Date = new Date(), moduleActive = true): ComposerBlock {
+  if (!moduleActive) return "module";
   if (c.status === "closed") return "closed";
   if (!windowState(c.lastInboundAt, now).open) return "window";
   const text = body.trim();

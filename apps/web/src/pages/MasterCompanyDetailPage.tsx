@@ -16,7 +16,7 @@ import { SubscriptionTimeline } from "../features/master/SubscriptionTimeline";
 import { TrialPanel } from "../features/master/TrialPanel";
 import { CompanyDataCard } from "../features/master/CompanyDataCard";
 import { CompanySummary } from "../features/master/CompanySummary";
-import { isCommercialModule, totalBreakdown } from "../features/master/masterLogic";
+import { totalBreakdown } from "../features/master/masterLogic";
 import { formatCents } from "../lib/money";
 import { EVENT_LABEL, MANUAL_STATUSES, STATUS_LABEL } from "../lib/subscriptionLabels";
 import type { CatalogModule, CatalogPlan, CompanyDetail, CompanyTrial, SubscriptionStatus } from "../lib/types";
@@ -177,7 +177,7 @@ function SubscribeForm({
   const [planId, setPlanId] = useState(activePlans[0]?.id ?? "");
   const [extraIds, setExtraIds] = useState<string[]>([]);
   const selectedPlan = activePlans.find((p) => p.id === planId);
-  const extraCandidates = modules.filter((m) => isCommercialModule(m.code) && m.isActive && !selectedPlan?.moduleIds.includes(m.id));
+  const extraCandidates = modules.filter((m) => m.isActive && !selectedPlan?.moduleIds.includes(m.id));
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
@@ -283,7 +283,7 @@ function SubscriptionPanel({
   const includedIds = sub.included_modules.map((m) => m.id);
   const currentExtraIds = sub.extra_modules.map((e) => e.module_id);
   const candidates = modules.filter(
-    (m) => !includedIds.includes(m.id) && isCommercialModule(m.code) && (m.isActive || currentExtraIds.includes(m.id)),
+    (m) => !includedIds.includes(m.id) && (m.isActive || currentExtraIds.includes(m.id)),
   );
   // O registro reservado do período grátis não vira assinatura (o backend recusa a troca para ele).
   const switchablePlans = plans.filter((p) => p.isActive && p.id !== sub.plan.id && p.code !== reservedPlanCode);

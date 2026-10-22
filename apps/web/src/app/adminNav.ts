@@ -14,7 +14,7 @@ export interface NavLeaf {
   path: string;
   status: NavStatus;
   // Item exclusivo de um módulo pago: a sidebar o mostra como "Contratar" quando a empresa não tem o módulo.
-  module?: "financeiro" | "producao" | "estoque" | "impressao" | "delivery" | "whatsapp";
+  module?: "financeiro" | "producao" | "estoque" | "impressao" | "delivery" | "whatsapp" | "ia";
   // Some do menu enquanto o módulo não estiver liberado (em vez de mostrar "contratar"): módulo ainda sem oferta comercial.
   hideWhenLocked?: boolean;
   // Só para placeholders que merecem uma explicação melhor que o texto genérico
@@ -85,7 +85,8 @@ export const ADMIN_NAV: NavEntry[] = [
       { type: "item", label: "Modo de atendimento", path: "/app/configuracoes/modo-atendimento", status: "ready" },
       { type: "item", label: "Impressão", path: "/app/configuracoes/impressao", status: "ready", module: "impressao" },
       { type: "item", label: "Delivery", path: "/app/configuracoes/delivery", status: "ready", module: "delivery", hideWhenLocked: true },
-      { type: "item", label: "IA do WhatsApp", path: "/app/configuracoes/whatsapp-ia", status: "ready", module: "whatsapp", hideWhenLocked: true },
+      { type: "item", label: "WhatsApp", path: "/app/configuracoes/whatsapp", status: "ready", module: "whatsapp", hideWhenLocked: true },
+      { type: "item", label: "Inteligência Artificial", path: "/app/configuracoes/whatsapp-ia", status: "ready", module: "ia", hideWhenLocked: true },
       { type: "item", label: "Notificações", path: "/app/configuracoes/notificacoes", status: "ready" },
       { type: "item", label: "Sistema / Preferências", path: "/app/configuracoes/sistema", status: "ready" },
     ],

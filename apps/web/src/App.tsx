@@ -45,6 +45,7 @@ import {
 import { PrintingSettingsPage } from "./pages/PrintingSettingsPage";
 import { DeliverySettingsPage } from "./pages/DeliverySettingsPage";
 import { WhatsappAiSettingsPage } from "./pages/WhatsappAiSettingsPage";
+import { WhatsappConnectionPage } from "./pages/WhatsappConnectionPage";
 import { ProductCategoriesPage } from "./pages/ProductCategoriesPage";
 import { ProductModifiersPage } from "./pages/ProductModifiersPage";
 import { ProductionSectorsPage } from "./pages/ProductionSectorsPage";
@@ -189,9 +190,8 @@ function App() {
         path="/operacional/whatsapp"
         element={
           <OperationalRoute area="whatsapp">
-            <ModuleGate module="whatsapp">
-              <OperationalWhatsappPage />
-            </ModuleGate>
+            {/* sem ModuleGate: sem o módulo o histórico segue em SOMENTE LEITURA (o banco barra qualquer escrita) */}
+            <OperationalWhatsappPage />
           </OperationalRoute>
         }
       />
@@ -253,7 +253,8 @@ function App() {
         <Route path="configuracoes/impressoras" element={<Navigate to="/app/configuracoes/impressao" replace />} />
         <Route path="configuracoes/impressao" element={<ModuleGate module="impressao"><PrintingSettingsPage /></ModuleGate>} />
         <Route path="configuracoes/delivery" element={<ModuleGate module="delivery"><DeliverySettingsPage /></ModuleGate>} />
-        <Route path="configuracoes/whatsapp-ia" element={<ModuleGate module="whatsapp"><WhatsappAiSettingsPage /></ModuleGate>} />
+        <Route path="configuracoes/whatsapp" element={<WhatsappConnectionPage />} />
+        <Route path="configuracoes/whatsapp-ia" element={<ModuleGate module="ia"><WhatsappAiSettingsPage /></ModuleGate>} />
         <Route path="configuracoes/sistema" element={<SystemSettingsPage />} />
       </Route>
       <Route

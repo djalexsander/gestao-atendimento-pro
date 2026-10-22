@@ -67,6 +67,9 @@ export async function dispatchQueuedMessage(
     if (reason === "connection_inactive") {
       return { ok: false, errorCode: reason, http: 409, friendly: "O WhatsApp desta empresa não está conectado." };
     }
+    if (reason === "module_inactive") {
+      return { ok: false, errorCode: reason, http: 403, friendly: "O módulo WhatsApp não está contratado. O histórico continua disponível para consulta." };
+    }
     return { ok: false, errorCode: reason, http: 503, friendly: "A conexão do WhatsApp não está disponível. Procure o administrador." };
   }
   const phoneNumberId = typeof ctx.phone_number_id === "string" ? ctx.phone_number_id : "";

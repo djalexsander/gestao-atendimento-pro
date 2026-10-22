@@ -1,9 +1,20 @@
 // Regras PURAS da área Master (sem React/Supabase). Os valores vêm do catálogo (nada de preço fixo aqui); o total
 // mensal é sempre "preço do plano + soma dos módulos opcionais ativos". Dinheiro em CENTAVOS.
 
-// Únicos módulos comerciais opcionais desta versão. O núcleo (Atendimento, Comandas/Mesas, Pedidos, Caixa básico,
-// Clientes, Dashboard, Configurações) está no Plano Base e NUNCA é módulo pago.
-export const COMMERCIAL_MODULE_CODES = ["financeiro", "producao", "estoque", "impressao", "delivery"] as const;
+// Módulo comercial = módulo do catálogo oficial (public.modules) que está ATIVO, ou que tem preço (desativado pelo Master,
+// continua listado para poder reativar). Sem lista fixa de códigos: módulo novo/ativado entra sozinho; módulo ainda fora de
+// oferta (inativo e sem preço, ex.: whatsapp e ia) não aparece. O núcleo (Atendimento, Comandas/Mesas, Pedidos, Caixa
+// básico, Clientes, Dashboard, Configurações) está no Plano Base e NUNCA é módulo pago. Mesma regra da soma no banco
+// (master_get_commercial_settings: todo módulo ativo).
+export interface CatalogModuleLike {
+  isActive: boolean;
+  monthlyPriceCents: number;
+}
+export const isCommercialModule = (m: CatalogModuleLike): boolean => m.isActive || m.monthlyPriceCents > 0;
+
+/** Soma dos módulos opcionais ATIVOS (centavos inteiros), a mesma conta do banco. */
+export const activeModulesTotalCents = (modules: CatalogModuleLike[]): number =>
+  modules.filter((m) => m.isActive).reduce((sum, m) => sum + m.monthlyPriceCents, 0);
 
 export const CORE_INCLUDED = ["Atendimento", "Comandas/Mesas", "Pedidos", "Caixa básico", "Clientes", "Dashboard", "Configurações"];
 
@@ -15,7 +26,6 @@ export const MODULE_FEATURES: Record<string, string[]> = {
   delivery: ["Delivery", "Retirada", "Endereços", "Zonas e taxas", "Produção/KDS", "Entregadores", "Integração com Caixa e Estoque"],
 };
 
-export const isCommercialModule = (code: string): boolean => (COMMERCIAL_MODULE_CODES as readonly string[]).includes(code);
 
 export function monthlyTotalCents(baseCents: number, selectedModulePrices: number[]): number {
   return baseCents + selectedModulePrices.reduce((a, b) => a + b, 0);

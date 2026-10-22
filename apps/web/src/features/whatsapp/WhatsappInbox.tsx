@@ -30,6 +30,7 @@ import {
   canUseWhatsapp,
   friendlyDeleteError,
   composerBlock,
+  READONLY_MODULE_TEXT,
   conversationTitle,
   formatClock,
   formatWaPhone,
@@ -204,7 +205,8 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
   const unread = useMemo(() => totalUnread(conversations ?? []), [conversations]);
   const selected = conversations?.find((c) => c.id === selectedId) ?? null;
   const win = selected ? windowState(selected.lastInboundAt) : null;
-  const block = selected ? composerBlock(selected, draft) : null;
+  const readOnly = summary?.moduleActive === false;
+  const block = selected ? composerBlock(selected, draft, new Date(), !readOnly) : null;
   // IA automática (Fase 2): estado por conversa (só aparece com a empresa em 'auto') e a ação Assumir/Devolver
   const shownSendError = visibleSendError(sendError, selectedId, messages);
   const aiState2 = selected ? aiConversationState(aiMode, selected) : null;
@@ -333,6 +335,11 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
           </button>
         </div>
       )}
+      {readOnly && (
+        <div className="form-notice" role="status">
+          {READONLY_MODULE_TEXT}
+        </div>
+      )}
       {summary && !summary.configured && (
         <div className="form-notice" role="status">
           Nenhum número de WhatsApp está conectado a esta empresa.
@@ -425,7 +432,7 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
                   <span className="muted">Atendente</span>
                   <select
                     value={assignee}
-                    disabled={busy}
+                    disabled={busy || readOnly}
                     aria-label="Atendente"
                     onChange={(e) => void runAction(() => source.assign(selected.id, e.target.value === "" ? null : e.target.value))}
                   >
@@ -477,7 +484,7 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
                       key={a.to}
                       type="button"
                       className="btn-secondary btn-small"
-                      disabled={busy}
+                      disabled={busy || readOnly}
                       onClick={() => void runAction(() => source.setStatus(selected.id, a.to as ConversationStatus))}
                     >
                       {a.label}
@@ -492,7 +499,7 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
                     <button
                       type="button"
                       className="btn-secondary btn-small"
-                      disabled={busy}
+                      disabled={busy || readOnly}
                       onClick={() => void runAction(() => source.setAiControl!(selected.id, takeover.to))}
                     >
                       {takeover.label}
@@ -515,7 +522,7 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
                       {statusText(m) ? ` · ${statusText(m)}` : ""}
                     </span>
                     {m.direction === "outbound" && m.status === "failed" && m.body && (
-                      <button type="button" className="btn-secondary btn-small wa-retry" disabled={sending || aiState.status === "loading" || block === "window" || block === "closed"} onClick={() => void doSend(m.body ?? "")}>
+                      <button type="button" className="btn-secondary btn-small wa-retry" disabled={sending || aiState.status === "loading" || block === "module" || block === "window" || block === "closed"} onClick={() => void doSend(m.body ?? "")}>
                         Reenviar
                       </button>
                     )}
@@ -533,6 +540,7 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
                 <div className={`wa-window${win?.open ? "" : " wa-window-closed"}`} role="status">
                   {win ? windowLabel(win) : ""}
                 </div>
+                {block === "module" && <p className="wa-readonly">{READONLY_MODULE_TEXT}</p>}
                 {block === "window" && <p className="wa-readonly">{OUTSIDE_WINDOW_TEXT}</p>}
                 {block === "closed" && <p className="wa-readonly">Reabra a conversa para responder.</p>}
                 {shownSendError && <div className="form-error" role="alert">{shownSendError}</div>}
@@ -556,7 +564,7 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
                     rows={2}
                     value={draft}
                     maxLength={MAX_BODY_LENGTH}
-                    disabled={sending || block === "window" || block === "closed"}
+                    disabled={sending || block === "module" || block === "window" || block === "closed"}
                     onChange={(e) => {
                       setDraft(e.target.value);
                       setSendError(null); // texto novo = nova tentativa: o aviso da anterior não vale mais
@@ -624,7 +632,7 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
                   <button
                     type="button"
                     className="btn-secondary btn-small"
-                    disabled={busy}
+                    disabled={busy || readOnly}
                     onClick={() => void runAction(async () => { const r = await source.linkCustomer(selected.id, null); requestSuggestions(); return r; })}
                   >
                     Desvincular
@@ -647,7 +655,7 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
                         <button
                           type="button"
                           className="btn-secondary btn-small"
-                          disabled={busy}
+                          disabled={busy || readOnly}
                           onClick={() => void runAction(async () => { const r = await source.linkCustomer(selected.id, s.id); requestSuggestions(); return r; })}
                         >
                           Vincular

@@ -29,7 +29,7 @@ export function MasterModulesPage() {
       const [m, p] = await Promise.all([listModules(), listPlans()]);
       if (cancelled) return;
       // Só os módulos comerciais oficiais aparecem: o núcleo está no Plano Base e não é módulo pago.
-      setModules(m.data.filter((x) => isCommercialModule(x.code)));
+      setModules(m.data.filter(isCommercialModule));
       setBaseCents(p.data.find((x) => x.code === "base")?.monthlyPriceCents ?? 0);
       setError(m.error ?? p.error);
       setLoading(false);

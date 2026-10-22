@@ -521,11 +521,48 @@ export function renderChoice(mention: string, qty: number | null, cands: ChoiceO
   return [lead, ...opts.map((c) => `• ${plain(c.name, 80)} — ${brl(c.price)}`), opts.length === 1 ? "É essa que você quer?" : "Qual você prefere?"].join("\n");
 }
 
+// ---- Desambiguação por LETRAS (A..E) com contexto PERSISTENTE (tabela whatsapp_order_choices): a lista é montada só com produtos reais
+// do catálogo, em ordem estável; a letra só vale com um contexto ativo da conversa (decidido pelo banco, não por este texto).
+export const CHOICE_LETTERS = ["A", "B", "C", "D", "E"] as const;
+const listLetters = (l: readonly string[]): string => (l.length === 1 ? l[0] : `${l.slice(0, -1).join(", ")} ou ${l[l.length - 1]}`);
+export function renderLetterChoice(mention: string, names: string[], kind: "ambiguous" | "near" = "ambiguous", letters?: string[]): string {
+  const ls = letters ?? CHOICE_LETTERS.slice(0, names.length);
+  const opts = names.slice(0, 5).map((n, i) => `${ls[i]}) ${plain(n, 80)}`);
+  const m = plain(mention, 50);
+  const lead = kind === "near" ? `Não encontrei exatamente ${m}. Opções parecidas:` : opts.length === 1 ? `Encontrei esta opção de ${m}:` : `Encontrei algumas opções de ${m}:`;
+  const tail = opts.length === 1 ? "É essa? Responda A." : `Qual você prefere? Responda ${listLetters(ls.slice(0, opts.length))}.`;
+  return [lead, ...opts, "", tail].join("\n");
+}
+export const MSG_CHOICE_EXPIRED = "Essa pergunta expirou. Pode me dizer de novo o item que você quer?";
+
+const LETTER_ORDINALS: Record<string, number> = { primeira: 0, primeiro: 0, segunda: 1, segundo: 1, terceira: 2, terceiro: 2, quarta: 3, quarto: 3, quinta: 4, quinto: 4 };
+const LETTER_LEAD = "(?:(?:eu )?(?:quero|prefiro|pode ser|vou de|vou querer|fico com|manda|me ve) )?(?:(?:a|o) )?";
+const LETTER_RE = new RegExp(`^${LETTER_LEAD}(?:opcao |letra )?([a-e])$`);
+const ORDINAL_RE = new RegExp(`^${LETTER_LEAD}(primeira|primeiro|segunda|segundo|terceira|terceiro|quarta|quarto|quinta|quinto)$`);
+/**
+ * Resposta a uma desambiguação ATIVA: "A", "a", "opção A", "quero a A", "a primeira". Devolve o índice (0..4) ou null se a resposta
+ * não for letra/ordinal. Quem chama confere se o índice existe na lista. Fora de um contexto ativo esta função NÃO deve ser usada.
+ */
+export function parseLetterReply(text: string): number | null {
+  const f = flat(text);
+  if (!f) return null;
+  const m = LETTER_RE.exec(f);
+  if (m) return m[1].charCodeAt(0) - 97;
+  const o = ORDINAL_RE.exec(f);
+  return o ? LETTER_ORDINALS[o[1]] : null;
+}
+
 export interface ChoiceQuestion { qty: number | null; options: string[]; block: string }
 /** A última mensagem NOSSA é uma pergunta de escolha (renderChoice)? Devolve quantidade pendente, nomes das opções e o bloco para repetir. */
 export function parseChoiceQuestion(text: string | null): ChoiceQuestion | null {
   if (!text) return null;
   const lines = text.split("\n");
+  // formato com LETRAS ("A) Heineken 350ml"): a quantidade fica no contexto do banco, não na mensagem
+  const leadL = lines.findIndex((l) => /^(encontrei algumas op[cç][oõ]es de |encontrei esta op[cç][aã]o de |n[aã]o encontrei exatamente .*op[cç][oõ]es parecidas:)/i.test(l));
+  if (leadL >= 0) {
+    const named = lines.slice(leadL + 1).map((l) => /^([A-E])\)\s+(.+?)\s*$/.exec(l)).filter((m): m is RegExpExecArray => !!m).map((m) => m[2]);
+    if (named.length > 0) return { qty: null, options: named, block: lines.slice(leadL).join("\n") };
+  }
   const lead = lines.findIndex((l) => /(encontrei estas? op[cç](?:[oõ]es|[aã]o):|op[cç][oõ]es parecidas:)\s*$/i.test(l));
   if (lead < 0) return null;
   const options: string[] = [];

@@ -402,7 +402,7 @@ export function summaryLines(plan: { name: string; monthly_price_cents: number }
 // --- Entitlement de módulos ---------------------------------------------------------------------------------------------
 // Fonte da verdade: o BANCO (tenant_get_entitlements / assert_company_module). Aqui só se decide o que MOSTRAR; a barreira real
 // das operações exclusivas é do backend. Mapa módulo -> recurso (o mesmo documentado na migration 20261007020000).
-export type ModuleCode = "financeiro" | "producao" | "estoque" | "impressao" | "delivery" | "whatsapp";
+export type ModuleCode = "financeiro" | "producao" | "estoque" | "impressao" | "delivery" | "whatsapp" | "ia";
 export const MODULE_NAME: Record<ModuleCode, string> = {
   financeiro: "Financeiro",
   producao: "Produção / KDS",
@@ -410,6 +410,7 @@ export const MODULE_NAME: Record<ModuleCode, string> = {
   impressao: "Impressão Avançada",
   delivery: "Delivery",
   whatsapp: "WhatsApp",
+  ia: "Inteligência Artificial",
 };
 /** Rotas exclusivas de módulo (prefixo -> módulo). Tudo o que não está aqui é núcleo do Plano Base. */
 export const MODULE_ROUTES: ReadonlyArray<readonly [string, ModuleCode]> = [
@@ -423,7 +424,8 @@ export const MODULE_ROUTES: ReadonlyArray<readonly [string, ModuleCode]> = [
   ["/app/configuracoes/impressao", "impressao"],
   ["/operacional/delivery", "delivery"],
   ["/app/configuracoes/delivery", "delivery"],
-  ["/operacional/whatsapp", "whatsapp"],
+  // /operacional/whatsapp NÃO é guardada por módulo: o histórico segue em somente leitura sem o módulo (a tela decide pelo resumo).
+  ["/app/configuracoes/whatsapp-ia", "ia"],
 ];
 export function moduleForPath(pathname: string): ModuleCode | null {
   const hit = MODULE_ROUTES.find(([prefix]) => pathname === prefix || pathname.startsWith(prefix + "/"));
@@ -437,6 +439,7 @@ export function moduleAccess(entitlements: { modules: readonly string[] } | null
 export function lockedModuleText(code: ModuleCode, isOwner: boolean): string {
   // WhatsApp ainda não tem oferta comercial: nunca convida a "adicionar em Meus Planos".
   if (code === "whatsapp") return "O WhatsApp ainda não está disponível para a sua empresa.";
+  if (code === "ia") return "O módulo Inteligência Artificial ainda não está disponível para a sua empresa.";
   return isOwner
     ? `O módulo ${MODULE_NAME[code]} não está contratado. Adicione-o em Meus Planos para usar este recurso.`
     : `O módulo ${MODULE_NAME[code]} não está contratado. Peça ao proprietário da empresa para adicioná-lo.`;
