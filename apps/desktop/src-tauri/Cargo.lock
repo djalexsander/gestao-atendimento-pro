@@ -1301,7 +1301,7 @@ dependencies = [
 
 [[package]]
 name = "gestao-desktop"
-version = "1.0.10"
+version = "1.0.11"
 dependencies = [
  "serde_json",
  "tauri",

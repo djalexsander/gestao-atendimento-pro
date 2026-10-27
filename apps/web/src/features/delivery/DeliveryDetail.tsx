@@ -14,6 +14,8 @@ import {
   METHOD_LABEL,
   TIMING_LABEL,
   availableActions,
+  dispatchBlockedReason,
+  isRefusedReason,
   courierPaymentState,
   etaOf,
   formatAddressLine,
@@ -86,6 +88,8 @@ export function DeliveryDetail({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [cancelOpen, setCancelOpen] = useState(false);
+  const [refuseOpen, setRefuseOpen] = useState(false);
+  const [requireCourier, setRequireCourier] = useState(false);
   const [reason, setReason] = useState("");
   const [couriers, setCouriers] = useState<CourierOption[] | null>(null);
 
@@ -111,6 +115,19 @@ export function DeliveryDetail({
     void source.couriers(companyId).then((r) => setCouriers(r.data ?? []));
   }, [canAssign, couriers, source, companyId]);
 
+  // Regra da empresa "entregador obrigatório": só operadores leem a configuração (o servidor confere de novo).
+  useEffect(() => {
+    if (!operator) return;
+    let live = true;
+    void source.settings(companyId).then((r) => {
+      if (live && r.data) setRequireCourier(r.data.requireCourierForDispatch);
+    });
+    return () => {
+      live = false;
+    };
+  }, [operator, source, companyId]);
+  const dispatchBlock = dispatchBlockedReason(row, requireCourier);
+
   async function run(fn: () => Promise<{ error: string | null }>) {
     if (busy) return;
     setBusy(true);
@@ -125,8 +142,8 @@ export function DeliveryDetail({
     void load();
   }
 
-  const statusActions: Array<Exclude<DeliveryAction, "cancel" | "assign" | "receive">> = actions.filter(
-    (a): a is Exclude<DeliveryAction, "cancel" | "assign" | "receive"> => a === "out_for_delivery" || a === "delivered" || a === "picked_up",
+  const statusActions: Array<Exclude<DeliveryAction, "cancel" | "refuse" | "assign" | "receive">> = actions.filter(
+    (a): a is Exclude<DeliveryAction, "cancel" | "refuse" | "assign" | "receive"> => a === "out_for_delivery" || a === "delivered" || a === "picked_up",
   );
   const eta = etaOf(row);
 
@@ -160,7 +177,7 @@ export function DeliveryDetail({
           {row.cashChangeFor !== null && <div><dt>Troco para</dt><dd><strong>{formatReais(row.cashChangeFor)}</strong></dd></div>}
           {row.notes && <div><dt>Observação</dt><dd>{row.notes}</dd></div>}
           {row.fulfillment === "delivery" && <div><dt>Entregador</dt><dd>{row.courierName ?? "Sem entregador"}</dd></div>}
-          {row.cancelReason && <div><dt>Motivo do cancelamento</dt><dd>{row.cancelReason}</dd></div>}
+          {row.cancelReason && <div><dt>{isRefusedReason(row.cancelReason) ? "Entrega recusada" : "Motivo do cancelamento"}</dt><dd>{row.cancelReason}</dd></div>}
         </dl>
 
         <h4 className="dl-h">Itens</h4>
@@ -243,7 +260,7 @@ export function DeliveryDetail({
 
         <div className="modal-actions dl-actions">
           {statusActions.map((a) => (
-            <button key={a} type="button" className="btn-primary btn-auto" disabled={busy} onClick={() => void run(() => source.setStatus(row.id, a))}>
+            <button key={a} type="button" className="btn-primary btn-auto" disabled={busy || (a === "out_for_delivery" && !!dispatchBlock)} title={a === "out_for_delivery" ? dispatchBlock ?? undefined : undefined} onClick={() => void run(() => source.setStatus(row.id, a))}>
               {ACTION_LABEL[a]}
             </button>
           ))}
@@ -252,13 +269,48 @@ export function DeliveryDetail({
               {ACTION_LABEL.receive}
             </Link>
           )}
-          {actions.includes("cancel") && !cancelOpen && (
+          {actions.includes("refuse") && !refuseOpen && !cancelOpen && (
+            <button type="button" className="btn-secondary dl-danger" disabled={busy} onClick={() => { setError(null); setRefuseOpen(true); }}>
+              {ACTION_LABEL.refuse}
+            </button>
+          )}
+          {actions.includes("cancel") && !cancelOpen && !refuseOpen && (
             <button type="button" className="btn-secondary dl-danger" disabled={busy} onClick={() => setCancelOpen(true)}>
               {ACTION_LABEL.cancel}
             </button>
           )}
           <button type="button" className="btn-secondary" onClick={onClose}>Fechar</button>
         </div>
+
+        {dispatchBlock && operator && <p className="field-hint dl-bad" role="status">{dispatchBlock}</p>}
+
+        {refuseOpen && (
+          <form
+            className="dl-cancel"
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!reason.trim()) {
+                setError("Informe o motivo da recusa.");
+                return;
+              }
+              void run(async () => {
+                const r = await source.refuse(row.id, reason.trim());
+                if (!r.error) setRefuseOpen(false);
+                return r;
+              });
+            }}
+          >
+            <p className="field-hint">Use quando o cliente não aceitar o pedido na porta. Os itens são cancelados pelo fluxo oficial (alimento já pronto não volta ao estoque). Se houver valor recebido pelo entregador ou pagamento no Caixa, resolva isso antes: o sistema não estorna sozinho.</p>
+            <label className="dl-field">
+              <span>Motivo da recusa</span>
+              <input value={reason} maxLength={180} onChange={(e) => setReason(e.target.value)} autoFocus />
+            </label>
+            <div className="modal-actions">
+              <button type="button" className="btn-secondary" onClick={() => setRefuseOpen(false)}>Voltar</button>
+              <button type="submit" className="btn-primary btn-auto dl-danger-fill" disabled={busy}>Confirmar recusa</button>
+            </div>
+          </form>
+        )}
 
         {cancelOpen && (
           <form

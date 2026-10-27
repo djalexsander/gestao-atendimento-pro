@@ -20,6 +20,11 @@ export function DeliverySettings({ companyId, source = supabaseDeliverySource }:
   const [pickup, setPickup] = useState("30");
   const [fee, setFee] = useState("");
   const [instr, setInstr] = useState("");
+  const [minOrder, setMinOrder] = useState("");
+  const [freeAbove, setFreeAbove] = useState("");
+  const [requireCourier, setRequireCourier] = useState(false);
+  const [rulesSaving, setRulesSaving] = useState(false);
+  const [rulesMessage, setRulesMessage] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
@@ -35,6 +40,9 @@ export function DeliverySettings({ companyId, source = supabaseDeliverySource }:
     setPickup(String(s.pickupMinutes));
     setFee(s.defaultFee === null ? "" : s.defaultFee.toFixed(2).replace(".", ","));
     setInstr(s.defaultInstructions);
+    setMinOrder(s.minOrderAmount === null ? "" : s.minOrderAmount.toFixed(2).replace(".", ","));
+    setFreeAbove(s.freeDeliveryAbove === null ? "" : s.freeDeliveryAbove.toFixed(2).replace(".", ","));
+    setRequireCourier(s.requireCourierForDispatch);
   };
 
   const loadAll = useCallback(async () => {
@@ -65,6 +73,22 @@ export function DeliverySettings({ companyId, source = supabaseDeliverySource }:
       applySettings(r.data);
       setMessage({ kind: "ok", text: "Configurações salvas." });
     } else setMessage({ kind: "err", text: r.error });
+  }
+
+  async function saveRules() {
+    const mo = minOrder.trim() ? parseMoney(minOrder) : null;
+    const fa = freeAbove.trim() ? parseMoney(freeAbove) : null;
+    if (minOrder.trim() && (mo === null || mo <= 0)) return setRulesMessage({ kind: "err", text: "Pedido mínimo inválido. Use um valor maior que zero, ex.: 30,00." });
+    if (freeAbove.trim() && (fa === null || fa <= 0)) return setRulesMessage({ kind: "err", text: "Valor da entrega grátis inválido. Use um valor maior que zero, ex.: 80,00." });
+    if (mo !== null && fa !== null && fa < mo) return setRulesMessage({ kind: "err", text: "A entrega grátis deve começar em um valor igual ou maior que o pedido mínimo." });
+    setRulesSaving(true);
+    setRulesMessage(null);
+    const r = await source.updateRules(companyId, { minOrderAmount: mo, freeDeliveryAbove: fa, requireCourierForDispatch: requireCourier });
+    setRulesSaving(false);
+    if (r.data) {
+      applySettings(r.data);
+      setRulesMessage({ kind: "ok", text: "Regras salvas. Valem para os próximos pedidos; pedidos já criados não mudam." });
+    } else setRulesMessage({ kind: "err", text: r.error });
   }
 
   async function saveZone() {
@@ -116,6 +140,20 @@ export function DeliverySettings({ companyId, source = supabaseDeliverySource }:
         {message && <div className={message.kind === "ok" ? "form-notice" : "form-error"} role={message.kind === "ok" ? "status" : "alert"}>{message.text}</div>}
         <div className="modal-actions">
           <button type="button" className="btn-primary btn-auto" disabled={saving} onClick={() => void save()}>{saving ? "Salvando…" : "Salvar configurações"}</button>
+        </div>
+      </section>
+
+      <section className="dl-card-box">
+        <h3>Regras do pedido</h3>
+        <div className="dl-grid2">
+          <label className="dl-field"><span>Pedido mínimo para entrega (opcional)</span><input inputMode="decimal" placeholder="Sem mínimo" value={minOrder} onChange={(e) => setMinOrder(e.target.value)} /></label>
+          <label className="dl-field"><span>Entrega grátis a partir de (opcional)</span><input inputMode="decimal" placeholder="Desligada" value={freeAbove} onChange={(e) => setFreeAbove(e.target.value)} /></label>
+        </div>
+        <label className="dl-check"><input type="checkbox" checked={requireCourier} onChange={(e) => setRequireCourier(e.target.checked)} /> Exigir entregador atribuído para marcar “saiu para entrega”</label>
+        <p className="field-hint">Os valores consideram só os produtos (sem a taxa). A retirada não tem mínimo. A entrega grátis não altera uma taxa ajustada manualmente. Cada pedido guarda a taxa do momento em que foi criado.</p>
+        {rulesMessage && <div className={rulesMessage.kind === "ok" ? "form-notice" : "form-error"} role={rulesMessage.kind === "ok" ? "status" : "alert"}>{rulesMessage.text}</div>}
+        <div className="modal-actions">
+          <button type="button" className="btn-primary btn-auto" disabled={rulesSaving} onClick={() => void saveRules()}>{rulesSaving ? "Salvando…" : "Salvar regras"}</button>
         </div>
       </section>
 

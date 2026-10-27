@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAuth } from "../../app/useAuth";
 import { formatReais } from "../../lib/money";
 import { createCoalescedRunner } from "../orders/coalesce";
+import { CourierReport } from "./CourierReport";
 import { DeliveryDetail } from "./DeliveryDetail";
 import { DeliveryNewOrder } from "./DeliveryNewOrder";
 import { supabaseDeliverySource, type CourierOption, type DeliverySource } from "./deliveryApi";
@@ -12,6 +13,7 @@ import {
   SECTION_ORDER,
   SECTION_TITLE,
   applyLocalFilters,
+  canSeeCourierReport,
   etaOf,
   financialBadge,
   formatTime,
@@ -85,6 +87,7 @@ export function DeliveryBoard({ source = supabaseDeliverySource }: { source?: De
   const [creating, setCreating] = useState(false);
   const [couriers, setCouriers] = useState<CourierOption[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
+  const [showReport, setShowReport] = useState(false);
   const known = useRef<Set<string> | null>(null);
 
   const periodError = filters.preset === "range" ? validatePeriod(filters.range) : null;
@@ -226,6 +229,15 @@ export function DeliveryBoard({ source = supabaseDeliverySource }: { source?: De
             </div>
           )}
         </>
+      )}
+
+      {canSeeCourierReport(role) && (
+        <div className="dl-report-toggle">
+          <button type="button" className="btn-secondary btn-small" aria-expanded={showReport} onClick={() => setShowReport((v) => !v)}>
+            {showReport ? "Ocultar indicadores de entregadores" : "Indicadores de entregadores"}
+          </button>
+          {showReport && <CourierReport companyId={companyId} source={source} />}
+        </div>
       )}
 
       {selected && (

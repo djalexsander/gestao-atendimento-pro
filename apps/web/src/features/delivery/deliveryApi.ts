@@ -4,12 +4,14 @@ import { OPEN_ATTENDANCE_TABLES, subscribeToOpenAttendanceChanges } from "../ope
 import { describeOrderError } from "../orders/ordersLogic";
 import {
   toAddress,
+  toCourierStat,
   toDeliveryRow,
   toQuote,
   toSettings,
   toZone,
   type AddressForm,
   type AddressRow,
+  type CourierStat,
   type CreateArgs,
   type DeliveryFilters,
   type DeliveryQuote,
@@ -18,12 +20,14 @@ import {
   type Fulfillment,
   type LogisticStatus,
   type RawAddress,
+  type RawCourierStat,
   type RawDeliveryRow,
   type RawQuote,
   type RawSettings,
   type RawZone,
   type ZoneRow,
   periodDates,
+  spDate,
 } from "./deliveryLogic";
 
 export type Result<T> = { data: T; error: null } | { data: null; error: string };
@@ -68,6 +72,8 @@ export interface DeliverySource {
   create(args: CreateArgs): Promise<Result<CreatedDelivery>>;
   setStatus(deliveryOrderId: string, status: "out_for_delivery" | "delivered" | "picked_up"): Promise<Result<null>>;
   cancel(deliveryOrderId: string, reason: string): Promise<Result<null>>;
+  // Entrega recusada na porta (owner/admin, pedido em rota): cancelamento oficial com motivo; nunca estorna sozinho.
+  refuse(deliveryOrderId: string, reason: string): Promise<Result<null>>;
   // Entregador: registra o recebimento (custódia; NADA entra no caixa até o acerto). O MESMO requestId em nova tentativa nunca duplica.
   registerCourierPayment(deliveryOrderId: string, method: string, amountReceived: number | null, requestId: string): Promise<Result<null>>;
   assignCourier(deliveryOrderId: string, courierUserId: string | null): Promise<Result<null>>;
@@ -79,6 +85,10 @@ export interface DeliverySource {
   setAddressActive(addressId: string, active: boolean): Promise<Result<null>>;
   settings(companyId: string): Promise<Result<DeliverySettings>>;
   updateSettings(companyId: string, s: DeliverySettings): Promise<Result<DeliverySettings>>;
+  updateRules(companyId: string, r: { minOrderAmount: number | null; freeDeliveryAbove: number | null; requireCourierForDispatch: boolean }): Promise<Result<DeliverySettings>>;
+  courierReport(companyId: string, from: string, to: string): Promise<Result<CourierStat[]>>;
+  // Últimos pedidos do cliente (janela de 60 dias, a mesma regra de período da lista).
+  customerOrders(companyId: string, customerId: string): Promise<Result<DeliveryRow[]>>;
   zones(companyId: string): Promise<Result<ZoneRow[]>>;
   saveZone(companyId: string, zoneId: string | null, v: { name: string; neighborhood: string; city: string; fee: number; minutes: number | null }): Promise<Result<ZoneRow>>;
   setZoneActive(zoneId: string, active: boolean): Promise<Result<null>>;
@@ -244,6 +254,38 @@ export const supabaseDeliverySource: DeliverySource = {
     const { data, error } = await supabase.rpc("get_delivery_settings", { p_company_id: companyId });
     if (error) return fail(error, "Não foi possível carregar as configurações agora.");
     return { data: toSettings(data as RawSettings), error: null };
+  },
+
+  async refuse(deliveryOrderId, reason) {
+    const { error } = await supabase.rpc("refuse_delivery_order", { p_delivery_order_id: deliveryOrderId, p_reason: reason });
+    return error ? fail(error) : { data: null, error: null };
+  },
+
+  async updateRules(companyId, r) {
+    const { data, error } = await supabase.rpc("update_delivery_rules", {
+      p_company_id: companyId,
+      p_min_order_amount: r.minOrderAmount,
+      p_free_delivery_above: r.freeDeliveryAbove,
+      p_require_courier_for_dispatch: r.requireCourierForDispatch,
+    });
+    if (error) return fail(error, "Não foi possível salvar as regras agora.");
+    return { data: toSettings(data as RawSettings), error: null };
+  },
+
+  async courierReport(companyId, from, to) {
+    const { data, error } = await supabase.rpc("delivery_courier_report", { p_company_id: companyId, p_from: from, p_to: to });
+    if (error) return fail(error, "Não foi possível carregar os indicadores agora.");
+    return { data: ((data as { couriers: RawCourierStat[] }).couriers ?? []).map(toCourierStat), error: null };
+  },
+
+  async customerOrders(companyId, customerId) {
+    const to = spDate(new Date());
+    const from = spDate(new Date(Date.now() - 60 * 24 * 3600 * 1000));
+    const { data, error } = await supabase.rpc("list_delivery_orders", {
+      p_company_id: companyId, p_from: from, p_to: to, p_fulfillment: null, p_status: null, p_courier_user_id: null, p_customer_id: customerId, p_limit: 5, p_offset: 0,
+    });
+    if (error) return fail(error, "Não foi possível carregar o histórico do cliente agora.");
+    return { data: ((data ?? []) as RawDeliveryRow[]).map(toDeliveryRow), error: null };
   },
 
   async updateSettings(companyId, s) {

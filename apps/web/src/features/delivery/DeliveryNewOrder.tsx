@@ -32,7 +32,11 @@ import {
   addressFormProblem,
   buildCreateArgs,
   emptyDraft,
-  feeToCharge,
+  feeWithRules,
+  formatStatusShort,
+  freeDeliveryApplies,
+  freeDeliveryRemaining,
+  minimumOrderProblem,
   formatAddressLine,
   formatCep,
   manualFeeMode,
@@ -45,6 +49,7 @@ import {
   type AddressForm,
   type AddressRow,
   type DeliveryQuote,
+  type DeliveryRow,
   type ExpectedMethod,
   type Fulfillment,
   type NewOrderDraft,
@@ -94,6 +99,8 @@ export function DeliveryNewOrder({
   const [changeText, setChangeText] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [rules, setRules] = useState<{ minOrder: number | null; freeAbove: number | null } | null>(null);
+  const [history, setHistory] = useState<DeliveryRow[] | null>(null);
   const [created, setCreated] = useState<{ id: string; total: number } | null>(null);
 
   // client_request_id: UM por tentativa, preservado no retry. Qualquer mudança no conteúdo gera outro (senão o
@@ -165,12 +172,37 @@ export function DeliveryNewOrder({
     };
   }, [source, companyId, draft.fulfillment, address]);
 
+  // regras da empresa (pedido mínimo / entrega grátis): só orientação; o servidor confere de novo na confirmação
+  useEffect(() => {
+    let live = true;
+    void source.settings(companyId).then((r) => {
+      if (live && r.data) setRules({ minOrder: r.data.minOrderAmount, freeAbove: r.data.freeDeliveryAbove });
+    });
+    return () => {
+      live = false;
+    };
+  }, [source, companyId]);
+
+  // histórico do cliente selecionado (últimos pedidos)
+  useEffect(() => {
+    let live = true;
+    setHistory(null);
+    if (!customerId) return;
+    void source.customerOrders(companyId, customerId).then((r) => {
+      if (live) setHistory(r.data ?? []);
+    });
+    return () => {
+      live = false;
+    };
+  }, [source, companyId, customerId]);
+
   const manualMode = manualFeeMode(quote, role);
   const manualParsed = manualText.trim() ? parseMoney(manualText) : null;
-  const fee = feeToCharge(quote, draft.manualFee);
   const subtotal = cartTotal(cart);
+  const freeAbove = rules?.freeAbove ?? null;
+  const fee = feeWithRules(quote, draft.manualFee, subtotal, freeAbove);
   const total = subtotal + (fee ?? 0);
-  const check = { draft, cartCount: cart.length, quote, role, total };
+  const check = { draft, cartCount: cart.length, quote, role, total, subtotal, minOrder: rules?.minOrder ?? null };
   const problem = stepProblem(step, check);
 
   function chooseCustomer(c: CustomerOption | null) {
@@ -316,6 +348,21 @@ export function DeliveryNewOrder({
                 onSelect={chooseCustomer}
                 autoFocus
               />
+              {customerId && history && history.length > 0 && (
+                <div className="dl-history" aria-label="Últimos pedidos do cliente">
+                  <strong>Últimos pedidos deste cliente</strong>
+                  <ul>
+                    {history.map((h) => (
+                      <li key={h.id}>
+                        <span>{FULFILLMENT_LABEL[h.fulfillment]} · {new Date(h.createdAt).toLocaleDateString("pt-BR")}</span>
+                        <span className="muted">{formatStatusShort(h)}</span>
+                        <span>{formatReais(h.total)}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+              {customerId && history && history.length === 0 && <p className="field-hint">Primeiro pedido deste cliente nos últimos 60 dias.</p>}
               <label className="dl-field">
                 <span>Telefone para contato {draft.customerId ? "(opcional: o do cadastro é usado)" : "(opcional)"}</span>
                 <input
@@ -410,6 +457,13 @@ export function DeliveryNewOrder({
                   hint="O preço cobrado é sempre conferido pelo servidor na confirmação."
                 />
               </div>
+              {draft.fulfillment === "delivery" && (minimumOrderProblem("delivery", subtotal, rules?.minOrder ?? null) || freeDeliveryRemaining("delivery", subtotal, freeAbove) !== null) && (
+                <p className="field-hint dl-rules-hint" role="status">
+                  {minimumOrderProblem("delivery", subtotal, rules?.minOrder ?? null) ?? ""}
+                  {freeDeliveryRemaining("delivery", subtotal, freeAbove) !== null && ` Faltam ${formatReais(freeDeliveryRemaining("delivery", subtotal, freeAbove) ?? 0)} para entrega grátis.`}
+                </p>
+              )}
+              {problem && <p className="dl-problem" role="status">{problem}</p>}
               <CartBar cart={cart} onOpen={() => setCartOpen(true)} />
               {pick && (
                 <ModifierDialog
@@ -449,7 +503,8 @@ export function DeliveryNewOrder({
                       <p>
                         Taxa de entrega:{" "}
                         <strong>{fee === null ? "não cadastrada" : formatReais(fee)}</strong>
-                        {draft.manualFee === null && quote.feeSource !== "none" && <span className="muted"> ({FEE_SOURCE_LABEL[quote.feeSource]}{quote.zoneName ? ` · ${quote.zoneName}` : ""})</span>}
+                        {draft.manualFee === null && freeDeliveryApplies(quote, draft.manualFee, subtotal, freeAbove) && <span className="muted"> ({FEE_SOURCE_LABEL.free}: pedido a partir de {formatReais(freeAbove ?? 0)})</span>}
+                        {draft.manualFee === null && quote.feeSource !== "none" && !freeDeliveryApplies(quote, draft.manualFee, subtotal, freeAbove) && <span className="muted"> ({FEE_SOURCE_LABEL[quote.feeSource]}{quote.zoneName ? ` · ${quote.zoneName}` : ""})</span>}
                         {draft.manualFee !== null && <span className="muted"> ({FEE_SOURCE_LABEL.manual})</span>}
                       </p>
                       <p>Previsão de entrega: <strong>{quote.estimatedMinutes} min</strong></p>

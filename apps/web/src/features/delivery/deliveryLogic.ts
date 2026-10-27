@@ -10,7 +10,7 @@ export type LogisticStatus = "confirmed" | "out_for_delivery" | "delivered" | "p
 export type ProductionState = "pending" | "preparing" | "ready" | null;
 export type PaymentTiming = "on_order" | "on_delivery" | "on_pickup";
 export type ExpectedMethod = "cash" | "pix" | "debit_card" | "credit_card" | "other";
-export type FeeSource = "zone" | "default" | "manual" | "none";
+export type FeeSource = "zone" | "default" | "manual" | "none" | "free";
 
 export const FULFILLMENT_LABEL: Record<Fulfillment, string> = { delivery: "ENTREGA", pickup: "RETIRADA" };
 export const LOGISTIC_LABEL: Record<LogisticStatus, string> = {
@@ -42,6 +42,7 @@ export const FEE_SOURCE_LABEL: Record<FeeSource, string> = {
   default: "Taxa padrão",
   manual: "Taxa manual",
   none: "Sem taxa",
+  free: "Entrega grátis",
 };
 
 // Situação FINANCEIRA derivada do estado oficial da sessão/pagamentos (nunca do "momento de pagamento" informado no pedido).
@@ -256,7 +257,8 @@ export function groupBySection(rows: DeliveryRow[]): Record<BoardSection, Delive
 }
 
 /** Rótulo único do estado: logístico quando já saiu do "confirmado"; senão o de produção derivado. */
-export function stateLabel(row: Pick<DeliveryRow, "status" | "production" | "fulfillment">): string {
+export function stateLabel(row: Pick<DeliveryRow, "status" | "production" | "fulfillment"> & { cancelReason?: string | null }): string {
+  if (row.status === "canceled" && isRefusedReason(row.cancelReason)) return "Entrega recusada";
   if (row.status === "confirmed") {
     if (row.production === "ready") return row.fulfillment === "pickup" ? "Pronto para retirada" : "Pronto";
     return row.production ? PRODUCTION_LABEL[row.production] : "Sem itens ativos";
@@ -269,7 +271,7 @@ export interface ActionContext {
   role: CompanyRole | null;
   userId: string | null;
 }
-export type DeliveryAction = "out_for_delivery" | "delivered" | "picked_up" | "cancel" | "assign" | "receive";
+export type DeliveryAction = "out_for_delivery" | "delivered" | "picked_up" | "cancel" | "refuse" | "assign" | "receive";
 
 const OPERATORS: readonly CompanyRole[] = ["owner", "admin", "cashier", "attendant"];
 export const isOperator = (role: CompanyRole | null): boolean => role !== null && OPERATORS.includes(role);
@@ -291,10 +293,20 @@ export function availableActions(row: DeliveryRow, ctx: ActionContext): Delivery
   // cashier/attendant só cancelam item ainda pendente (o servidor recusa o resto): não oferece o botão quando já entrou em produção.
   if (row.status === "confirmed" && (role === "owner" || role === "admin" || (operator && row.production === "pending"))) actions.push("cancel");
   if (row.status === "out_for_delivery" && (role === "owner" || role === "admin")) actions.push("cancel");
+  // Entrega recusada na porta: só owner/admin, só pedido em rota (o servidor recusa se houver valor em custódia ou pago sem estorno).
+  if (row.status === "out_for_delivery" && row.fulfillment === "delivery" && (role === "owner" || role === "admin")) actions.push("refuse");
 
   // Recebimento é do Caixa (owner/admin/cashier), com a conta ainda aberta e o pedido não cancelado.
   if ((role === "owner" || role === "admin" || role === "cashier") && row.status !== "canceled" && row.sessionStatus === "open") actions.push("receive");
   return actions;
+}
+
+export const REFUSED_PREFIX = "Entrega recusada: ";
+export const isRefusedReason = (reason: string | null | undefined): boolean => !!reason && reason.startsWith(REFUSED_PREFIX);
+/** "Saída para entrega" bloqueada porque a empresa exige entregador e o pedido não tem (null = liberado). */
+export function dispatchBlockedReason(row: Pick<DeliveryRow, "fulfillment" | "courierUserId" | "status">, requireCourier: boolean): string | null {
+  if (row.fulfillment !== "delivery" || row.status !== "confirmed" || !requireCourier || row.courierUserId) return null;
+  return "Atribua um entregador para liberar a saída para entrega.";
 }
 
 export const ACTION_LABEL: Record<DeliveryAction, string> = {
@@ -302,6 +314,7 @@ export const ACTION_LABEL: Record<DeliveryAction, string> = {
   delivered: "MARCAR COMO ENTREGUE",
   picked_up: "MARCAR COMO RETIRADO",
   cancel: "CANCELAR PEDIDO",
+  refuse: "ENTREGA RECUSADA",
   assign: "Atribuir entregador",
   receive: "Receber no Caixa",
 };
@@ -446,6 +459,37 @@ export function feeToCharge(q: DeliveryQuote | null, manual: number | null): num
   return manual !== null ? manual : q.fee;
 }
 
+/** Resumo curto do estado para listas (histórico do cliente). */
+export function formatStatusShort(row: Pick<DeliveryRow, "status" | "production" | "fulfillment" | "cancelReason">): string {
+  return stateLabel(row);
+}
+
+// (sem import de lib/money: este módulo é carregado isolado pelos testes de lógica)
+const BRL = new Intl.NumberFormat("pt-BR", { style: "currency", currency: "BRL" });
+const formatReais = (v: number): string => BRL.format(v);
+
+/** Entrega grátis (espelho do servidor): só taxa de zona/padrão, nunca a manual; vale a partir do subtotal dos itens. */
+export function freeDeliveryApplies(q: DeliveryQuote | null, manual: number | null, subtotal: number, freeAbove: number | null): boolean {
+  return !!q && q.fulfillment === "delivery" && manual === null && freeAbove !== null && subtotal >= freeAbove
+    && (q.feeSource === "zone" || q.feeSource === "default") && (q.fee ?? 0) > 0;
+}
+/** Taxa a cobrar já considerando a entrega grátis. O servidor é a fonte da verdade e confere de novo. */
+export function feeWithRules(q: DeliveryQuote | null, manual: number | null, subtotal: number, freeAbove: number | null): number | null {
+  const base = feeToCharge(q, manual);
+  return base !== null && freeDeliveryApplies(q, manual, subtotal, freeAbove) ? 0 : base;
+}
+/** Pedido mínimo (só entrega; sobre o subtotal dos itens). null = ok. */
+export function minimumOrderProblem(fulfillment: Fulfillment, subtotal: number, minOrder: number | null): string | null {
+  if (fulfillment !== "delivery" || minOrder === null || subtotal >= minOrder) return null;
+  const falta = Math.round((minOrder - subtotal) * 100) / 100;
+  return `Pedido mínimo para entrega: ${formatReais(minOrder)}. Faltam ${formatReais(falta)} em produtos.`;
+}
+/** Quanto falta para a entrega grátis (null = não se aplica / já alcançou). */
+export function freeDeliveryRemaining(fulfillment: Fulfillment, subtotal: number, freeAbove: number | null): number | null {
+  if (fulfillment !== "delivery" || freeAbove === null || subtotal >= freeAbove) return null;
+  return Math.round((freeAbove - subtotal) * 100) / 100;
+}
+
 export interface NewOrderDraft {
   fulfillment: Fulfillment;
   customerId: string | null;
@@ -513,6 +557,8 @@ export interface StepCheck {
   quote: DeliveryQuote | null;
   role: CompanyRole | null;
   total: number;
+  subtotal?: number;
+  minOrder?: number | null;
 }
 
 /** Mensagem do que falta para AVANÇAR da etapa (null = ok). O servidor revalida tudo no envio. */
@@ -526,7 +572,8 @@ export function stepProblem(step: StepId, c: StepCheck): string | null {
     case "address":
       return d.addressId ? null : "Escolha ou cadastre o endereço de entrega.";
     case "products":
-      return c.cartCount > 0 ? null : "Adicione ao menos um produto.";
+      if (c.cartCount === 0) return "Adicione ao menos um produto.";
+      return minimumOrderProblem(d.fulfillment, c.subtotal ?? 0, c.minOrder ?? null);
     case "fee": {
       if (d.fulfillment === "pickup") return null;
       if (!c.quote) return "Calculando a taxa…";
@@ -602,6 +649,9 @@ export interface DeliverySettings {
   defaultFee: number | null;
   allowManualFee: boolean;
   defaultInstructions: string;
+  minOrderAmount: number | null;
+  freeDeliveryAbove: number | null;
+  requireCourierForDispatch: boolean;
 }
 export interface RawSettings {
   configured: boolean;
@@ -612,6 +662,9 @@ export interface RawSettings {
   default_fee: number | string | null;
   allow_manual_fee: boolean;
   default_instructions: string | null;
+  min_order_amount?: number | string | null;
+  free_delivery_above?: number | string | null;
+  require_courier_for_dispatch?: boolean;
 }
 export function toSettings(r: RawSettings): DeliverySettings {
   return {
@@ -623,6 +676,9 @@ export function toSettings(r: RawSettings): DeliverySettings {
     defaultFee: r.default_fee === null ? null : Number(r.default_fee),
     allowManualFee: r.allow_manual_fee,
     defaultInstructions: r.default_instructions ?? "",
+    minOrderAmount: r.min_order_amount == null ? null : Number(r.min_order_amount),
+    freeDeliveryAbove: r.free_delivery_above == null ? null : Number(r.free_delivery_above),
+    requireCourierForDispatch: r.require_courier_for_dispatch === true,
   };
 }
 
@@ -773,4 +829,58 @@ export function courierPaymentCalc(total: number, d: CourierPaymentDraft): { rec
   if (Number.isNaN(p) || p <= 0) return { received: null, change: 0, error: "Informe um valor válido, ex.: 50,00." };
   if (p < total) return { received: p, change: 0, error: "O valor recebido em dinheiro não pode ser menor que o total do pedido." };
   return { received: p, change: Math.round((p - total) * 100) / 100, error: null };
+}
+
+
+// ---- Indicadores por entregador (delivery_courier_report) --------------------------------------------------------------
+export interface CourierStat {
+  courierUserId: string;
+  name: string;
+  assigned: number;
+  delivered: number;
+  inRoute: number;
+  waiting: number;
+  refused: number;
+  canceled: number;
+  avgMinutes: number | null;
+  fees: number;
+  deliveredTotal: number;
+  heldAmount: number;
+}
+export interface RawCourierStat {
+  courier_user_id: string;
+  name: string;
+  assigned: number;
+  delivered: number;
+  in_route: number;
+  waiting: number;
+  refused: number;
+  canceled: number;
+  avg_minutes: number | string | null;
+  fees: number | string;
+  delivered_total: number | string;
+  held_amount: number | string;
+}
+export function toCourierStat(r: RawCourierStat): CourierStat {
+  return {
+    courierUserId: r.courier_user_id,
+    name: r.name,
+    assigned: r.assigned,
+    delivered: r.delivered,
+    inRoute: r.in_route,
+    waiting: r.waiting,
+    refused: r.refused,
+    canceled: r.canceled,
+    avgMinutes: r.avg_minutes === null ? null : Number(r.avg_minutes),
+    fees: Number(r.fees),
+    deliveredTotal: Number(r.delivered_total),
+    heldAmount: Number(r.held_amount),
+  };
+}
+/** Quem pode ver os indicadores (espelho do servidor: owner/admin/cashier). */
+export const canSeeCourierReport = (role: CompanyRole | null): boolean => role === "owner" || role === "admin" || role === "cashier";
+export function formatAvgMinutes(m: number | null): string {
+  if (m === null) return "—";
+  if (m < 60) return `${Math.round(m)} min`;
+  return `${Math.floor(m / 60)} h ${Math.round(m % 60)} min`;
 }
