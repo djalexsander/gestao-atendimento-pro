@@ -1,6 +1,6 @@
 [package]
 name = "gestao-desktop"
-version = "1.0.12"
+version = "1.0.13"
 description = "Gestão Atendimento Pro - Desktop"
 edition = "2021"
 publish = false

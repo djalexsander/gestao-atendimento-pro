@@ -1,7 +1,7 @@
 {
   "name": "desktop",
   "private": true,
-  "version": "1.0.12",
+  "version": "1.0.13",
   "type": "module",
   "description": "Gestão Atendimento Pro - Desktop (Windows, Tauri 2). Empacota o frontend de apps/web.",
   "scripts": {
