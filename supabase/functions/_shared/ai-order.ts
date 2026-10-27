@@ -48,7 +48,7 @@ export interface OrderItem {
   complete: boolean;
   options: OrderItemOption[];
 }
-export interface OrderPending { code: string; item_id?: string; name?: string; missing?: string[]; groups?: Array<{ group_id: string; name: string; min: number; max: number | null; options: Array<{ option_id: string; name: string; price_delta: number | string }> }> }
+export interface OrderPending { code: string; minimum?: number | string; subtotal?: number | string; missing_amount?: number | string; item_id?: string; name?: string; missing?: string[]; groups?: Array<{ group_id: string; name: string; min: number; max: number | null; options: Array<{ option_id: string; name: string; price_delta: number | string }> }> }
 export interface OrderState {
   draft_id: string;
   status: string;
@@ -59,6 +59,7 @@ export interface OrderState {
   address: { street: string | null; number: string | null; complement: string | null; neighborhood: string | null; city: string | null; state: string | null; cep: string | null; reference: string | null; city_inferred: boolean };
   zone: { id: string; name: string } | null;
   delivery_fee: number | string | null;
+  fee_waived?: boolean;
   estimated_minutes: number | null;
   payment: { method: string | null; change_for: number | string | null; change_answered: boolean; authorized_methods: string[] };
   items: OrderItem[];
@@ -445,7 +446,8 @@ export function renderSummary(s: OrderState, header = "Seu pedido"): string {
   for (const it of s.items) lines.push(...renderItemLine(it));
   lines.push(`Subtotal: ${brl(s.items_total)}`);
   if (s.fulfillment === "delivery") {
-    lines.push(`Taxa de entrega${s.zone ? ` (${plain(s.zone.name, 40)})` : ""}: ${brl(s.delivery_fee)}`);
+    // entrega grátis (regra do Delivery, calculada pelo banco): mostra GRÁTIS em vez de R$ 0,00
+    lines.push(s.fee_waived ? "Entrega: GRÁTIS" : `Taxa de entrega${s.zone ? ` (${plain(s.zone.name, 40)})` : ""}: ${brl(s.delivery_fee)}`);
   }
   lines.push(`Total: ${brl(s.grand_total)}`);
   if (s.fulfillment === "delivery") {
@@ -487,6 +489,8 @@ export function nextQuestion(s: OrderState): string | null {
     return `Para ${plain(req.name, 80)}: ${plain(g.name, 40)}? ${opts}.`;
   }
   if (first("no_items")) return "O que você gostaria de pedir?";
+  const bm = first("below_minimum");
+  if (bm) return `O pedido mínimo para entrega é ${brl(bm.minimum ?? 0)} e seus itens somam ${brl(bm.subtotal ?? 0)}. Faltam ${brl(bm.missing_amount ?? 0)} para entregarmos. Quer adicionar mais itens ou prefere retirar no balcão?`;
   if (first("delivery_disabled")) return "No momento não estamos fazendo entregas. Quer retirar no balcão?";
   if (first("pickup_disabled")) return "No momento não estamos fazendo retirada. Quer receber por entrega?";
   if (first("fulfillment")) return s.settings.delivery_enabled && s.settings.pickup_enabled ? "Prefere retirada no balcão ou entrega?" : s.settings.delivery_enabled ? "Será entrega. Qual o endereço?" : "Será retirada no balcão, certo?";
