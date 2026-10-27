@@ -43,10 +43,18 @@ export async function markMessageFailed(admin: DispatchRpcClient, messageId: str
   if (r.error) console.error("whatsapp-dispatch: não registrou a falha", { code: r.error.code ?? null });
 }
 
-/** Envia a mensagem 'queued' pelo fluxo oficial e deixa o status final registrado (sent ou failed). */
+/** Anexo de uma mensagem 'queued' do tipo document: o texto da mensagem vira a LEGENDA. */
+export interface DispatchDocument {
+  bytes: Uint8Array;
+  filename: string;
+  mimeType: string;
+}
+
+/** Envia a mensagem 'queued' pelo fluxo oficial e deixa o status final registrado (sent ou failed). Com `document`, envia por media_id. */
 export async function dispatchQueuedMessage(
   deps: { admin: DispatchRpcClient; graph: GraphSender; graphVersion: string },
   messageId: string,
+  document?: DispatchDocument,
 ): Promise<DispatchResult> {
   const { admin, graph, graphVersion } = deps;
 
@@ -82,7 +90,24 @@ export async function dispatchQueuedMessage(
   }
 
   // 3) Graph API
-  const result = await graph.sendText({ version: graphVersion, phoneNumberId, accessToken: token, to: recipient, body: text });
+  let result;
+  if (document) {
+    if (!graph.uploadMedia || !graph.sendDocument) {
+      await markMessageFailed(admin, messageId, "context_error");
+      return { ok: false, errorCode: "context_error", http: 502, friendly: SEND_GENERIC_ERROR };
+    }
+    // upload ANTES; só com o media_id aceito pela Meta a mensagem de documento é enviada
+    const up = await graph.uploadMedia({ version: graphVersion, phoneNumberId, accessToken: token, bytes: document.bytes, mimeType: document.mimeType, filename: document.filename });
+    if (!up.ok) {
+      const upCode = (up.kind === "http" ? `media_${up.code ?? up.status ?? "error"}` : `media_${up.kind}`).slice(0, 64);
+      console.error("whatsapp-dispatch: upload da mídia falhou", { kind: up.kind, status: up.status ?? null, code: upCode });
+      await markMessageFailed(admin, messageId, upCode);
+      return { ok: false, errorCode: upCode, http: up.kind === "timeout" ? 504 : 502, friendly: SEND_GENERIC_ERROR };
+    }
+    result = await graph.sendDocument({ version: graphVersion, phoneNumberId, accessToken: token, to: recipient, mediaId: up.mediaId, filename: document.filename, caption: text });
+  } else {
+    result = await graph.sendText({ version: graphVersion, phoneNumberId, accessToken: token, to: recipient, body: text });
+  }
 
   if (result.ok) {
     let mark = await call(admin, "whatsapp_mark_message_sent", { p_message_id: messageId, p_provider_message_id: result.messageId });

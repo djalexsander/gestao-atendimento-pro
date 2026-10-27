@@ -8,7 +8,6 @@ import { DeliveryNewOrder } from "./DeliveryNewOrder";
 import { supabaseDeliverySource, type CourierOption, type DeliverySource } from "./deliveryApi";
 import {
   DEFAULT_FILTERS,
-  FULFILLMENT_LABEL,
   METHOD_LABEL,
   SECTION_ORDER,
   SECTION_TITLE,
@@ -19,7 +18,7 @@ import {
   formatTime,
   groupBySection,
   isOperator,
-  shortId,
+  orderLabel,
   stateLabel,
   validatePeriod,
   periodDates,
@@ -43,8 +42,7 @@ function DeliveryCard({ row, isCourier, onOpen }: { row: DeliveryRow; isCourier:
     <li>
       <button type="button" className={`dl-card dl-card-${row.status}`} onClick={onOpen}>
         <span className="dl-card-top">
-          <span className={`dl-badge dl-badge-${row.fulfillment}`}>{FULFILLMENT_LABEL[row.fulfillment]}</span>
-          <span className="dl-card-id">#{shortId(row.id)}</span>
+          <span className={`dl-badge dl-badge-${row.fulfillment}`}>{orderLabel(row)}</span>
           <span className="dl-card-time">{formatTime(row.createdAt)}</span>
         </span>
         <span className="dl-card-name">{row.customerName}</span>

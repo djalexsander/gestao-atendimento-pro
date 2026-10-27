@@ -13,12 +13,14 @@ import {
   countOrders,
   createBoardController,
   currentTotal,
+  deliveryOrderTitle,
   filterOrders,
   formatDateTime,
   formatTime,
   groupByDay,
   KIND_LABEL,
   NO_FILTERS,
+  orderCodeTag,
   originalTotal,
   shouldGroupByDay,
   PERIOD_LABEL,
@@ -78,7 +80,7 @@ function OrderCard({ order, onDetails }: { order: BoardOrder; onDetails: (order:
     <li className={`ob-card ob-${s.status}`}>
       <div className="ob-top">
         <span className="ob-time">{formatTime(order.submittedAt)}</span>
-        <span className="ob-code">#{order.shortId}</span>
+        <span className="ob-code">{orderCodeTag(order)}</span>
         <StatusBadge status={s.status} />
         {s.status === "partial" && s.production && <span className="ob-prod">{PRODUCTION_LABEL[s.production]}</span>}
       </div>
@@ -130,7 +132,7 @@ function DetailDialog({
   const s = summarize({ ...order, items });
   const title =
     order.kind === "delivery"
-      ? `${kindLabel(order)} · #${order.shortId}`
+      ? deliveryOrderTitle(order)
       : `${KIND_LABEL[order.kind]} ${order.kind === "table" ? order.displayName.replace(/^Mesa\s*/i, "") : order.code} · #${order.shortId}`;
   return (
     <Modal title={title} onClose={onClose}>

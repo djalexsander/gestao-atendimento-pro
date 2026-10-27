@@ -8,7 +8,7 @@ import { CAN_ALWAYS_CREATE_CUSTOMER } from "../system/systemLogic";
 import { useOperationalPreferences } from "../system/useOperationalPreferences";
 import { OpenSessionDialog } from "./PointDialogs";
 import { CourierSettlementPanel } from "./CourierSettlementPanel";
-import { pendingSettlementCount, type SettlementGroup } from "./courierSettlement";
+import { cashPendingCount, pendingSettlementCount, type CashPending, type SettlementGroup } from "./courierSettlement";
 import { OpenCashDialog } from "../cash/CashDialogs";
 import { supabaseCashSource, type CashSource } from "../cash/cashApi";
 import {
@@ -162,6 +162,8 @@ export function ServicePointsPanel({
   // Acerto de entregadores (custódia): fila por entregador; some em silêncio para quem não pode ver
   const [settlements, setSettlements] = useState<SettlementGroup[] | null>(null);
   const [settlementsHidden, setSettlementsHidden] = useState(true);
+  // Pendências do troco (adiantamento a devolver / diferenças em aberto): ficam visíveis até a regularização
+  const [cashPending, setCashPending] = useState<CashPending | null>(null);
   const [openCashFor, setOpenCashFor] = useState(false);
   const { prefs, loaded: prefsLoaded } = useOperationalPreferences(companyId);
   const typeInitialized = useRef(false);
@@ -183,12 +185,14 @@ export function ServicePointsPanel({
     const current = ++requestId.current;
     setRefreshing(true);
     const wantsDelivery = variant === "cashier" && !!source.loadReceivables;
-    const [result, rec, set] = await Promise.all([
+    const [result, rec, set, pend] = await Promise.all([
       source.load(companyId),
       wantsDelivery ? source.loadReceivables!(companyId) : Promise.resolve(null),
       wantsDelivery && source.loadSettlements ? source.loadSettlements(companyId) : Promise.resolve(null),
+      wantsDelivery && source.loadCashPending ? source.loadCashPending(companyId) : Promise.resolve(null),
     ]);
     if (current !== requestId.current) return result.data;
+    if (pend) setCashPending(pend.data ?? null);
     if (set) {
       setSettlementsHidden(set.hidden);
       if (set.data) setSettlements(set.data);
@@ -251,7 +255,7 @@ export function ServicePointsPanel({
   const canVoid = activeMembership?.role === "owner" || activeMembership?.role === "admin";
   const showPoints = effectiveView === "all" || effectiveView === "points";
   const settlementContent = effectiveView === "settlement" && companyId && settlements !== null ? (
-    <CourierSettlementPanel companyId={companyId} groups={settlements} source={source} canVoid={canVoid} onChanged={() => void reload()} onNeedCash={() => setOpenCashFor(true)} />
+    <CourierSettlementPanel companyId={companyId} groups={settlements} pending={cashPending} source={source} canVoid={canVoid} onChanged={() => void reload()} onNeedCash={() => setOpenCashFor(true)} />
   ) : null;
   const deliveryShown = useMemo(
     () => (showDeliverySection ? filterReceivables(receivables ?? [], effectiveView, query) : []),
@@ -259,7 +263,7 @@ export function ServicePointsPanel({
   );
   const toReceive = useMemo(() => pendingCount(receivables ?? [], query), [receivables, query]);
   const showSettlement = showDeliverySection && !settlementsHidden && settlements !== null;
-  const settleCount = pendingSettlementCount(settlements ?? []);
+  const settleCount = pendingSettlementCount(settlements ?? []) + cashPendingCount(cashPending);
 
   function focusSearch() {
     if (keepSearchFocused) requestAnimationFrame(() => searchRef.current?.focus());

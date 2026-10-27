@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { orderTitle } from "../../lib/orderNumber";
 import { useNavigate } from "react-router-dom";
 import { OPERATIONAL_PATH } from "../../app/accessRules";
 import { useAuth } from "../../app/useAuth";
@@ -187,7 +188,7 @@ export function SessionOrderScreen({
   const isDelivery = header?.kind === "delivery";
   const leave = isDelivery ? { path: OPERATIONAL_PATH.delivery, label: "Delivery" } : { path: backPath, label: "Comandas / Mesas" };
   // Rótulo do atendimento: comanda/mesa, ou Delivery/Retirada (sem ponto).
-  const sessionLabel = header ? (header.point ? `${header.point.displayName} (${header.point.code})` : header.fulfillment === "pickup" ? "Retirada" : "Delivery") : "";
+  const sessionLabel = header ? (header.point ? `${header.point.displayName} (${header.point.code})` : orderTitle(header.fulfillment === "pickup" ? "pickup" : "delivery", header.delivery?.orderNumber ?? null)) : "";
   // Total a receber: itens + taxa de entrega (a taxa só existe em delivery; o servidor confere o fechamento).
   const checkoutTotal = sessionTotal(orders) + (header?.deliveryFee ?? 0);
 

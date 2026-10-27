@@ -11,6 +11,7 @@ import {
   type QueueFilter,
   type QueueRange,
 } from "../printing/printingQueueLogic";
+import { formatOrderNumber, matchesOrderNumber, orderTag, orderTitle } from "../../lib/orderNumber";
 
 export type { QueueFilter as PeriodFilter, QueueRange as PeriodRange };
 export { FILTER_LABEL as PERIOD_LABEL, MAX_RANGE_DAYS, rangeBoundsUtc, rangeFor, spDay, validateRange, addDaysIso } from "../printing/printingQueueLogic";
@@ -52,6 +53,7 @@ export interface RawBoardOrder {
 }
 interface RawDeliveryInfo {
   fulfillment: "delivery" | "pickup";
+  order_number?: number | string | null;
   delivery_fee?: number | string | null;
   delivery_status?: string | null;
 }
@@ -92,6 +94,8 @@ export interface BoardItem {
 export interface BoardOrder {
   id: string;
   shortId: string;
+  // Número sequencial do pedido de Delivery/Retirada (null em comanda/mesa).
+  orderNumber: number | null;
   submittedAt: string;
   orderCancelled: boolean; // service_orders.status = 'cancelled' (o banco marca quando não sobra nada cobrável)
   kind: BoardKind;
@@ -137,6 +141,7 @@ export function toBoardOrders(rows: RawBoardOrder[], names: Map<string, string>)
     result.push({
       id: row.id,
       shortId: shortId(row.id),
+      orderNumber: point ? null : (one(session.delivery)?.order_number ?? null) === null ? null : Number(one(session.delivery)?.order_number),
       submittedAt: row.submitted_at,
       orderCancelled: row.status === "cancelled",
       kind: point ? (point.type === "table" ? "table" : "command") : "delivery",
@@ -236,8 +241,18 @@ export function normalize(value: string): string {
 export function matchesQuery(order: BoardOrder, query: string): boolean {
   const q = normalize(query.trim().replace(/^#/, ""));
   if (!q) return true;
-  const fields = [order.code, order.displayName, order.customerName ?? "", order.waiterName ?? "", order.shortId, ...order.items.map((i) => i.name)];
-  return fields.some((f) => normalize(f).includes(q));
+  const fields = [order.code, order.displayName, order.customerName ?? "", order.waiterName ?? "", order.shortId, formatOrderNumber(order.orderNumber), ...order.items.map((i) => i.name)];
+  return fields.some((f) => normalize(f).includes(q)) || matchesOrderNumber(order.orderNumber, query);
+}
+
+/** Etiqueta do pedido na lista: "#0001" no delivery/retirada (número sequencial); "#ABC123" nos demais. */
+export function orderCodeTag(order: Pick<BoardOrder, "kind" | "orderNumber" | "shortId">): string {
+  return order.kind === "delivery" && order.orderNumber ? orderTag(order.orderNumber) : `#${order.shortId}`;
+}
+
+/** Título do detalhe de delivery/retirada: "DELIVERY #0001" / "RETIRADA #0002". */
+export function deliveryOrderTitle(order: Pick<BoardOrder, "fulfillment" | "orderNumber" | "shortId">): string {
+  return order.orderNumber ? orderTitle(order.fulfillment === "pickup" ? "pickup" : "delivery", order.orderNumber) : `${order.fulfillment === "pickup" ? "RETIRADA" : "DELIVERY"} · #${order.shortId}`;
 }
 
 export interface BoardFilters {

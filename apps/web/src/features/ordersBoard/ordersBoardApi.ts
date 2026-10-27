@@ -30,7 +30,7 @@ async function loadNames(userIds: string[]): Promise<Map<string, string>> {
 // observações nem cancelamentos). Os itens vêm no MESMO select (sem N+1).
 const LIST_COLUMNS =
   "id, submitted_at, status, created_by, " +
-  "session:service_sessions(id, kind, status, customer_name, point:service_points(type, code, display_name), delivery:delivery_orders!delivery_orders_session_fkey(fulfillment, delivery_fee, delivery_status)), " +
+  "session:service_sessions(id, kind, status, customer_name, point:service_points(type, code, display_name), delivery:delivery_orders!delivery_orders_session_fkey(fulfillment, delivery_fee, delivery_status, order_number)), " +
   "items:service_order_items(id, product_name_snapshot, quantity, cancelled_quantity, unit_price, production_status, sector:production_sectors(name))";
 
 export const supabaseOrdersBoardApi: OrdersBoardApi = {

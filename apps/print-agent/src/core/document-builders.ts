@@ -86,10 +86,17 @@ export function deliveryOf(payload: Record<string, unknown>): Rec | null {
   return Object.keys(d).length > 0 ? d : null;
 }
 
+// Número sequencial do pedido (4 dígitos; 10000+ mostra todos). Payload antigo sem o número imprime como antes.
+export function orderNumberSuffix(raw: unknown): string {
+  const n = typeof raw === "number" ? raw : Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  return ` #${n < 10000 ? String(Math.trunc(n)).padStart(4, "0") : String(Math.trunc(n))}`;
+}
+
 // Cabeçalho do pedido de delivery: tipo bem grande, cliente e telefone (o endereço vem depois dos itens).
 function deliveryTop(dv: Rec, customer: string | null): Block[] {
   const pickup = str(dv.fulfillment) === "pickup";
-  const blocks: Block[] = [big(pickup ? "RETIRADA" : "DELIVERY", { align: "left" })];
+  const blocks: Block[] = [big(`${pickup ? "RETIRADA" : "DELIVERY"}${orderNumberSuffix(dv.order_number)}`, { align: "left" })];
   const name = customer ?? (str(dv.customer_name) || null);
   if (name) blocks.push(text(`Cliente: ${name}`));
   const phone = str(dv.customer_phone);

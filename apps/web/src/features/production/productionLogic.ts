@@ -2,6 +2,8 @@
 // urgência. Sem React e sem Supabase, de propósito. A autoridade de permissão e de transição
 // de status é do banco (update_production_item_status / production_queue).
 
+import { orderTitle } from "../../lib/orderNumber";
+
 export type ProductionStatus = "pending" | "preparing" | "ready";
 
 export const PRODUCTION_STATUS_LABEL: Record<ProductionStatus, string> = {
@@ -49,6 +51,8 @@ export interface ProductionItem {
   // Atendimento de delivery (sem comanda/mesa): ponto vem nulo e o rótulo vira DELIVERY / RETIRADA.
   sessionKind: "point" | "delivery";
   fulfillment: "delivery" | "pickup" | null;
+  // Número sequencial do pedido de Delivery/Retirada (null em comanda/mesa).
+  orderNumber: number | null;
   customerName: string | null;
   sentByName: string | null;
 }
@@ -73,6 +77,7 @@ export interface RawProductionItem {
   point_name: string;
   session_kind?: "point" | "delivery" | null;
   fulfillment?: "delivery" | "pickup" | null;
+  order_number?: number | string | null;
   customer_name: string | null;
   sent_by_name: string | null;
 }
@@ -97,6 +102,7 @@ export function toProductionItem(raw: RawProductionItem): ProductionItem {
     pointName: raw.point_name,
     sessionKind: raw.session_kind === "delivery" ? "delivery" : "point",
     fulfillment: raw.fulfillment ?? null,
+    orderNumber: raw.order_number == null ? null : Number(raw.order_number),
     customerName: raw.customer_name,
     sentByName: raw.sent_by_name,
   };
@@ -113,6 +119,7 @@ export interface OrderGroup {
   pointName: string;
   sessionKind: "point" | "delivery";
   fulfillment: "delivery" | "pickup" | null;
+  orderNumber: number | null;
   customerName: string | null;
   sentByName: string | null;
   items: ProductionItem[];
@@ -135,6 +142,7 @@ export function groupByOrder(items: ProductionItem[], status: ProductionStatus):
         pointName: item.pointName,
         sessionKind: item.sessionKind,
         fulfillment: item.fulfillment,
+        orderNumber: item.orderNumber,
         customerName: item.customerName,
         sentByName: item.sentByName,
         items: [],
@@ -189,6 +197,8 @@ export interface QueueCancellation {
   pointType: "command" | "table";
   pointCode: string;
   sessionKind: "point" | "delivery";
+  fulfillment: "delivery" | "pickup" | null;
+  orderNumber: number | null;
   reason: string;
   createdAt: string;
 }
@@ -200,6 +210,8 @@ export interface RawQueueCancellation {
   point_type: "command" | "table";
   point_code: string;
   session_kind?: "point" | "delivery" | null;
+  fulfillment?: "delivery" | "pickup" | null;
+  order_number?: number | string | null;
   reason: string;
   created_at: string;
 }
@@ -212,6 +224,8 @@ export function toQueueCancellation(raw: RawQueueCancellation): QueueCancellatio
     pointType: raw.point_type,
     pointCode: raw.point_code,
     sessionKind: raw.session_kind === "delivery" ? "delivery" : "point",
+    fulfillment: raw.fulfillment ?? null,
+    orderNumber: raw.order_number == null ? null : Number(raw.order_number),
     reason: raw.reason,
     createdAt: raw.created_at,
   };
@@ -225,13 +239,13 @@ export function newCancellations(events: QueueCancellation[], seen: Set<string> 
 }
 
 export function cancellationText(c: QueueCancellation): string {
-  const where = c.sessionKind === "delivery" ? "DELIVERY" : `${c.pointType === "table" ? "Mesa" : "Comanda"} ${c.pointCode}`;
+  const where = c.sessionKind === "delivery" ? orderTitle(c.fulfillment === "pickup" ? "pickup" : "delivery", c.orderNumber) : `${c.pointType === "table" ? "Mesa" : "Comanda"} ${c.pointCode}`;
   return `Item cancelado — ${c.quantity}x ${c.name} — ${where}`;
 }
 
-export function pointLabel(group: Pick<OrderGroup, "pointType" | "pointCode"> & { sessionKind?: "point" | "delivery"; fulfillment?: "delivery" | "pickup" | null }): string {
-  // Badge do KDS: o fluxo de produção é o mesmo; só muda a origem exibida.
-  if (group.sessionKind === "delivery") return group.fulfillment === "pickup" ? "RETIRADA" : "DELIVERY";
+export function pointLabel(group: Pick<OrderGroup, "pointType" | "pointCode"> & { sessionKind?: "point" | "delivery"; fulfillment?: "delivery" | "pickup" | null; orderNumber?: number | null }): string {
+  // Badge do KDS: o fluxo de produção é o mesmo; só muda a origem exibida (com o número sequencial: DELIVERY #0001).
+  if (group.sessionKind === "delivery") return orderTitle(group.fulfillment === "pickup" ? "pickup" : "delivery", group.orderNumber ?? null);
   return `${group.pointType === "table" ? "Mesa" : "Comanda"} ${group.pointCode}`;
 }
 

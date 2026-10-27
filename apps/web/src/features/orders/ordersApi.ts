@@ -38,7 +38,7 @@ export interface SessionHeader {
   fulfillment: "delivery" | "pickup" | null;
   deliveryFee: number;
   // Delivery/retirada: dados para o recebimento no Caixa (forma PRETENDIDA e "troco para" só pré-preenchem; o servidor decide).
-  delivery: { deliveryOrderId: string; deliveryStatus: string; expectedMethod: "cash" | "pix" | "debit_card" | "credit_card" | "other" | null; cashChangeFor: number | null; custody: { courierName: string | null; method: string; amount: number; receivedAt: string } | null } | null;
+  delivery: { deliveryOrderId: string; orderNumber: number | null; deliveryStatus: string; expectedMethod: "cash" | "pix" | "debit_card" | "credit_card" | "other" | null; cashChangeFor: number | null; custody: { courierName: string | null; method: string; amount: number; receivedAt: string } | null } | null;
   point: { id: string; type: "command" | "table"; code: string; displayName: string } | null;
 }
 
@@ -154,14 +154,14 @@ export const supabaseOrdersSource: OrdersSource = {
     if (kind === "delivery") {
       const d = await supabase
         .from("delivery_orders")
-        .select("id, delivery_fee, fulfillment, delivery_status, expected_method, cash_change_for")
+        .select("id, order_number, delivery_fee, fulfillment, delivery_status, expected_method, cash_change_for")
         .eq("service_session_id", sessionId)
         .maybeSingle();
       if (d.error || !d.data) {
         console.error("Falha ao carregar o delivery:", d.error?.code);
         return { data: null, error: LOAD_ERROR };
       }
-      const dd = d.data as { id: string; delivery_fee: number | string; fulfillment: "delivery" | "pickup"; delivery_status: string; expected_method: NonNullable<SessionHeader["delivery"]>["expectedMethod"]; cash_change_for: number | string | null };
+      const dd = d.data as { id: string; order_number: number | string | null; delivery_fee: number | string; fulfillment: "delivery" | "pickup"; delivery_status: string; expected_method: NonNullable<SessionHeader["delivery"]>["expectedMethod"]; cash_change_for: number | string | null };
       // pedido cancelado: a taxa não conta (mesmo critério do fechamento no servidor)
       deliveryFee = dd.delivery_status === "canceled" ? 0 : Number(dd.delivery_fee);
       fulfillment = dd.fulfillment;
@@ -180,6 +180,7 @@ export const supabaseOrdersSource: OrdersSource = {
       delivery = {
         custody,
         deliveryOrderId: dd.id,
+        orderNumber: dd.order_number == null ? null : Number(dd.order_number),
         deliveryStatus: dd.delivery_status,
         expectedMethod: dd.expected_method,
         cashChangeFor: dd.cash_change_for === null ? null : Number(dd.cash_change_for),

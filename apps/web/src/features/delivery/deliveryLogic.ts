@@ -4,6 +4,7 @@
 // QUAIS BOTÕES mostrar (espelho do backend, só UX), validação amigável de formulário e montagem do payload.
 
 import type { CompanyRole } from "../../lib/types";
+import { formatOrderNumber, matchesOrderNumber, orderTitle } from "../../lib/orderNumber";
 
 export type Fulfillment = "delivery" | "pickup";
 export type LogisticStatus = "confirmed" | "out_for_delivery" | "delivered" | "picked_up" | "canceled";
@@ -102,6 +103,8 @@ export interface DeliveryAddress {
 
 export interface DeliveryRow {
   id: string;
+  /** Número sequencial operacional (null só em resposta de servidor sem a numeração). */
+  orderNumber: number | null;
   sessionId: string;
   orderId: string;
   fulfillment: Fulfillment;
@@ -140,6 +143,7 @@ export interface DeliveryRow {
 // Linha crua de list_delivery_orders (snake_case, numeric como string/number).
 export interface RawDeliveryRow {
   id: string;
+  order_number?: number | string | null;
   service_session_id: string;
   service_order_id: string;
   fulfillment: Fulfillment;
@@ -183,6 +187,7 @@ const num = (v: number | string | null | undefined): number => Number(v ?? 0);
 export function toDeliveryRow(raw: RawDeliveryRow): DeliveryRow {
   return {
     id: raw.id,
+    orderNumber: raw.order_number === null || raw.order_number === undefined ? null : Number(raw.order_number),
     sessionId: raw.service_session_id,
     orderId: raw.service_order_id,
     fulfillment: raw.fulfillment,
@@ -367,15 +372,21 @@ export function shortId(id: string): string {
   return id.replace(/-/g, "").slice(0, 6).toUpperCase();
 }
 
+/** Identificação exibida do pedido: "DELIVERY #0001" / "RETIRADA #0002" (fallback: código técnico). */
+export function orderLabel(row: Pick<DeliveryRow, "fulfillment" | "orderNumber" | "id">): string {
+  return orderTitle(row.fulfillment, row.orderNumber, row.id);
+}
+
 /** Busca livre no que já foi carregado: cliente, telefone, bairro, rua, entregador e número do pedido. */
 export function matchesQuery(row: DeliveryRow, query: string): boolean {
   const q = normalizeText(query.trim());
   if (!q) return true;
   const digits = q.replace(/\D/g, "");
   const hay = normalizeText(
-    [row.customerName, row.address?.neighborhood, row.address?.street, row.courierName, shortId(row.id)].filter(Boolean).join(" "),
+    [row.customerName, row.address?.neighborhood, row.address?.street, row.courierName, shortId(row.id), formatOrderNumber(row.orderNumber)].filter(Boolean).join(" "),
   );
   if (hay.includes(q)) return true;
+  if (matchesOrderNumber(row.orderNumber, query)) return true;
   return digits.length >= 3 && (row.customerPhone ?? "").includes(digits);
 }
 
@@ -883,4 +894,60 @@ export function formatAvgMinutes(m: number | null): string {
   if (m === null) return "—";
   if (m < 60) return `${Math.round(m)} min`;
   return `${Math.floor(m / 60)} h ${Math.round(m % 60)} min`;
+}
+
+// ---- Troco do entregador (get_courier_advance / give_courier_change_advance) ---------------------------------------------
+export type AdvanceStatus = "open" | "settled" | "returned";
+export const ADVANCE_STATUS_LABEL: Record<AdvanceStatus, string> = {
+  open: "Com o entregador",
+  settled: "Devolvido no acerto",
+  returned: "Devolvido ao Caixa",
+};
+export interface CourierAdvance {
+  id: string;
+  amount: number;
+  status: AdvanceStatus;
+  givenAt: string;
+  givenByName: string | null;
+  courierUserId: string;
+  note: string | null;
+}
+export interface CourierAdvanceInfo {
+  advance: CourierAdvance | null;
+  orderTotal: number;
+  expectedMethod: ExpectedMethod | null;
+  cashChangeFor: number | null;
+  /** Troco necessário para o pagamento informado (troco para - total); 0 quando não se aplica. */
+  suggested: number;
+  canGive: boolean;
+  blockedReason: string | null;
+}
+export interface RawCourierAdvanceInfo {
+  advance: { id: string; amount: number | string; status: AdvanceStatus; given_at: string; given_by_name: string | null; courier_user_id: string; note: string | null } | null;
+  order_total: number | string | null;
+  expected_method: ExpectedMethod | null;
+  cash_change_for: number | string | null;
+  suggested: number | string | null;
+  can_give: boolean;
+  blocked_reason: string | null;
+}
+export function toAdvanceInfo(raw: RawCourierAdvanceInfo): CourierAdvanceInfo {
+  return {
+    advance: raw.advance
+      ? { id: raw.advance.id, amount: Number(raw.advance.amount), status: raw.advance.status, givenAt: raw.advance.given_at, givenByName: raw.advance.given_by_name, courierUserId: raw.advance.courier_user_id, note: raw.advance.note }
+      : null,
+    orderTotal: Number(raw.order_total ?? 0),
+    expectedMethod: raw.expected_method,
+    cashChangeFor: raw.cash_change_for === null || raw.cash_change_for === undefined ? null : Number(raw.cash_change_for),
+    suggested: Number(raw.suggested ?? 0),
+    canGive: !!raw.can_give,
+    blockedReason: raw.blocked_reason,
+  };
+}
+/** Valor do adiantamento digitado: vazio = sugerido; precisa ser > 0 e menor que R$ 100.000. */
+export function advanceAmountProblem(text: string, suggested: number): { value: number | null; problem: string | null } {
+  const t = text.trim();
+  const v = t ? parseMoney(t) : suggested;
+  if (v === null || v <= 0 || v >= 100000) return { value: null, problem: "Informe o valor do troco (maior que zero)." };
+  return { value: v, problem: null };
 }

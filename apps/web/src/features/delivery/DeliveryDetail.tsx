@@ -4,6 +4,7 @@ import { formatReais } from "../../lib/money";
 import { Modal } from "../employees/Modal";
 import { OrderWhatsappNotice } from "../whatsapp/OrderWhatsappNotice";
 import { CourierPaymentBox } from "./CourierPaymentBox";
+import { CourierAdvanceBox } from "./CourierAdvanceBox";
 import type { CompanyRole } from "../../lib/types";
 import type { CourierOption, DeliveryDetail as Detail, DeliverySource } from "./deliveryApi";
 import {
@@ -24,7 +25,7 @@ import {
   financialBadge,
   formatTime,
   isOperator,
-  shortId,
+  orderLabel,
   stateLabel,
   type DeliveryAction,
   type DeliveryRow,
@@ -148,7 +149,7 @@ export function DeliveryDetail({
   const eta = etaOf(row);
 
   return (
-    <Modal title={`${FULFILLMENT_LABEL[row.fulfillment]} · #${shortId(row.id)}`} onClose={onClose}>
+    <Modal title={orderLabel(row)} onClose={onClose}>
       <div className="dl-detail">
         <div className="dl-badges">
           <span className={`dl-badge dl-badge-${row.fulfillment}`}>{FULFILLMENT_LABEL[row.fulfillment]}</span>
@@ -215,6 +216,7 @@ export function DeliveryDetail({
             <div className="dl-total"><dt>Total</dt><dd>{formatReais(row.total)}</dd></div>
           </dl>
         )}
+        <CourierAdvanceBox row={row} role={role} source={source} onChanged={onChanged} />
         {isCourier && <CourierPaymentBox row={row} source={source} onDone={onChanged} />}
         {isCourier && row.paymentTiming === "on_delivery" && row.status !== "canceled" && row.financialStatus === "pending" && !row.courierCustody && row.status === "confirmed" && (
           <p className="dl-courier-total">

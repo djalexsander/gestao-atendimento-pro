@@ -24,6 +24,8 @@ export const MODULE_FEATURES: Record<string, string[]> = {
   estoque: ["Estoque", "Disponibilidade", "Movimentações", "Relatórios"],
   impressao: ["Print Agent", "Impressão avançada", "Etiquetas de produto, livre e comanda/mesa"],
   delivery: ["Delivery", "Retirada", "Endereços", "Zonas e taxas", "Produção/KDS", "Entregadores", "Integração com Caixa e Estoque"],
+  whatsapp: ["API oficial Meta", "Conexão empresarial", "Conversas", "Atendimento manual", "Histórico", "Envio e recebimento de mensagens"],
+  ia: ["Atendimento automático", "Respostas inteligentes", "Consulta ao catálogo", "Pedidos por conversa", "Identificação de produtos", "Transferência para atendente"],
 };
 
 

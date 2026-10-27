@@ -4,6 +4,7 @@ import { OPEN_ATTENDANCE_TABLES, subscribeToOpenAttendanceChanges } from "../ope
 import { describeOrderError } from "../orders/ordersLogic";
 import {
   toAddress,
+  toAdvanceInfo,
   toCourierStat,
   toDeliveryRow,
   toQuote,
@@ -11,6 +12,7 @@ import {
   toZone,
   type AddressForm,
   type AddressRow,
+  type CourierAdvanceInfo,
   type CourierStat,
   type CreateArgs,
   type DeliveryFilters,
@@ -20,6 +22,7 @@ import {
   type Fulfillment,
   type LogisticStatus,
   type RawAddress,
+  type RawCourierAdvanceInfo,
   type RawCourierStat,
   type RawDeliveryRow,
   type RawQuote,
@@ -59,6 +62,8 @@ export interface DeliveryDetail {
 }
 export interface CreatedDelivery {
   deliveryOrderId: string;
+  /** Número sequencial do pedido (null se o servidor ainda não devolve). */
+  orderNumber: number | null;
   replayed: boolean;
   total: number;
   deliveryFee: number;
@@ -87,6 +92,10 @@ export interface DeliverySource {
   updateSettings(companyId: string, s: DeliverySettings): Promise<Result<DeliverySettings>>;
   updateRules(companyId: string, r: { minOrderAmount: number | null; freeDeliveryAbove: number | null; requireCourierForDispatch: boolean }): Promise<Result<DeliverySettings>>;
   courierReport(companyId: string, from: string, to: string): Promise<Result<CourierStat[]>>;
+  // Troco do entregador: situação do adiantamento do pedido e valor sugerido.
+  advance(deliveryOrderId: string): Promise<Result<CourierAdvanceInfo>>;
+  // Entrega o troco (sai do caixa aberto de quem confirma). MESMO requestId em nova tentativa nunca duplica.
+  giveAdvance(deliveryOrderId: string, amount: number, requestId: string, note: string | null): Promise<Result<null>>;
   // Últimos pedidos do cliente (janela de 60 dias, a mesma regra de período da lista).
   customerOrders(companyId: string, customerId: string): Promise<Result<DeliveryRow[]>>;
   zones(companyId: string): Promise<Result<ZoneRow[]>>;
@@ -180,8 +189,8 @@ export const supabaseDeliverySource: DeliverySource = {
   async create(args) {
     const { data, error } = await supabase.rpc("create_delivery_order", args);
     if (error) return fail(error, "Não foi possível criar o pedido agora. Tente novamente.");
-    const j = data as { delivery_order_id: string; replayed: boolean; total: number | string; delivery_fee: number | string };
-    return { data: { deliveryOrderId: j.delivery_order_id, replayed: j.replayed, total: Number(j.total), deliveryFee: Number(j.delivery_fee) }, error: null };
+    const j = data as { delivery_order_id: string; order_number?: number | string | null; replayed: boolean; total: number | string; delivery_fee: number | string };
+    return { data: { deliveryOrderId: j.delivery_order_id, orderNumber: j.order_number == null ? null : Number(j.order_number), replayed: j.replayed, total: Number(j.total), deliveryFee: Number(j.delivery_fee) }, error: null };
   },
 
   async setStatus(deliveryOrderId, status) {
@@ -254,6 +263,22 @@ export const supabaseDeliverySource: DeliverySource = {
     const { data, error } = await supabase.rpc("get_delivery_settings", { p_company_id: companyId });
     if (error) return fail(error, "Não foi possível carregar as configurações agora.");
     return { data: toSettings(data as RawSettings), error: null };
+  },
+
+  async advance(deliveryOrderId) {
+    const { data, error } = await supabase.rpc("get_courier_advance", { p_delivery_order_id: deliveryOrderId });
+    if (error) return fail(error, "Não foi possível carregar o troco do entregador agora.");
+    return { data: toAdvanceInfo(data as RawCourierAdvanceInfo), error: null };
+  },
+
+  async giveAdvance(deliveryOrderId, amount, requestId, note) {
+    const { error } = await supabase.rpc("give_courier_change_advance", {
+      p_delivery_order_id: deliveryOrderId,
+      p_amount: amount,
+      p_client_request_id: requestId,
+      p_note: note,
+    });
+    return error ? fail(error, "Não foi possível registrar a entrega do troco agora.") : { data: null, error: null };
   },
 
   async refuse(deliveryOrderId, reason) {

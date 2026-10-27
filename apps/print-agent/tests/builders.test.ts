@@ -245,6 +245,27 @@ test("delivery: retirada mostra RETIRADA, previsão de retirada e não imprime e
   assert.ok(!joined.includes("ENDEREÇO") && !joined.includes("Taxa de entrega") && !joined.includes("TROCO"));
 });
 
+test("delivery: número sequencial no cabeçalho (DELIVERY #0001 / RETIRADA #0002 / 5 dígitos) em 80 e 58 mm", () => {
+  for (const [ful, n, expected] of [["delivery", 1, "DELIVERY #0001"], ["pickup", 2, "RETIRADA #0002"], ["delivery", 10000, "DELIVERY #10000"], ["delivery", 12345, "DELIVERY #12345"]] as const) {
+    const p = { ...deliveryPayload, delivery: { ...deliveryPayload.delivery, fulfillment: ful, order_number: n } };
+    assert.ok(text80(job("production_order", p)).join("\n").includes(expected), `80 mm: faltou ${expected}`);
+    const lines = layout(buildDocument(job("production_order", p, { paper_width: 58 })), columnsFor(58));
+    const all = lines.map((l) => (l.kind === "text" ? l.text : "")).join("\n");
+    assert.ok(all.includes(expected), `58 mm: faltou ${expected}`);
+    for (const l of lines) if (l.kind === "text") assert.ok(l.text.length <= (l.size === 2 ? columnsFor(58) / 2 : columnsFor(58)), `"${l.text}" estoura`);
+  }
+});
+
+test("delivery: payload ANTIGO sem order_number imprime como antes (sem #)", () => {
+  const joined = text80(job("production_order", deliveryPayload)).join("\n");
+  assert.ok(joined.includes("DELIVERY") && !joined.includes("DELIVERY #"));
+});
+
+test("documentos de conta: rótulo do ponto 'Delivery #0007' / 'Retirada #0008' sai em destaque", () => {
+  const j = job("customer_bill", { ...order.payload, service_point: { label: "Retirada #0008" }, items: [{ product_name: "X", quantity: 1, unit_price: 5 }], total: 5, printed_at: "2026-10-14T18:00:00Z" });
+  assert.ok(text80(j).join("\n").includes("RETIRADA #0008"));
+});
+
 test("delivery sem entregador, sem troco e sem referência: omite essas linhas", () => {
   const dv = { ...deliveryPayload.delivery, courier: undefined, cash_change_for: undefined, expected_method: "pix", notes: undefined, address: { ...deliveryPayload.delivery.address, reference: undefined } };
   const joined = text80(job("production_order", { ...deliveryPayload, delivery: dv })).join("\n");

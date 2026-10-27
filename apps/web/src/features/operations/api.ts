@@ -3,7 +3,16 @@ import { supabase } from "../../lib/supabaseClient";
 import type { OpenSession, ServicePanelData } from "./panel";
 import { toReceivable, type DeliveryReceivable, type RawReceivable } from "./deliveryReceivables";
 import { describeOrderError } from "../orders/ordersLogic";
-import { toSettlementGroup, toSettlementResult, type RawSettlementGroup, type SettlementGroup, type SettlementResult } from "./courierSettlement";
+import {
+  toCashPending,
+  toSettlementGroup,
+  toSettlementResult,
+  type CashPending,
+  type RawSettlementGroup,
+  type SettleItem,
+  type SettlementGroup,
+  type SettlementResult,
+} from "./courierSettlement";
 
 const LOAD_ERROR = "Não foi possível carregar as comandas e mesas agora. Tente novamente.";
 const OPEN_ERROR = "Não foi possível abrir o atendimento agora. Tente novamente.";
@@ -27,6 +36,12 @@ export interface ServicePanelSource {
   loadSettlements?(companyId: string): Promise<{ data: SettlementGroup[] | null; error: string | null; hidden: boolean }>;
   // Confirma o acerto dos recibos escolhidos (o servidor usa o fechamento oficial; PT412 = abra o caixa). MESMO requestId = mesma operação.
   settleCourier?(companyId: string, courierUserId: string, receiptIds: string[], requestId: string): Promise<{ data: SettlementResult | null; error: string | null; needsCash: boolean }>;
+  // Acerto com DINHEIRO BRUTO (troco do entregador): venda + devolução do adiantamento + diferença contada. MESMO requestId = mesma operação.
+  settleCourierCash?(companyId: string, courierUserId: string, items: SettleItem[], requestId: string): Promise<{ data: SettlementResult | null; error: string | null; needsCash: boolean }>;
+  // Pendências do troco: adiantamentos a devolver (entrega cancelada/recusada/não acertada) e diferenças em aberto.
+  loadCashPending?(companyId: string): Promise<{ data: CashPending | null; error: string | null; hidden: boolean }>;
+  returnAdvance?(advanceId: string, countedAmount: number, note: string | null, requestId: string): Promise<{ error: string | null; needsCash: boolean }>;
+  resolveDifference?(lineId: string, action: "received" | "written_off", amount: number | null, note: string | null, requestId: string): Promise<{ error: string | null; needsCash: boolean }>;
   // Owner/admin: anula um recebimento ANTES do acerto (histórico mantido).
   voidCourierReceipt?(receiptId: string, reason: string): Promise<{ error: string | null }>;
   // Avisa (sem dados) quando um atendimento da empresa é aberto/fechado em qualquer aparelho.
@@ -84,6 +99,59 @@ export const supabaseServicePanelSource: ServicePanelSource = {
       return { data: null, error: describeOrderError(error, "Não foi possível confirmar o acerto agora. Tente novamente."), needsCash: error.code === "PT412" };
     }
     return { data: toSettlementResult(data as Parameters<typeof toSettlementResult>[0]), error: null, needsCash: false };
+  },
+
+  async settleCourierCash(companyId, courierUserId, items, requestId) {
+    const { data, error } = await supabase.rpc("settle_courier_cash", {
+      p_company_id: companyId,
+      p_courier_user_id: courierUserId,
+      p_items: items,
+      p_client_request_id: requestId,
+    });
+    if (error) {
+      console.error("Falha ao confirmar o acerto com troco:", error.code ?? "sem código");
+      return { data: null, error: describeOrderError(error, "Não foi possível confirmar o acerto agora. Tente novamente."), needsCash: error.code === "PT412" };
+    }
+    return { data: toSettlementResult(data as Parameters<typeof toSettlementResult>[0]), error: null, needsCash: false };
+  },
+
+  async loadCashPending(companyId) {
+    const { data, error } = await supabase.rpc("list_courier_cash_pending", { p_company_id: companyId });
+    if (error) {
+      const hidden = !!error.code?.startsWith("PT");
+      if (!hidden) console.error("Falha ao carregar as pendências de troco:", error.code ?? error.message);
+      return { data: null, error: hidden ? null : "Não foi possível carregar as pendências de troco agora.", hidden };
+    }
+    return { data: toCashPending(data as Parameters<typeof toCashPending>[0]), error: null, hidden: false };
+  },
+
+  async returnAdvance(advanceId, countedAmount, note, requestId) {
+    const { error } = await supabase.rpc("return_courier_change_advance", {
+      p_advance_id: advanceId,
+      p_counted_amount: countedAmount,
+      p_note: note,
+      p_client_request_id: requestId,
+    });
+    if (error) {
+      console.error("Falha ao receber a devolução do troco:", error.code ?? "sem código");
+      return { error: describeOrderError(error, "Não foi possível registrar a devolução agora."), needsCash: error.code === "PT412" };
+    }
+    return { error: null, needsCash: false };
+  },
+
+  async resolveDifference(lineId, action, amount, note, requestId) {
+    const { error } = await supabase.rpc("resolve_courier_difference", {
+      p_line_id: lineId,
+      p_action: action,
+      p_amount: amount,
+      p_note: note,
+      p_client_request_id: requestId,
+    });
+    if (error) {
+      console.error("Falha ao regularizar a diferença:", error.code ?? "sem código");
+      return { error: describeOrderError(error, "Não foi possível regularizar a diferença agora."), needsCash: error.code === "PT412" };
+    }
+    return { error: null, needsCash: false };
   },
 
   async voidCourierReceipt(receiptId, reason) {
@@ -162,6 +230,15 @@ export const supabaseServicePanelSource: ServicePanelSource = {
           { event: "*", schema: "public", table: "delivery_courier_receipts", filter: `company_id=eq.${companyId}` },
           () => {
             rtLog("delivery_courier_receipts change received");
+            onChange();
+          },
+        )
+        // troco adiantado / devolvido: a fila de acerto e as pendências mudam
+        .on(
+          "postgres_changes",
+          { event: "*", schema: "public", table: "delivery_courier_advances", filter: `company_id=eq.${companyId}` },
+          () => {
+            rtLog("delivery_courier_advances change received");
             onChange();
           },
         )

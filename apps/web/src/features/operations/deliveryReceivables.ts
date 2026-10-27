@@ -1,12 +1,14 @@
 // Delivery / Retirada no Caixa (Fase 4A): lógica PURA das contas de delivery/retirada mostradas junto das comandas/mesas.
 // Não há financeiro paralelo: o status financeiro é DERIVADO no banco (list_delivery_receivables) a partir da sessão e dos
 // pagamentos oficiais; aqui só se tipa, se filtra, se busca e se rotula.
+import { matchesOrderNumber } from "../../lib/orderNumber";
 import { CUSTODY_LABEL, FINANCIAL_LABEL, LOGISTIC_LABEL, METHOD_LABEL, toCustody, type CourierCustody, type ExpectedMethod, type FinancialStatus, type LogisticStatus, type RawCourierCustody } from "../delivery/deliveryLogic";
 
 export interface RawReceivable {
   delivery_order_id: string;
   service_session_id: string;
   short_code: string;
+  order_number?: number | string | null;
   fulfillment: "delivery" | "pickup";
   delivery_status: LogisticStatus;
   customer_name: string;
@@ -31,7 +33,9 @@ export interface RawReceivable {
 export interface DeliveryReceivable {
   deliveryOrderId: string;
   sessionId: string;
+  /** Número sequencial formatado ("0001"); sem numeração no servidor cai no código técnico. */
   shortCode: string;
+  orderNumber: number | null;
   fulfillment: "delivery" | "pickup";
   status: LogisticStatus;
   customerName: string;
@@ -60,6 +64,7 @@ export function toReceivable(r: RawReceivable): DeliveryReceivable {
     deliveryOrderId: r.delivery_order_id,
     sessionId: r.service_session_id,
     shortCode: r.short_code,
+    orderNumber: r.order_number == null ? null : Number(r.order_number),
     fulfillment: r.fulfillment,
     status: r.delivery_status,
     customerName: r.customer_name,
@@ -120,6 +125,7 @@ export function matchesReceivable(r: DeliveryReceivable, query: string): boolean
   if (!q) return true;
   const hay = normalize([r.customerName, r.shortCode, FULFILLMENT_TITLE[r.fulfillment], expectedMethodLabel(r) ?? "", operationalLabel(r)].join(" "));
   if (hay.includes(q)) return true;
+  if (matchesOrderNumber(r.orderNumber, q)) return true;
   const qd = digits(q);
   return qd.length >= 3 && digits(r.customerPhone ?? "").includes(qd);
 }

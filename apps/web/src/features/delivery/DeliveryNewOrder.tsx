@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { formatReais } from "../../lib/money";
+import { orderTitle } from "../../lib/orderNumber";
 import type { CompanyRole } from "../../lib/types";
 import { CustomerPicker } from "../customers/CustomerPicker";
 import type { CustomerOption } from "../customers/customersLogic";
@@ -101,7 +102,7 @@ export function DeliveryNewOrder({
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [rules, setRules] = useState<{ minOrder: number | null; freeAbove: number | null } | null>(null);
   const [history, setHistory] = useState<DeliveryRow[] | null>(null);
-  const [created, setCreated] = useState<{ id: string; total: number } | null>(null);
+  const [created, setCreated] = useState<{ id: string; total: number; orderNumber: number | null } | null>(null);
 
   // client_request_id: UM por tentativa, preservado no retry. Qualquer mudança no conteúdo gera outro (senão o
   // servidor devolveria o pedido antigo — é a idempotência funcionando).
@@ -272,7 +273,7 @@ export function DeliveryNewOrder({
       setSubmitError(r.error); // mantém o MESMO requestId: o retry é idempotente
       return;
     }
-    setCreated({ id: r.data.deliveryOrderId, total: r.data.total });
+    setCreated({ id: r.data.deliveryOrderId, total: r.data.total, orderNumber: r.data.orderNumber });
   }
 
   const next = () => {
@@ -291,7 +292,7 @@ export function DeliveryNewOrder({
         <div className="dl-new-panel">
           <h3>Pedido criado</h3>
           <p>
-            {FULFILLMENT_LABEL[draft.fulfillment]} confirmado. Total <strong>{formatReais(created.total)}</strong>. Os itens já estão na produção.
+            {created.orderNumber ? orderTitle(draft.fulfillment, created.orderNumber) : FULFILLMENT_LABEL[draft.fulfillment]} confirmado. Total <strong>{formatReais(created.total)}</strong>. Os itens já estão na produção.
           </p>
           <div className="modal-actions">
             <button type="button" className="btn-primary btn-auto" autoFocus onClick={() => onCreated(created.id)}>Voltar para o Delivery</button>

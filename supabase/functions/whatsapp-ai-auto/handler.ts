@@ -36,7 +36,9 @@ import { ORDER_EXTRACT_SCHEMA, validateExtraction } from "../_shared/ai-order.ts
 import { runOrderFlow, type OrderFlowIo } from "../_shared/ai-order-flow.ts";
 import { composeWithIntro, greetingReply, isGreetingOnly } from "../_shared/ai-intro.ts";
 import { authorizeInternalRequest } from "../_shared/push-core.ts";
-import { dispatchQueuedMessage, markMessageFailed, type DispatchRpcClient } from "../_shared/whatsapp-dispatch.ts";
+import { MENU_CAPTION, MENU_OFFER_TEXT, menuFilename, menuIntent } from "../_shared/ai-menu.ts";
+import { MENU_PDF_MAX_BYTES, buildMenuPdf, type MenuCatalog } from "../_shared/menu-pdf.ts";
+import { dispatchQueuedMessage, markMessageFailed, type DispatchDocument, type DispatchRpcClient } from "../_shared/whatsapp-dispatch.ts";
 import { isValidGraphVersion, type GraphSender } from "../_shared/whatsapp-graph.ts";
 
 export type RpcClient = DispatchRpcClient;
@@ -53,6 +55,14 @@ export interface AutoDeps {
   graphVersion: string | undefined;
   now?: () => number;
   maxJobs?: number;
+  /** Cardápio em PDF (opcional): sem isto a funcionalidade não existe e o fluxo é exatamente o de sempre. */
+  menu?: MenuDeps;
+}
+
+/** Arquivos do cardápio no bucket PRIVADO whatsapp-menu (service_role). */
+export interface MenuDeps {
+  download(path: string): Promise<Uint8Array | null>;
+  upload(path: string, bytes: Uint8Array): Promise<boolean>;
 }
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
@@ -164,17 +174,28 @@ async function commitAndDispatch(
   jobId: string,
   latest: string,
   body: string,
-  opts: { usageId: string | null; okOutcome: string; okReason: string; fallback: boolean; onSent?: (messageId: string) => Promise<void> },
+  opts: {
+    usageId: string | null;
+    okOutcome: string;
+    okReason: string;
+    fallback: boolean;
+    onSent?: (messageId: string) => Promise<void>;
+    /** Envio do cardápio: commit do DOCUMENTO (mesmas barreiras do automático) + despacho por media_id. */
+    menu?: { hash: string; document: DispatchDocument };
+  },
 ): Promise<string> {
   // APRESENTAÇÃO (Fase 2): só na 1ª saída da conversa, prefixo FIXO do banco; as checagens de segurança já rodaram sobre a resposta pura
   const finalBody = composeWithIntro(c.intro ?? null, body);
-  const commit = await call(c.deps.admin, "whatsapp_ai_auto_commit_send", { p_job_id: jobId, p_context_latest_message_id: latest, p_body: finalBody });
+  const commit = opts.menu
+    ? await call(c.deps.admin, "whatsapp_ai_menu_commit_send", { p_job_id: jobId, p_context_latest_message_id: latest, p_caption: finalBody, p_hash: opts.menu.hash })
+    : await call(c.deps.admin, "whatsapp_ai_auto_commit_send", { p_job_id: jobId, p_context_latest_message_id: latest, p_body: finalBody });
   const res = isObj(commit.data) ? commit.data : null;
   if (commit.error || !res || typeof res.result !== "string") {
     console.error("whatsapp-ai-auto: commit falhou", { code: commit.error?.code ?? null });
     return "left_for_retry"; // lease expira e o job é recuperado; a mensagem (se existir) é única por job
   }
   if (res.result === "not_active") return "not_active";
+  if (res.result === "stale") return "left_for_retry"; // o catálogo mudou entre a geração e o envio: o job é retomado e gera de novo
   if (res.result === "rescheduled") return "rescheduled"; // entrou inbound novo: a resposta antiga NÃO é enviada
   if (res.result === "abort") {
     const outcome = typeof res.outcome === "string" ? res.outcome : "aborted_mode";
@@ -205,7 +226,7 @@ async function commitAndDispatch(
 
   // result === 'queued' => fluxo OFICIAL de despacho
   const graphVersion = c.deps.graphVersion as string; // validado antes de claimar
-  const sent = await dispatchQueuedMessage({ admin: c.deps.admin, graph: c.deps.graph, graphVersion }, messageId);
+  const sent = await dispatchQueuedMessage({ admin: c.deps.admin, graph: c.deps.graph, graphVersion }, messageId, opts.menu?.document);
   if (sent.ok) {
     if (opts.onSent) await opts.onSent(messageId);
     await completeJob(c, jobId, opts.okOutcome, opts.okReason, { usageId: opts.usageId, handled: latest });
@@ -272,6 +293,90 @@ function makeOrderIo(c: Ctx, jobId: string, latest: string, fallback: boolean): 
       return outcome;
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// CARDÁPIO EM PDF (documento por media_id). Determinístico e sem IA: pedido explícito, ou aceite de uma oferta PENDENTE (decidida no
+// banco). Falha de leitura do contexto devolve null e o atendimento segue pelo fluxo de sempre.
+// ---------------------------------------------------------------------------
+interface MenuCtx {
+  companyId: string;
+  companyName: string;
+  productCount: number;
+  hash: string;
+  offerPending: boolean;
+  offerAllowed: boolean;
+  cachedPath: string | null;
+  catalog: MenuCatalog | null;
+}
+
+function parseMenuCtx(v: unknown): MenuCtx | null {
+  if (!isObj(v) || v.enabled !== true) return null;
+  if (typeof v.company_id !== "string" || typeof v.catalog_hash !== "string" || !/^[0-9a-f]{32}$/.test(v.catalog_hash)) return null;
+  const cat = v.catalog;
+  const catalog = isObj(cat) && typeof cat.company === "string" && Array.isArray(cat.categories) ? (cat as unknown as MenuCatalog) : null;
+  return {
+    companyId: v.company_id,
+    companyName: typeof v.company_name === "string" ? v.company_name : "",
+    productCount: typeof v.product_count === "number" ? v.product_count : 0,
+    hash: v.catalog_hash,
+    offerPending: v.offer_pending === true,
+    offerAllowed: v.offer_allowed === true,
+    cachedPath: typeof v.cached_path === "string" ? v.cached_path : null,
+    catalog,
+  };
+}
+
+async function menuContext(c: Ctx, jobId: string, withCatalog: boolean): Promise<MenuCtx | null> {
+  const r = await call(c.deps.admin, "whatsapp_ai_menu_context", { p_job_id: jobId, p_with_catalog: withCatalog });
+  if (r.error) {
+    console.error("whatsapp-ai-auto: contexto do cardápio falhou", { code: r.error.code ?? null });
+    return null;
+  }
+  return parseMenuCtx(r.data);
+}
+
+/** Bytes do PDF vigente: do cache (hash igual ao do catálogo) ou gerados agora e guardados. null = indisponível. */
+async function menuBytes(c: Ctx, jobId: string, m: MenuCtx): Promise<{ bytes: Uint8Array; hash: string } | null> {
+  const menu = c.deps.menu as MenuDeps;
+  if (m.cachedPath) {
+    const cached = await menu.download(m.cachedPath).catch(() => null);
+    if (cached && cached.length > 0) return { bytes: cached, hash: m.hash };
+  }
+  const fresh = await menuContext(c, jobId, true);
+  if (!fresh || !fresh.catalog || fresh.productCount === 0) return null;
+  const bytes = buildMenuPdf(fresh.catalog, new Date((c.deps.now ?? Date.now)()));
+  if (bytes.length === 0 || bytes.length > MENU_PDF_MAX_BYTES) return null;
+  const path = `${fresh.companyId}/${fresh.hash}.pdf`;
+  if (!(await menu.upload(path, bytes).catch(() => false))) return null;
+  const stored = await call(c.deps.admin, "whatsapp_ai_menu_store", { p_job_id: jobId, p_hash: fresh.hash, p_path: path, p_size: bytes.length });
+  if (stored.error || stored.data !== true) return null;
+  return { bytes, hash: fresh.hash };
+}
+
+/**
+ * Pedido/aceite do cardápio. Devolve o desfecho do job, ou null quando NÃO é o caso (o fluxo de sempre segue). Nunca consome cota
+ * de IA. Falha de geração/upload/envio = failed_send (com handoff quando permitido); nunca diz ao cliente que enviou.
+ */
+async function tryMenu(c: Ctx, jobId: string, latest: string, inbound: string[], fallback: boolean): Promise<string | null> {
+  const intent = menuIntent(inbound);
+  if (!intent) return null;
+  const m = await menuContext(c, jobId, false);
+  if (!m || m.productCount === 0) return null;
+  if (intent === "acceptance" && !m.offerPending) return null; // "sim" sem oferta pendente é conversa normal
+  const built = await menuBytes(c, jobId, m);
+  if (!built) {
+    console.error("whatsapp-ai-auto: cardápio indisponível");
+    await completeJob(c, jobId, "failed_send", "menu_pdf_unavailable", { handled: latest, handoff: fallback });
+    return "failed_send";
+  }
+  return await commitAndDispatch(c, jobId, latest, MENU_CAPTION, {
+    usageId: null,
+    okOutcome: "replied",
+    okReason: "menu_pdf_sent",
+    fallback,
+    menu: { hash: built.hash, document: { bytes: built.bytes, filename: menuFilename(m.companyName), mimeType: "application/pdf" } },
+  });
 }
 
 async function processJob(base: Ctx, job: JobRow): Promise<string> {
@@ -341,12 +446,37 @@ async function processJob(base: Ctx, job: JobRow): Promise<string> {
   if (intro) {
     const pending = unansweredTail(ctx.messages).filter((m) => m.direction === "inbound");
     if (pending.length > 0 && pending.every((m) => isGreetingOnly(m.text))) {
-      return await commitAndDispatch(c, job.id, latest, greetingReply(intro), { usageId: null, okOutcome: "replied", okReason: "intro_greeting", fallback });
+      // Cardápio: a saudação pode OFERECER o PDF (uma vez por conversa); o envio só acontece se o cliente pedir/aceitar depois.
+      let offer = false;
+      if (deps.menu) {
+        const mc = await menuContext(c, job.id, false);
+        offer = !!mc && mc.productCount > 0 && mc.offerAllowed;
+      }
+      return await commitAndDispatch(c, job.id, latest, offer ? `${greetingReply(intro)} ${MENU_OFFER_TEXT}` : greetingReply(intro), {
+        usageId: null,
+        okOutcome: "replied",
+        okReason: "intro_greeting",
+        fallback,
+        onSent: offer
+          ? async (messageId) => {
+              const r = await call(deps.admin, "whatsapp_ai_menu_register_offer", { p_job_id: job.id, p_message_id: messageId });
+              if (r.error) console.error("whatsapp-ai-auto: não registrou a oferta do cardápio", { code: r.error.code ?? null });
+            }
+          : undefined,
+      });
     }
   }
 
   // pré-filtros determinísticos: sem custo de IA
   const pre = preFilter(ctx);
+  // CARDÁPIO EM PDF: antes do pedido/IA, mas nunca por cima de um handoff duro (injeção, humano, jurídico, cobrança, reclamação, mídia).
+  if (deps.menu && (!pre || pre.action === "ignore" || pre.reason_code === "action_required")) {
+    const inbound = unansweredTail(ctx.messages)
+      .filter((m) => m.direction === "inbound" && (m.type === undefined || m.type === "text" || m.type === "interactive"))
+      .map((m) => m.text);
+    const sent = await tryMenu(c, job.id, latest, inbound, fallback);
+    if (sent) return sent;
+  }
   // PEDIDO CONVERSACIONAL (só roda com order_drafts_enabled=true e as migrations aplicadas; senão devolve handled=false e o fluxo
   // de sempre segue IGUAL). Handoffs duros (injeção, humano, jurídico, cobrança, reclamação, mídia) continuam sendo os de sempre.
   let orderActive = false;

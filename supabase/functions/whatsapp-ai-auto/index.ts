@@ -36,5 +36,16 @@ Deno.serve((req: Request) =>
     ),
     graph,
     graphVersion: Deno.env.get("WHATSAPP_GRAPH_API_VERSION"),
+    // Cardápio em PDF: bucket PRIVADO whatsapp-menu, só service_role; o caminho é sempre <empresa>/<hash>.pdf (conferido no banco).
+    menu: {
+      async download(path) {
+        const { data, error } = await admin.storage.from("whatsapp-menu").download(path);
+        return error || !data ? null : new Uint8Array(await data.arrayBuffer());
+      },
+      async upload(path, bytes) {
+        const { error } = await admin.storage.from("whatsapp-menu").upload(path, bytes, { contentType: "application/pdf", upsert: true });
+        return !error;
+      },
+    },
   })
 );
