@@ -204,6 +204,18 @@ const LEADING_QTY_RE = /^(\d{1,3}|um|uma|dois|duas|tres|quatro|cinco|seis|mais)\
 export function startsWithQuantity(text: string): boolean {
   return LEADING_QTY_RE.test(norm(text));
 }
+// número em dígito ou por extenso, "2x", "1 x-bacon"
+const LIST_START_RE = /^(?:\d{1,2}|um|uma|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez)\s*x?\s+[a-z][a-z-]{2}/;
+// palavras de PERGUNTA/consulta: "2 espetos quanto fica" e "3 coca tem" informam, não pedem
+const LIST_INQUIRY_RE = /\b(quanto|qual|quais|tem|tenho|tens|voces|vcs|preco|valor|promocao|desconto|cardapio|aceita|aceitam)\b/;
+/**
+ * Lista de itens SEM verbo ("2 espetos de carne / 3 coca"): começa com NÚMERO (dígito) + palavra e não é pergunta. Só abre a porta do
+ * fluxo de pedido; quem confirma a intenção continua sendo o extrator (order_intent) e os itens só entram pelo catálogo do banco.
+ */
+export function looksLikeItemList(text: string): boolean {
+  const t = norm(text);
+  return !t.includes("?") && !LIST_INQUIRY_RE.test(t) && LIST_START_RE.test(t.trim());
+}
 
 // ---------------------------------------------------------------------------
 // Confirmação (determinística e conservadora) e cancelamento
@@ -346,6 +358,7 @@ export function buildOrderSystemPrompt(businessName: string | null): string {
     "- order_intent=true só quando o cliente está PEDINDO/alterando itens do pedido (\"quero\", \"me vê\", \"manda\", \"coloca\", \"tira\", \"troca\"...) ou respondendo a uma pergunta do pedido (tipo de entrega, endereço, pagamento, nome, opção do item).",
     "- inquiry_only=true quando for só pergunta informativa (\"tem espeto de carne?\", \"quanto é a coca?\", \"qual o cardápio?\"). Pergunta NÃO adiciona item: nesse caso operations deve ser [].",
     "- add_item: quantity_kind=explicit se o cliente escreveu o número (dígito ou por extenso) e quantity=esse número; singular se pediu UM item no singular sem número (\"quero espeto de carne\", \"me vê uma Coca\", \"manda um pão de alho\") e quantity=1; unclear se for plural sem número, \"uns\", \"alguns\", \"meia dúzia\" ou ambíguo (quantity=null).",
+    "- Uma lista de itens com quantidade MESMO SEM verbo (\"2 espetos de carne 3 coca\") é um pedido: order_intent=true e uma add_item por item, preservando cada quantidade escrita.",
     "- Várias frases/itens => uma operação por item. \"Coloca mais um coração\" => add_item. \"Troca o de frango por linguiça\" => replace_item com product_text=frango e to_text=linguiça.",
     "- Retirar item: remove_item = tirar a LINHA INTEIRA, sem número (\"tira o espeto de carne\", \"não quero mais a Coca\", \"tira todos\"). decrement_item = REDUZIR N unidades (\"tira 1 espeto de carne\", \"remove 2\", \"diminui 1\"): quantity=N, o número que o cliente escreveu, quantity_kind=explicit. NÃO calcule a quantidade final. set_quantity = o cliente disse a quantidade FINAL (\"deixa só 1\", \"muda para 3\"): quantity=essa quantidade.",
     "- Observação como \"sem cebola\" => set_item_notes com notes (product_text=o item, ou null se só houver um item no pedido). Opção de item (ponto da carne, adicionais) => set_item_options ou options_text no add_item.",
@@ -581,6 +594,7 @@ export function countChoiceAsks(messages: Array<{ direction: string; text: strin
     if (messages[i].direction !== "outbound") continue;
     if (parseChoiceQuestion(messages[i].text)) n++;
     else break;
+    if (/^Anotei:/m.test(messages[i].text)) break;   // houve progresso (item anotado) junto com a nova pergunta: a sequência recomeça
   }
   return n;
 }

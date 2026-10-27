@@ -12,7 +12,7 @@
 import { norm, type AutoMessage } from "./ai-auto.ts";
 import {
   LEGACY_SHOW_OPTIONS_RE, MSG_ALREADY_CONFIRMED, MSG_CANCEL_AFTER_ORDER, MSG_CANCELLED, MSG_CHOICE_GIVEUP, MSG_FAILED, MSG_NOT_FOUND, MSG_NO_DRAFT, MSG_REPROMPT, MSG_TOO_BIG,
-  boundedTail, countChoiceAsks, parseChoiceQuestion, parseLetterReply, pickChoice, renderChoice, renderLetterChoice, MSG_CHOICE_EXPIRED, buildOrderSystemPrompt, buildOrderUserBlock, classifyConfirmationBatch, decideQuantity, hasOrderVerb, isCancelIntent, matchItem,
+  boundedTail, countChoiceAsks, parseChoiceQuestion, parseLetterReply, pickChoice, renderChoice, renderLetterChoice, MSG_CHOICE_EXPIRED, buildOrderSystemPrompt, buildOrderUserBlock, classifyConfirmationBatch, decideQuantity, hasOrderVerb, isCancelIntent, looksLikeItemList, matchItem,
   nextQuestion, parseOrderState, plain, removalIntent, renderAmbiguous, renderAskQuantity, renderCreated, renderPriceChanges, renderSummary,
   renderUnavailable, renderZoneAmbiguous, startsWithQuantity, validateExtraction, brl, PAYMENT_LABELS,
   type ExtractedOp, type OrderState,
@@ -44,6 +44,9 @@ class StaleContext extends Error {}
 class FlowAbort extends Error { constructor(public outcome: string, public reason: string, public handoff = false) { super(outcome); } }
 
 const DISABLED_REASONS = new Set(["order_drafts_disabled", "mode_not_auto", "module_inactive"]);
+const GENERIC_TYPE_RE = /\b(cervejas?|refrigerantes?|refris?)\b/g;
+// pergunta NOVA (com letras): a que já foi respondida/resolvida NÃO pode voltar pelo caminho de compatibilidade das perguntas antigas
+const LETTER_PROMPT_RE = /Responda [A-E](?: |,|\.)/;
 const EDIT_RE = /(alterar|mudar|trocar|tirar|tira|remover|retirar|adicionar|colocar|coloca) /;
 const OUR_QUESTION_RE = /^(quantos |atendemos mais de um bairro|qual voc[eê] prefere|para .*:|para a entrega|prefere retirada|ser[aá] (entrega|retirada)|como prefere pagar|vai precisar de troco|em nome de quem|o que voc[eê] gostaria|n[aã]o encontrei esse item|n[aã]o encontrei exatamente|n[aã]o consegui identificar|para [^\n]*encontrei est|preciso rever|n[aã]o entregamos|no momento n[aã]o)/;
 const isOurQuestion = (t: string | null) => !!t && (OUR_QUESTION_RE.test(norm(t).replace(/^anotei[^\n]*\n/, "")) || !!parseChoiceQuestion(t));
@@ -87,12 +90,25 @@ export async function runOrderFlow(io: OrderFlowIo, input: OrderFlowInput): Prom
       return { handled: false, active: true };
     }
 
+    // 1a) RECUPERAÇÃO da fila de ambiguidades: se uma escolha foi resolvida mas a fila não foi consumida (o worker caiu no meio), consome
+    //     agora (atômico e idempotente no banco). O que o cliente já escolheu/pediu nunca precisa ser repetido.
+    const ch0 = await getChoice(io, jobId);
+    if (ch0?.pendingQueue) {
+      const base0: Extract<Exec, { kind: "reply" }> = { kind: "reply", state, acks: [], notes: [], questions: [] };
+      return { handled: true, outcome: await sendComposed(io, input, await continueQueue(io, input, base0, ch0.pendingQueue.queue, null, lastBot, ch0.pendingQueue.choiceId)) };
+    }
+
     let pendingChoiceBlock: string | null = null;
     // 1b) desambiguação ATIVA (contexto PERSISTIDO no banco): letra/ordinal/nome é resolvido AQUI, sem modelo, e o item entra com a
     //     quantidade guardada. Sem contexto ativo "A" não significa nada. Ambiguidade nunca vira handoff (só após 3 tentativas seguidas).
-    const ch = texts.length > 0 ? await getChoice(io, jobId) : null;
+    const ch = texts.length > 0 ? ch0 : null;
     const lastTxt = texts.length > 0 ? texts[texts.length - 1] : "";
     const newInstruction = hasOrderVerb(lastTxt) || startsWithQuantity(lastTxt) || norm(lastTxt).replace(/[^a-z0-9 ]+/g, " ").trim().split(/\s+/).length > 4 || classifyConfirmationBatch([lastTxt]) === "confirm";
+    if (ch?.active && classifyConfirmationBatch([lastTxt]) === "confirm") {
+      // "confirmar" com uma pergunta de escolha ainda aberta: NÃO confirma e NÃO descarta a pergunta; pede a escolha primeiro
+      const live0 = ch.active.options.filter((o) => o.active);
+      if (live0.length > 0) return { handled: true, outcome: await io.reply(clampBody(`Antes de confirmar, preciso saber qual você quer.\n${renderLetterChoice(ch.active.source, live0.map((o) => o.name ?? ""), "ambiguous", live0.map((o) => o.letter))}`), { outcome: "replied", reason: "order_question" }) };
+    }
     if (ch?.active) {
       const act = ch.active;
       const names = act.options.map((o) => o.name ?? "");
@@ -114,7 +130,7 @@ export async function runOrderFlow(io: OrderFlowIo, input: OrderFlowInput): Prom
           if (d.reason === "human_control") throw new FlowAbort("aborted_human", "ai_paused");
           throw new FlowAbort("aborted_mode", String(d.reason ?? "blocked"));
         }
-        if (d.result === "ok" && isObj(d.product)) return { handled: true, outcome: await sendComposed(io, input, choiceExec(state, d)) };
+        if (d.result === "ok" && isObj(d.product)) return { handled: true, outcome: await sendComposed(io, input, await continueQueue(io, input, choiceExec(state, d), d.queue, inbound.length, lastBot, act.choiceId)) };
         if (d.result === "apply_failed") return { handled: true, outcome: await sendComposed(io, input, choiceFailedExec(state, d)) };
         if (d.result === "product_inactive") return { handled: true, outcome: await reaskChoice(io, input, block, "Essa opção não está mais disponível.") };
         if (d.result === "expired") return { handled: true, outcome: await io.reply(MSG_CHOICE_EXPIRED, { outcome: "replied", reason: "order_question" }) };
@@ -131,7 +147,7 @@ export async function runOrderFlow(io: OrderFlowIo, input: OrderFlowInput): Prom
       return { handled: true, outcome: await io.reply(MSG_CHOICE_EXPIRED, { outcome: "replied", reason: "order_question" }) };
     } else {
       // compatibilidade: pergunta de escolha ANTIGA (bullets) ainda no histórico de conversas existentes, sem contexto no banco
-      const choice = texts.length > 0 ? parseChoiceQuestion(lastBot) : null;
+      const choice = texts.length > 0 && !LETTER_PROMPT_RE.test(lastBot ?? "") ? parseChoiceQuestion(lastBot) : null;
       if (choice) {
         const pick = pickChoice(lastTxt, choice.options);
         if (pick.kind === "one") {
@@ -171,12 +187,21 @@ export async function runOrderFlow(io: OrderFlowIo, input: OrderFlowInput): Prom
 
     // D5: item só entra com intenção clara de pedido (verbo de pedido, quantidade no começo com pedido aberto, ou resposta a uma
     // pergunta nossa). Pergunta informativa ("tem espeto de carne?") nunca adiciona item.
-    const orderish = hasOrderVerb(joined) || (!!state && startsWithQuantity(joined)) || isOurQuestion(lastBot);
-    if (!state && !hasOrderVerb(joined) && !isOurQuestion(lastBot)) return { handled: false, active: true };   // pergunta informativa etc.
+    // Lista de itens sem verbo ("2 espetos de carne 3 coca") também é pedido (caso real 27/10): sem isso caía no fluxo de conhecimento
+    // e virava handoff action_required. Continua passando pelo extrator (order_intent) e pelo catálogo do banco.
+    const listy = looksLikeItemList(joined);
+    const orderish = hasOrderVerb(joined) || listy || (!!state && startsWithQuantity(joined)) || isOurQuestion(lastBot);
+    if (!state && !hasOrderVerb(joined) && !listy && !isOurQuestion(lastBot)) return { handled: false, active: true };   // pergunta informativa etc.
 
     // 4) tudo já aplicado em uma rodada anterior deste job (reagendamento): só responder
     if (texts.length === 0) {
       if (!state) return { handled: false, active: true };
+      // reagendamento depois de a mensagem já ter sido aplicada: se ainda há uma pergunta de escolha PENDENTE (próxima da fila), repete-a
+      const pend = await getChoice(io, jobId);
+      if (pend?.active) {
+        const live = pend.active.options.filter((o) => o.active);
+        if (live.length > 0) return { handled: true, outcome: await io.reply(clampBody(`${renderLetterChoice(pend.active.source, live.map((o) => o.name ?? ""), "ambiguous", live.map((o) => o.letter))}`), { outcome: "replied", reason: "order_question" }) };
+      }
       return { handled: true, outcome: await respondFromState(io, input, state) };
     }
 
@@ -197,7 +222,7 @@ export async function runOrderFlow(io: OrderFlowIo, input: OrderFlowInput): Prom
       return { handled: false, active: true };
     }
 
-    const exec = await executeExtraction(io, input, state, extraction.operations, joined, orderish, inbound.length, lastBot);
+    const exec = await executeExtraction(io, input, state, extraction.operations, joined, orderish, inbound.length, lastBot, false, !state && !hasOrderVerb(joined) && !isOurQuestion(lastBot));
     if (exec.kind === "legacy") return { handled: false, active: true };
     return { handled: true, outcome: await sendComposed(io, input, exec) };
   } catch (e) {
@@ -234,6 +259,11 @@ async function mutate(io: OrderFlowIo, fn: string, args: Record<string, unknown>
 // ---------------------------------------------------------------------------
 async function doConfirm(io: OrderFlowIo, input: OrderFlowInput, before: OrderState | null): Promise<string> {
   const { jobId, latest } = input;
+  const pend = await getChoice(io, jobId);
+  const liveC = pend?.active ? pend.active.options.filter((o) => o.active) : [];
+  if (pend?.active && liveC.length > 0) {
+    return io.reply(clampBody(`Antes de confirmar, preciso saber qual você quer.\n${renderLetterChoice(pend.active.source, liveC.map((o) => o.name ?? ""), "ambiguous", liveC.map((o) => o.letter))}`), { outcome: "replied", reason: "order_question" });
+  }
   const d = await mutate(io, "whatsapp_order_confirm", { p_job_id: jobId, p_confirm_message_id: latest });
   const res = String(d.result ?? "");
   const st = parseOrderState(d.state);
@@ -303,9 +333,11 @@ async function respondFromState(io: OrderFlowIo, input: OrderFlowInput, st: Orde
 type Exec = { kind: "legacy" } | { kind: "reply"; state: OrderState | null; acks: Ack[]; notes: string[]; questions: string[] };
 
 async function executeExtraction(
-  io: OrderFlowIo, input: OrderFlowInput, state0: OrderState | null, ops: ExtractedOp[], text: string, orderish: boolean, tailCount: number, lastBot: string | null,
+  io: OrderFlowIo, input: OrderFlowInput, state0: OrderState | null, ops: ExtractedOp[], text: string, orderish: boolean, tailCount: number | null, lastBot: string | null, unguarded = false, implicit = false, takeChoiceId: string | null = null,
 ): Promise<Exec> {
-  const { jobId, latest } = input;
+  const { jobId } = input;
+  // fila de ambiguidades: o que o cliente JÁ disse não pode se perder se chegou mensagem nova no meio do turno (o reenvio da resposta trata a nova)
+  const latest = unguarded ? null : input.latest;
   const units: Unit[] = [];
   const questions: string[] = [];
   const notes: string[] = [];
@@ -313,17 +345,30 @@ async function executeExtraction(
   let payment = null as { method: string | null; needsChange: boolean | null; amount: number | null } | null;
   let state = state0;
   let considered = 0;
-  let choiceOpened = false;
+  let recognized = false;   // algum item da mensagem existe no catálogo (exato, ambíguo ou indisponível); "near" não conta
+  // PRIMEIRA ambiguidade da mensagem abre o contexto de escolha; as demais ficam numa FILA persistida no mesmo contexto (uma pergunta por vez)
+  let choice: { slot: number; op: ExtractedOp; pq: number | null; kind: "ambiguous" | "near"; c: Array<{ name: string; price: number | string }>; ids: string[] } | null = null;
+  const deferred: Array<{ text: string; quantity: number | null; notes: string | null }> = [];
   // quantidade "viva" de cada linha dentro deste lote (várias retiradas na mesma mensagem não podem usar o estado velho)
   const qtyNow = new Map<string, number>();
   const liveQty = (i: { item_id: string; quantity: number }) => qtyNow.get(i.item_id) ?? i.quantity;
   const removals = ops.filter((o) => o.op === "remove_item" || o.op === "decrement_item").length;
 
-  const resolveItem = async (mention: string) => {
+  const resolveRaw = async (mention: string) => {
     const r = await io.rpc("whatsapp_order_resolve_item", { p_job_id: jobId, p_mention: mention, p_limit: 5 });
     if (r.error || !isObj(r.data)) throw new FlowAbort("left_for_retry", "rpc_error");
     if (r.data.result === "blocked") throw new FlowAbort("aborted_mode", String(r.data.reason ?? "blocked"));
     return r.data;
+  };
+  // "cerveja haineken": a palavra genérica do TIPO de bebida não está no nome do produto ("Heineken Zero"). Sem resultado, tenta de novo
+  // SÓ com o resto (o catálogo do banco continua decidindo); se ainda assim nada serve, vale o resultado original.
+  const resolveItem = async (mention: string) => {
+    const first = await resolveRaw(mention);
+    if (first.result !== "none") return first;
+    const rest = norm(mention).replace(GENERIC_TYPE_RE, " ").replace(/\s+/g, " ").trim();
+    if (!rest || rest === norm(mention).trim()) return first;
+    const second = await resolveRaw(rest);
+    return second.result === "none" ? first : second;
   };
   const resolveOption = async (productId: string, mention: string) => {
     const r = await io.rpc("whatsapp_order_resolve_option", { p_job_id: jobId, p_product_id: productId, p_mention: mention });
@@ -337,6 +382,7 @@ async function executeExtraction(
         if (!orderish || !op.product_text) break;            // pergunta informativa NÃO adiciona item
         considered++;
         const rr = await resolveItem(op.product_text);
+        if (rr.result !== "none") recognized = true;
         if (rr.result === "ambiguous" || rr.result === "none") {
           // opções REAIS na mesma resposta, por LETRA; a quantidade/observação ficam num contexto PERSISTENTE (não dependem da memória do worker)
           const pend = decideQuantity(op, text);
@@ -346,15 +392,9 @@ async function executeExtraction(
           const total = rr.result === "ambiguous" ? Number(rr.total_candidates ?? c.length) : c.length;
           if (c.length === 0) { questions.push(MSG_NOT_FOUND); break; }
           if (total > 5) { questions.push(`Encontrei muitas opções de ${plain(op.product_text, 50)}. Pode me dizer mais detalhes do item (o nome completo)?`); break; }
-          if (choiceOpened) { notes.push(`Para ${plain(op.product_text, 50)}, me diga depois qual você quer.`); break; }
+          if (choice) { deferred.push({ text: op.product_text, quantity: pq, notes: op.notes }); break; }
           const ids = c.map((x) => (typeof x.product_id === "string" ? x.product_id : ""));
-          if (ids.every(Boolean)) {
-            const o = await io.rpc("whatsapp_order_choice_open", { p_job_id: jobId, p_source_text: op.product_text, p_quantity: pq, p_notes: op.notes, p_product_ids: ids, p_expected_latest: latest });
-            const od = isObj(o.data) ? o.data : null;
-            if (od && od.result === "blocked" && od.reason === "stale_context") throw new StaleContext();
-            if (od && od.result === "blocked" && od.reason === "human_control") throw new FlowAbort("aborted_human", "ai_paused");
-            if (!o.error && od && od.result === "ok") { choiceOpened = true; questions.push(renderLetterChoice(op.product_text, c.map((x) => x.name), kind)); break; }
-          }
+          if (ids.every(Boolean)) { choice = { slot: questions.length, op, pq, kind, c, ids }; questions.push(""); break; }
           // sem contexto persistido (migration ausente/falha): pergunta no formato antigo, sem letra (a resposta é lida da própria mensagem)
           questions.push(renderChoice(op.product_text, pq, c, kind));
           break;
@@ -465,13 +505,53 @@ async function executeExtraction(
     }
   }
 
+  if (choice) {
+    const ch = choice;
+    const o = await io.rpc("whatsapp_order_choice_open", {
+      p_job_id: jobId, p_source_text: ch.op.product_text, p_quantity: ch.pq, p_notes: ch.op.notes, p_product_ids: ch.ids, p_expected_latest: latest,
+      ...(deferred.length > 0 ? { p_queue: deferred } : {}),
+    });
+    const od = isObj(o.data) ? o.data : null;
+    if (od && od.result === "blocked" && od.reason === "stale_context") throw new StaleContext();
+    if (od && od.result === "blocked" && od.reason === "human_control") throw new FlowAbort("aborted_human", "ai_paused");
+    if (o.error && !isMissingFunction(o.error)) throw new FlowAbort("left_for_retry", "rpc_error");   // falha real: o job é retomado (a fila não se perde); só "função ausente" degrada
+    if (!o.error && od && od.result === "ok") {
+      const later = deferred.length > 0 ? `
+Depois eu pergunto sobre: ${deferred.map((x) => `${x.quantity ? `${x.quantity}x ` : ""}${plain(x.text, 40)}`).join(", ")}.` : "";
+      questions[ch.slot] = renderLetterChoice(ch.op.product_text ?? "", ch.c.map((x) => x.name), ch.kind) + later;
+    } else {
+      // sem contexto persistido (migration ausente/falha): pergunta no formato antigo, sem letra; as demais menções viram aviso
+      questions[ch.slot] = renderChoice(ch.op.product_text ?? "", ch.pq, ch.c, ch.kind);
+      for (const x of deferred) notes.push(`Para ${plain(x.text, 50)}, me diga depois qual você quer.`);
+    }
+  }
+
+  // pedido IMPLÍCITO (lista sem verbo, sem rascunho): só vale se algum produto for reconhecido; "2 horas", "3 pessoas" voltam ao fluxo normal
+  if (implicit && !recognized) return { kind: "legacy" };
+  const takeArgs = (ops: unknown[]) => ({ p_job_id: jobId, p_choice_id: takeChoiceId, p_ops: ops, p_tail_count: tailCount });
+  if (considered === 0 && questions.length === 0 && notes.length === 0 && takeChoiceId) await mutate(io, "whatsapp_order_choice_queue_take", takeArgs([]));   // nada a aplicar: só consome a fila
   if (considered === 0 && questions.length === 0 && notes.length === 0) return state ? { kind: "reply", state, acks: [], notes: [], questions: [] } : { kind: "legacy" };
 
   const acks: Ack[] = [];
   const base = { p_job_id: jobId, p_expected_latest: latest, p_tail_count: tailCount };
   // itens, tipo, nome, observação: lote atômico; se o lote falhar, cada unidade é tentada sozinha para isolar o problema
   const flat = units.flatMap((u) => u.ops);
-  if (flat.length > 0 || state) {
+  if (takeChoiceId) {
+    // fila de ambiguidades: aplicar os itens e esvaziar a fila é UMA transação (retry/recuperação nunca duplica nem perde)
+    const t = await mutate(io, "whatsapp_order_choice_queue_take", takeArgs(flat));
+    if (t.result === "ok" || t.result === "empty") {
+      state = parseOrderState(t.state) ?? state;
+      if (t.result === "ok") acks.push(...units.flatMap((u) => u.acks));
+    } else {
+      for (const u of units) {
+        const one = await mutate(io, "whatsapp_order_apply_ops", { ...base, p_ops: u.ops });
+        if (one.result === "ok") { state = parseOrderState(one.state) ?? state; acks.push(...u.acks); }
+        else mapInvalid(String(one.reason ?? ""), u, notes, questions);
+      }
+      const cl = await mutate(io, "whatsapp_order_choice_queue_take", takeArgs([]));
+      state = parseOrderState(cl.state) ?? state;
+    }
+  } else if (flat.length > 0 || state) {
     let applied = false;
     if (flat.length > 0) {
       const r = await mutate(io, "whatsapp_order_apply_ops", { ...base, p_ops: flat });
@@ -516,7 +596,8 @@ async function executeExtraction(
 
 interface ActiveChoice { choiceId: string; source: string; quantity: number | null; options: Array<{ letter: string; productId: string; name: string | null; active: boolean }> }
 /** Contexto de desambiguação ATIVO da conversa do job (o banco expira o vencido). null = função ausente (migration ainda não aplicada). */
-async function getChoice(io: OrderFlowIo, jobId: string): Promise<{ active: ActiveChoice | null; expired: boolean } | null> {
+interface PendingQueue { choiceId: string; queue: unknown[] }
+async function getChoice(io: OrderFlowIo, jobId: string): Promise<{ active: ActiveChoice | null; expired: boolean; pendingQueue: PendingQueue | null } | null> {
   const r = await io.rpc("whatsapp_order_choice_get", { p_job_id: jobId });
   if (r.error) {
     if (!isMissingFunction(r.error)) console.error("whatsapp-order: choice_get falhou", { code: r.error.code ?? null });
@@ -524,10 +605,13 @@ async function getChoice(io: OrderFlowIo, jobId: string): Promise<{ active: Acti
   }
   const d = isObj(r.data) ? r.data : null;
   if (!d || d.result === "blocked") return null;
-  if (d.result !== "ok" || typeof d.choice_id !== "string" || !Array.isArray(d.options)) return { active: null, expired: d.expired === true };
+  const pq = isObj(d.pending_queue) && typeof d.pending_queue.choice_id === "string" && Array.isArray(d.pending_queue.queue) && d.pending_queue.queue.length > 0
+    ? { choiceId: d.pending_queue.choice_id, queue: d.pending_queue.queue as unknown[] }
+    : null;
+  if (d.result !== "ok" || typeof d.choice_id !== "string" || !Array.isArray(d.options)) return { active: null, expired: d.expired === true, pendingQueue: pq };
   const options = (d.options as unknown[]).filter(isObj).map((o) => ({ letter: String(o.letter), productId: String(o.product_id), name: typeof o.name === "string" ? o.name : null, active: o.active === true && o.available !== false }));
-  if (options.length === 0) return { active: null, expired: false };
-  return { active: { choiceId: d.choice_id, source: typeof d.source_text === "string" ? d.source_text : "o item", quantity: typeof d.quantity === "number" ? d.quantity : null, options }, expired: false };
+  if (options.length === 0) return { active: null, expired: false, pendingQueue: pq };
+  return { active: { choiceId: d.choice_id, source: typeof d.source_text === "string" ? d.source_text : "o item", quantity: typeof d.quantity === "number" ? d.quantity : null, options }, expired: false, pendingQueue: pq };
 }
 
 /** Resultado de whatsapp_order_choice_resolve: o banco JÁ aplicou o item (quantidade e observação guardadas) na mesma transação da escolha. */
@@ -546,6 +630,22 @@ function choiceFailedExec(state: OrderState | null, d: Record<string, unknown>):
   return { kind: "reply", state, acks: [], notes, questions };
 }
 
+/**
+ * Fila de menções ambíguas guardada no contexto de escolha (mesma mensagem do cliente): depois de aplicar a escolha atual, reprocessa
+ * as que faltam pelo MESMO caminho do pedido (catálogo do banco, quantidade guardada). Exata => entra no rascunho; ambígua => abre a
+ * PRÓXIMA pergunta com letras (e leva o resto da fila); inexistente/indisponível => aviso. Nada que o cliente já disse é pedido de novo.
+ */
+async function continueQueue(io: OrderFlowIo, input: OrderFlowInput, base: Extract<Exec, { kind: "reply" }>, rawQueue: unknown, tailCount: number | null, lastBot: string | null, choiceId: string): Promise<Extract<Exec, { kind: "reply" }>> {
+  const queue = (Array.isArray(rawQueue) ? rawQueue : []).filter(isObj).filter((q) => typeof q.text === "string" && q.text.length > 0);
+  if (queue.length === 0) return base;
+  const qty = (q: Record<string, unknown>) => (typeof q.quantity === "number" && Number.isInteger(q.quantity) ? q.quantity : null);
+  const ops = queue.map((q) => addOpFor(String(q.text), qty(q), typeof q.notes === "string" ? q.notes : null));
+  const text = queue.map((q) => `${qty(q) ?? ""} ${String(q.text)}`).join(" ");
+  const exec = await executeExtraction(io, input, base.state, ops, text, true, tailCount, lastBot, true, false, choiceId);
+  if (exec.kind === "legacy") return base;
+  return { kind: "reply", state: exec.state ?? base.state, acks: [...base.acks, ...exec.acks], notes: [...base.notes, ...exec.notes], questions: [...base.questions, ...exec.questions] };
+}
+
 /** Repete a lista (até 3 perguntas seguidas); depois cancela o contexto e encaminha à equipe, sem laço infinito. */
 async function reaskChoice(io: OrderFlowIo, input: OrderFlowInput, block: string, lead = "Não consegui identificar qual você quer."): Promise<string> {
   if (countChoiceAsks(input.messages) >= 3) {
@@ -556,9 +656,9 @@ async function reaskChoice(io: OrderFlowIo, input: OrderFlowInput, block: string
 }
 
 /** Operação sintética "adicionar item" para a escolha do cliente (texto = nome exato da opção; quantidade = a que ficou pendente). */
-function addOpFor(productText: string, qty: number | null): ExtractedOp {
+function addOpFor(productText: string, qty: number | null, notes: string | null = null): ExtractedOp {
   return {
-    op: "add_item", product_text: productText, to_text: null, quantity: qty, quantity_kind: qty ? "explicit" : "unclear", options_text: [], notes: null, value: null,
+    op: "add_item", product_text: productText, to_text: null, quantity: qty, quantity_kind: qty ? "explicit" : "unclear", options_text: [], notes, value: null,
     needs_change: null, amount: null, street: null, number: null, complement: null, neighborhood: null, city: null, state: null, cep: null, reference: null,
   };
 }
@@ -601,6 +701,12 @@ async function sendComposed(io: OrderFlowIo, input: OrderFlowInput, ex: Extract<
     return io.reply(clampBody([...head, ...ex.questions.slice(0, 2)].join("\n")), { outcome: "replied", reason: "order_question" });
   }
   if (st && st.ready) {
+    // ambiguidade ainda pendente: NÃO manda o resumo (o cliente confirmaria um pedido incompleto); repete a escolha
+    const pend = await getChoice(io, input.jobId);
+    const liveP = pend?.active ? pend.active.options.filter((o) => o.active) : [];
+    if (pend?.active && liveP.length > 0) {
+      return io.reply(clampBody([...head, renderLetterChoice(pend.active.source, liveP.map((o) => o.name ?? ""), "ambiguous", liveP.map((o) => o.letter))].join("\n")), { outcome: "replied", reason: "order_question" });
+    }
     const body = (head.length ? head.join("\n") + "\n\n" : "") + renderSummary(st);
     return sendSummaryText(io, input, st, body);
   }
