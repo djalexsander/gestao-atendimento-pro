@@ -17,6 +17,9 @@ dist-ssr/
 !.claude/db-tests/whatsapp-signup-cleanup.mjs
 !.claude/db-tests/whatsapp-signup-runtime.mjs
 !.claude/db-tests/whatsapp-registration-pin.mjs
+!.claude/frontend-tests/
+.claude/frontend-tests/*
+!.claude/frontend-tests/whatsapp-signup-ui.mjs
 !.claude/db-tests/mutate-whatsapp-registration-pin.mjs
 !.claude/db-tests/whatsapp-registration-pin.rollback.sql
 .env

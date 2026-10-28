@@ -5,17 +5,31 @@ import { supabaseWhatsappModulesSource, type WhatsappModulesSource } from "./wha
 import {
   DISCONNECT_CONFIRM_WORD,
   DISCONNECT_WARNING,
-  SIGNUP_UNAVAILABLE_TEXT,
   WHATSAPP_NOT_CONTRACTED_TEXT,
   connectionStatusLabel,
   type ModuleState,
 } from "./whatsappModulesLogic";
 import { READONLY_MODULE_TEXT, type ConnectionSummary } from "./whatsappLogic";
+import { WhatsappSignupPanel } from "./WhatsappSignupPanel";
+import { realSignupDeps } from "./whatsappSignupApi";
+import type { FlowDeps } from "./whatsappSignupFlow";
+import { connectCard } from "./whatsappSignupLogic";
+import { isTauri } from "../../lib/appVersion";
 
 // Configurações → Conexão do WhatsApp. Mostra o número, o status, as conversas e a integração com a Meta.
-// Conectar pelo Cadastro Integrado fica INDISPONÍVEL (com explicação) até a plataforma ser liberada pela Meta: nada é simulado.
+// "Conectar meu WhatsApp" (Embedded Signup v4) só aparece para owner/admin com o módulo e sem conexão ativa, e fica INDISPONÍVEL
+// (com explicação) até o operador liberar a plataforma: nada é simulado. A lógica está em whatsappSignup*.ts.
 // Desconectar: só owner/admin, com confirmação digitada; o histórico e as configurações permanecem.
-export function WhatsappConnection({ companyId, source = supabaseWhatsappModulesSource }: { companyId: string; source?: WhatsappModulesSource }) {
+export function WhatsappConnection({
+  companyId,
+  source = supabaseWhatsappModulesSource,
+  makeSignupDeps = realSignupDeps,
+}: {
+  companyId: string;
+  source?: WhatsappModulesSource;
+  /** Dependências do cadastro integrado (a tela usa as reais; só o preview/testes injetam simuladas). */
+  makeSignupDeps?: (companyId: string) => FlowDeps;
+}) {
   const [state, setState] = useState<ModuleState | null>(null);
   const [summary, setSummary] = useState<ConnectionSummary | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -63,6 +77,7 @@ export function WhatsappConnection({ companyId, source = supabaseWhatsappModules
   }
 
   const connected = summary.configured && summary.status === "active";
+  const card = connectCard(state, isTauri());
 
   return (
     <div className="wa-conn">
@@ -102,12 +117,19 @@ export function WhatsappConnection({ companyId, source = supabaseWhatsappModules
           A conexão usa a API oficial do WhatsApp Business (Meta). Não usamos QR Code do WhatsApp Web nem automação de sessão.
         </p>
         {state.canManage && state.whatsapp ? (
-          <>
-            <button type="button" className="btn-primary btn-auto" disabled={!state.signup.available} title={state.signup.available ? undefined : SIGNUP_UNAVAILABLE_TEXT}>
-              Conectar WhatsApp
-            </button>
-            {!state.signup.available && <p className="field-hint" role="status">{SIGNUP_UNAVAILABLE_TEXT}</p>}
-          </>
+          card.visible ? (
+            <WhatsappSignupPanel
+              companyId={companyId}
+              card={card}
+              makeDeps={makeSignupDeps}
+              onConnected={() => {
+                setNotice("WhatsApp conectado.");
+                void load();
+              }}
+            />
+          ) : (
+            <p className="field-hint">Este número já está conectado. Para trocar de número, desconecte-o em "Gerenciar conexão".</p>
+          )
         ) : (
           <p className="field-hint">Somente donos(as) e administradores(as) conectam ou desconectam o número.</p>
         )}
