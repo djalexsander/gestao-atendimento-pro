@@ -15,6 +15,7 @@ dist-ssr/
 !.claude/db-tests/whatsapp-signup-complete.mjs
 !.claude/db-tests/mutate-whatsapp-signup-complete.mjs
 !.claude/db-tests/whatsapp-signup-cleanup.mjs
+!.claude/db-tests/whatsapp-signup-runtime.mjs
 .env
 .env.*
 !.env.example
