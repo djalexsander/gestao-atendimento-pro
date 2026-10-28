@@ -10,6 +10,7 @@ const SRC = "D:/orça facil/supabase/migrations";
 const NEW = "20261104010000_whatsapp_embedded_signup_foundation.sql";
 const sql = fs.readFileSync(path.join(SRC, NEW), "utf8");
 const NL = String.fromCharCode(10);
+const ALL = sql + fs.readFileSync(path.join(SRC, "20261105010000_whatsapp_signup_failed_cleanup.sql"), "utf8") + fs.readFileSync(path.join(SRC, "20261106010000_whatsapp_registration_pin.sql"), "utf8");
 const M = [
   ["reserva sem exigir pending (replay)", "where state_hash = v_hash and status = 'pending' and expires_at > now()", "where state_hash = v_hash and expires_at > now()"],
   ["reserva sem checar expiração", "where state_hash = v_hash and status = 'pending' and expires_at > now()", "where state_hash = v_hash and status = 'pending'"],
@@ -17,16 +18,17 @@ const M = [
   ["(equivalente justificado: o índice único global ainda barra) conflito de número ignorado só na checagem", "c.phone_number_id = p_phone_number_id and c.company_id <> v_s.company_id", "false"],
   ["conflito de número ignorado (checagem E índice-guard)", "c.phone_number_id = p_phone_number_id and c.company_id <> v_s.company_id", "false", "exception when unique_violation then", "exception when no_data_found then"],
   ["begin não varre sessões/segredos vencidos", "perform public.whatsapp_signup_sweep(p_company_id);", "null;"],
-  ["sweep apaga segredo mesmo ligado a conexão", "if v_row.token_secret_id is not null" + NL + "       and not exists (select 1 from public.company_whatsapp_connections c where c.token_secret_id = v_row.token_secret_id) then", "if v_row.token_secret_id is not null then"],
   ["store_token devolve a referência ao chamador", "return jsonb_build_object('ok', true);" + NL + "end;" + NL + "$$;" + NL + "" + NL + "-- ---------------------------------------------------------------------------" + NL + "-- 7) Falha", "return jsonb_build_object('ok', true, 'token_secret_id', v_secret);" + NL + "end;" + NL + "$$;" + NL + "" + NL + "-- ---------------------------------------------------------------------------" + NL + "-- 7) Falha"],
-  ["complete após vencimento não limpa o segredo", "    perform public.whatsapp_signup_sweep(v_s.company_id);" + NL + "    return jsonb_build_object('ok', false, 'error', 'expired');", "    return jsonb_build_object('ok', false, 'error', 'expired');"]," + NL + "  ["limite de uma conexão ativa ignorado", "where company_id = v_s.company_id and status = 'active' and phone_number_id is distinct from p_phone_number_id", "where false"],
+  ["complete após vencimento não limpa o segredo", "    perform public.whatsapp_signup_sweep(v_s.company_id);" + NL + "    return jsonb_build_object('ok', false, 'error', 'expired');", "    return jsonb_build_object('ok', false, 'error', 'expired');"]," + NL + "  ["fail/sweep atuais: não removem o segredo do signup", "delete from vault.secrets where id = v_s.token_secret_id and starts_with(name, 'wa_token_signup_');", "null;"],
+  ["sweep atual: apaga segredo mesmo ligado a conexão (laço das vencidas)", "       and not exists (select 1 from public.company_whatsapp_connections c where c.token_secret_id = v_row.token_secret_id) then", "       and true then"],
+  ["sweep atual: apaga token sem o prefixo do signup", "delete from vault.secrets where id = v_row.token_secret_id and starts_with(name, 'wa_token_signup_');", "delete from vault.secrets where id = v_row.token_secret_id;"],
+  ["limite de uma conexão ativa ignorado", "where company_id = v_s.company_id and status = 'active' and phone_number_id is distinct from p_phone_number_id", "where false"],
   ["limite de uma conexão ativa ignorado", "where company_id = v_s.company_id and status = 'active' and phone_number_id is distinct from p_phone_number_id", "where false"],
   ["conclusão sem exigir sessão reservada", "if v_s.status <> 'reserved' then\n    return jsonb_build_object('ok', false, 'error', case", "if false then\n    return jsonb_build_object('ok', false, 'error', case"],
   ["conclusão repetida regrava (sem idempotência)", "if v_s.status = 'completed' then", "if false then"],
   ["autorização não reconferida na conclusão", "if not public.whatsapp_signup_user_can_manage(v_s.company_id, v_s.user_id) then\n    update public.whatsapp_signup_sessions set status = 'failed', error_code = 'unauthorized' where id = v_s.id;\n    return jsonb_build_object('ok', false, 'error', 'unauthorized');\n  end if;\n\n  perform pg_advisory", "perform pg_advisory"],
   ["nova conexão nasce em modo live", "(v_s.company_id, 'active', 'test',", "(v_s.company_id, 'active', 'live',"],
   ["token antigo não removido na rotação", "delete from vault.secrets where id = v_old_secret;", "null;"],
-  ["fail não remove o segredo órfão", "delete from vault.secrets where id = v_s.token_secret_id;", "null;"],
   ["tipo coexistence aceito", "if p_connection_type is distinct from 'cloud_api' then", "if false then"],
   ["sem limite de tentativas", ">= 10 then", ">= 100000 then"],
   ["begin não cancela pendentes anteriores", "update public.whatsapp_signup_sessions set status = 'cancelled'\n   where company_id = p_company_id and status = 'pending';", "null;"],
@@ -35,7 +37,7 @@ const M = [
 ];
 let killed = 0;
 for (const [name, from, to, from2, to2] of M.filter(Boolean)) {
-  if (!sql.includes(from)) { console.log("SKIP (trecho não encontrado):", name); continue; }
+  if (!ALL.includes(from)) { console.log("SKIP (trecho não encontrado):", name); continue; }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mut-signup-"));
   for (const f of fs.readdirSync(SRC)) if (f.endsWith(".sql")) fs.copyFileSync(path.join(SRC, f), path.join(dir, f));
   let mut = sql.replace(from, () => to);
@@ -45,8 +47,11 @@ for (const [name, from, to, from2, to2] of M.filter(Boolean)) {
   const NEXT = "20261105010000_whatsapp_signup_failed_cleanup.sql";
   const nextSql = fs.readFileSync(path.join(SRC, NEXT), "utf8");
   fs.writeFileSync(path.join(dir, NEXT), nextSql.includes(from) ? nextSql.split(from).join(to) : nextSql);
+  const NEXT3 = "20261106010000_whatsapp_registration_pin.sql";
+  const next3 = fs.readFileSync(path.join(SRC, NEXT3), "utf8");
+  fs.writeFileSync(path.join(dir, NEXT3), next3.includes(from) ? next3.split(from).join(to) : next3);
   let out = "";
-  try { out = execFileSync("node", ["whatsapp-signup-foundation.mjs"], { cwd: path.dirname(fileURLToPath(import.meta.url)), env: { ...process.env, MIG_DIR: dir }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 600000 }); }
+  try { out = execFileSync("node", [process.env.TEST_FILE ?? "whatsapp-signup-foundation.mjs"], { cwd: path.dirname(fileURLToPath(import.meta.url)), env: { ...process.env, MIG_DIR: dir }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 600000 }); }
   catch (e) { out = (e.stdout ?? "") + (e.stderr ?? ""); }
   const m = out.match(/(\d+) ok \/ (\d+) falhas/);
   const detected = !m || Number(m[2]) > 0;

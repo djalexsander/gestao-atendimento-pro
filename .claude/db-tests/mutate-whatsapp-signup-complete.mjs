@@ -26,7 +26,17 @@ const M = [
   [H, "company_id aceito do corpo", "const companyId = String(reserved.data.company_id);", "const companyId = String((body as Record<string, unknown>).company_id ?? reserved.data.company_id);"],
   [G, "segue paginação para qualquer host", "next && next.startsWith(`${GRAPH_BASE_URL}/`) ? next : null", "next"],
   [G, "token na query da lista", "`${GRAPH_BASE_URL}/${version}/${seg(wabaId)}/phone_numbers`;", "`${GRAPH_BASE_URL}/${version}/${seg(wabaId)}/phone_numbers?access_token=${token}`;"],
-  [G, "PIN aleatório (não derivado)", "return String(n % 1_000_000).padStart(6, \"0\");", "return String(Math.floor(Math.random() * 1_000_000)).padStart(6, \"0\");"],
+  [G, "PIN gerado com Math.random", 'if (buf[0] < PIN_LIMIT) return String(buf[0] % 1_000_000).padStart(6, "0");', 'if (buf[0] < PIN_LIMIT) return String(Math.floor(Math.random() * 1_000_000)).padStart(6, "0");'],
+  [G, "PIN sem amostragem por rejeição (viés)", "if (buf[0] < PIN_LIMIT)", "if (true)"],
+  [G, "PIN perde zeros à esquerda", 'return String(buf[0] % 1_000_000).padStart(6, "0");', "return String(buf[0] % 1_000_000);"],
+  [G, "timeout/rede/5xx deixam de ser incertos", '  return "uncertain";\n}', '  return "failed";\n}'],
+  [G, "133005 deixa de ser PIN incorreto", 'if (f.code === "133005") return "pin_incorrect";', ""],
+  [H, "registra de novo mesmo com registro concluído", 'if (action === "skip") {', "if (false) {"],
+  [H, "PIN do cliente é ignorado", 'const hasCustomerPin = typeof customerPin === "string";', "const hasCustomerPin = false;"],
+  [H, "número com PIN existente tenta gerar outro", 'if (action === "need_customer_pin" && !hasCustomerPin) {', "if (false) {"],
+  [H, "falha ao gravar o resultado do registro segue em frente", "    if (fin.error) {", "    if (false) {"],
+  [H, "loga o corpo (code e PIN do cliente)", 'console.error("whatsapp-signup-complete: falha", { stage, errorCode, detail: detail ?? null });', 'console.error("whatsapp-signup-complete: falha", { stage, errorCode, detail: detail ?? null, body: JSON.stringify(body) });'],
+  [H, "registro sem tentativa auditada (sem begin_attempt)", 'const ba = await rpc(deps, "whatsapp_registration_begin_attempt", { p_session_id: sessionId, p_registration_id: registrationId });', 'const ba = { error: null, data: { ok: true, attempt_id: "00000000-0000-0000-0000-000000000000", pin: "123456" } };'],
 ];
 let killed = 0, run = 0;
 for (const [file, name, from, to] of M) {

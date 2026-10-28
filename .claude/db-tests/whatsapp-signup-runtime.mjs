@@ -36,7 +36,7 @@ ck("1.6 chaves/segredos lidos do ambiente, nenhum valor literal", !/(eyJ[A-Za-z0
 console.log("\n== 2. index.ts real no runtime simulado ==");
 const ENV = {
   SUPABASE_ANON_KEY: "ANON-KEY-DE-TESTE", SUPABASE_SERVICE_ROLE_KEY: "SERVICE-ROLE-DE-TESTE",
-  WHATSAPP_GRAPH_API_VERSION: "v99.0", WHATSAPP_APP_SECRET: "APP-SECRET-DE-TESTE-NAO-REAL", WHATSAPP_REGISTRATION_PIN_SECRET: "PIN-SECRET-DE-TESTE-1234567890",
+  WHATSAPP_GRAPH_API_VERSION: "v99.0", WHATSAPP_APP_SECRET: "APP-SECRET-DE-TESTE-NAO-REAL",
 };
 const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
 await pg.exec(`
@@ -169,12 +169,14 @@ ck("2.6 fluxo completo pelo index.ts real: 200 {ok, active, test}", ok.status ==
 const conn = (await su("select * from company_whatsapp_connections where company_id=$1", [A.c])).rows[0];
 ck("2.7 conexão criada na empresa da sessão (RPCs e leituras via PostgREST com service_role), token só no Vault", conn?.status === "active" && conn.phone_number_id === PNID && conn.connection_source === "embedded_signup"
   && (await su("select secret from vault.secrets where id=$1", [conn.token_secret_id])).rows[0].secret === TOKEN);
-ck("2.8 RPCs chamadas, na ordem do fluxo, e leituras só nas duas tabelas esperadas", seen.rpc.join(",") === "whatsapp_signup_reserve,whatsapp_signup_store_token,whatsapp_signup_complete" && seen.rest.every((t) => ["whatsapp_platform_settings", "company_whatsapp_connections"].includes(t)) && seen.rest.includes("whatsapp_platform_settings"), seen.rpc.join(",") + " | " + seen.rest.join(","));
+ck("2.8 RPCs chamadas, na ordem do fluxo, e leituras só nas duas tabelas esperadas", seen.rpc.join(",") === "whatsapp_signup_reserve,whatsapp_registration_prepare,whatsapp_signup_store_token,whatsapp_registration_store_pin,whatsapp_registration_begin_attempt,whatsapp_registration_finish_attempt,whatsapp_signup_complete,whatsapp_registration_link" && seen.rest.every((t) => ["whatsapp_platform_settings", "company_whatsapp_connections"].includes(t)) && seen.rest.includes("whatsapp_platform_settings"), seen.rpc.join(",") + " | " + seen.rest.join(","));
 const paths = metaCalls.map((c) => `${c.method} ${c.path.replace(/\/[0-9]{5,}\//, "/{id}/")}`);
 ck("2.9 Meta simulada recebeu, em ordem: troca, números da WABA, registro, assinatura, conferência — todas em /v99.0", metaCalls.length === 5 && metaCalls.every((c) => c.path.startsWith("/v99.0/"))
   && /oauth\/access_token$/.test(metaCalls[0].path) && /phone_numbers$/.test(metaCalls[1].path) && /register$/.test(metaCalls[2].path) && metaCalls[3].method === "POST" && /subscribed_apps$/.test(metaCalls[3].path) && metaCalls[4].method === "GET", paths.join(" | "));
 ck("2.10 troca: client_id do banco + client_secret do ambiente + code; demais chamadas com Bearer do token do cliente (nunca em query)", metaCalls[0].query.client_id === "1234567890" && metaCalls[0].query.client_secret === ENV.WHATSAPP_APP_SECRET && metaCalls[0].query.code === body.code && metaCalls[0].auth === null
   && metaCalls.slice(1).every((c) => c.auth === `Bearer ${TOKEN}` && !JSON.stringify(c.query).includes(TOKEN)) && /^\d{6}$/.test(metaCalls[2].body.pin) && metaCalls[2].body.messaging_product === "whatsapp");
+const regRow = (await su("select r.pin_secret_id, r.state, r.connection_id from whatsapp_number_registrations r where r.phone_number_id=$1", [PNID])).rows[0];
+ck("2.11b PIN individual: registro 'registered', PIN no Vault igual ao enviado à Meta, registro ligado à conexão, PIN fora da resposta", regRow?.state === "registered" && (await su("select secret from vault.secrets where id=$1", [regRow.pin_secret_id])).rows[0].secret === metaCalls[2].body.pin && regRow.connection_id === conn.id && !ok.text.includes(metaCalls[2].body.pin));
 ck("2.11 resposta ao navegador sem token, code, secrets, ids de Vault", !ok.text.includes(TOKEN) && !ok.text.includes(body.code) && !ok.text.includes(ENV.WHATSAPP_APP_SECRET) && !ok.text.includes(conn.token_secret_id));
 
 const replay = await call(`jwt-${A.ids.owner}`, body);
@@ -190,12 +192,12 @@ ck("2.13 erro da Meta (code inválido): 400 sem detalhe da Meta, sessão failed,
 metaMode = "ok";
 
 const saved = { ...ENV };
-delete ENV.WHATSAPP_REGISTRATION_PIN_SECRET;
+delete ENV.WHATSAPP_APP_SECRET;
 const C = await mkCo("C");
 const sC = await begin(C);
 const noCfg = await call(`jwt-${C.ids.owner}`, { state: sC, code: "c", waba_id: "555000111222", phone_number_id: PNID });
-ENV.WHATSAPP_REGISTRATION_PIN_SECRET = saved.WHATSAPP_REGISTRATION_PIN_SECRET;
-ck("2.14 sem WHATSAPP_REGISTRATION_PIN_SECRET no ambiente: 503 e a sessão fica intacta (a função publicada sem o secret é inerte)", noCfg.status === 503 && (await su("select status from whatsapp_signup_sessions where company_id=$1", [C.c])).rows[0].status === "pending");
+ENV.WHATSAPP_APP_SECRET = saved.WHATSAPP_APP_SECRET;
+ck("2.14 sem WHATSAPP_APP_SECRET no ambiente: 503 e a sessão fica intacta (função publicada sem o secret é inerte); não existe secret de PIN", noCfg.status === 503 && (await su("select status from whatsapp_signup_sessions where company_id=$1", [C.c])).rows[0].status === "pending" && !("WHATSAPP_REGISTRATION_PIN_SECRET" in ENV));
 await su("update whatsapp_platform_settings set embedded_signup_enabled=false");
 const off = await call(`jwt-${C.ids.owner}`, { state: sC, code: "c", waba_id: "555000111222", phone_number_id: PNID });
 await su("update whatsapp_platform_settings set embedded_signup_enabled=true");

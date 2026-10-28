@@ -23,8 +23,13 @@ const G = await load("supabase/functions/_shared/whatsapp-graph.ts", "whatsapp-g
 const SG = await load("supabase/functions/_shared/whatsapp-signup-graph.ts", "whatsapp-signup-graph.mjs", [['"./whatsapp-graph.ts"', '"./whatsapp-graph.mjs"']]);
 const H = await load("supabase/functions/whatsapp-signup-complete/handler.ts", "handler.mjs", [['"../_shared/whatsapp-signup-graph.ts"', '"./whatsapp-signup-graph.mjs"'], ['"../_shared/whatsapp-graph.ts"', '"./whatsapp-graph.mjs"']]);
 
-const { pg, ck, as, su: su0, summary } = await loadAll(undefined, { legacyIaMirror: false });
-const su = async (sql, params) => { await pg.exec("select set_config('request.jwt.claim.sub','',false)"); return su0(sql, params); };
+const { pg, ck, as: as0, su: su00, summary } = await loadAll(undefined, { legacyIaMirror: false });
+// PGlite tem UMA conexão: cada operação (set role + query + reset) vira atômica para que handlers concorrentes só se intercalem entre operações
+let chain = Promise.resolve();
+const mutex = (fn) => { const r = chain.then(fn, fn); chain = r.then(() => {}, () => {}); return r; };
+const as = (...a) => mutex(() => as0(...a));
+const su0 = (...a) => mutex(() => su00(...a));
+const su = async (sql, params) => mutex(async () => { await pg.exec("select set_config('request.jwt.claim.sub','',false)"); return su00(sql, params); });
 const U = (uid) => (sql, params) => as("authenticated", uid, sql, params);
 const svc = (sql, params) => as("service_role", null, sql, params);
 const id = (n) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
@@ -35,13 +40,13 @@ await pg.exec(`
   create function vault.create_secret(new_secret text, new_name text default null, new_description text default '') returns uuid language plpgsql as $f$
   declare v uuid; begin insert into vault.secrets (name, description, secret) values (new_name, new_description, new_secret) returning id into v; return v; end $f$;
 `);
-const APP_ID = "1234567890", APP_SECRET = "APP-SECRET-DE-TESTE-NAO-REAL-9999", PIN_SECRET = "PIN-SECRET-DE-TESTE-1234567890", VERSION = "v99.0";
+const APP_ID = "1234567890", APP_SECRET = "APP-SECRET-DE-TESTE-NAO-REAL-9999", VERSION = "v99.0";
 await su("update whatsapp_platform_settings set embedded_signup_enabled=true, meta_app_id=$1, embedded_signup_config_id='9876543210'", [APP_ID]);
 
 // ---------------------------------------------------------------- fixtures
 let seq = 700, pn = 920000000;
 async function mkCo(tag, { wa = true } = {}) {
-  const c = (await su("insert into companies (name,slug,document,email) values ($1,$2,'11222333000181',$3) returning id", ["Emp " + tag, "sc-" + tag.toLowerCase(), `${tag.toLowerCase()}@x.com`])).rows[0].id;
+  const c = (await su("insert into companies (name,slug,document,email) values ($1,$2,'11222333000181',$3) returning id", ["Emp " + tag, "sc-" + tag.toLowerCase() + "-" + (++seq), `${tag.toLowerCase()}${seq}@x.com`])).rows[0].id;
   const out = { c, ids: {}, pnid: String(++pn) };
   for (const role of ["owner", "admin", "attendant"]) {
     const u = id(++seq);
@@ -53,7 +58,10 @@ async function mkCo(tag, { wa = true } = {}) {
   if (wa) await su("insert into company_module_overrides (company_id, module_code, reason, expires_at) values ($1,'whatsapp','teste signup edge', now() + interval '1 day')", [c]);
   return out;
 }
-const secrets = async () => Number((await su("select count(*) n from vault.secrets")).rows[0].n);
+const secrets = async () => Number((await su("select count(*) n from vault.secrets where not starts_with(name, 'wa_pin_')")).rows[0].n);
+const PINS = new Set();
+const ALL_TEXT = [];
+const PINS_TEXT_HIT = (t) => [...PINS].some((p) => new RegExp(`(?<![0-9])${p}(?![0-9])`).test(t));
 const conns = async (co) => (await su("select * from company_whatsapp_connections where company_id=$1 order by created_at", [co.c])).rows;
 const sessOf = async (co) => (await su("select * from whatsapp_signup_sessions where company_id=$1 order by created_at desc limit 1", [co.c])).rows[0];
 const sessByState = async (state) => (await su("select * from whatsapp_signup_sessions where state_hash = encode(sha256(convert_to($1,'UTF8')),'hex')", [state])).rows[0];
@@ -69,12 +77,14 @@ function mkMeta(co, o = {}) {
     calls,
     async exchangeCode(a) { rec("exchange", { code: a.code, appId: a.appId, appSecret: a.appSecret }); return o.exchange ? o.exchange(a) : { ok: true, token: TOKEN_OF(a.code), expiresInSeconds: o.expiresIn ?? null }; },
     async listWabaPhones(a) { rec("list", { waba: a.wabaId, token: a.token }); return o.list ? o.list(a) : { ok: true, phones }; },
-    async registerPhone(a) { rec("register", { pin: a.pin, pnid: a.phoneNumberId }); return o.register ? o.register(a) : { ok: true }; },
+    async registerPhone(a) { rec("register", { pin: a.pin, pnid: a.phoneNumberId }); PINS.add(a.pin); return o.register ? o.register(a) : { ok: true }; },
     async subscribeApp(a) { rec("subscribe", { waba: a.wabaId }); return o.subscribe ? o.subscribe(a) : { ok: true }; },
     async listSubscribedAppIds(a) { rec("listSub"); return o.listSub ? o.listSub(a) : { ok: true, appIds: ["111", APP_ID] }; },
   };
 }
 const NAMED = { whatsapp_signup_reserve: ["p_state"], whatsapp_signup_store_token: ["p_session_id", "p_token", "p_expires_at"], whatsapp_signup_fail: ["p_session_id", "p_error_code"],
+  whatsapp_registration_prepare: ["p_session_id", "p_phone_number_id", "p_waba_id"], whatsapp_registration_store_pin: ["p_session_id", "p_registration_id", "p_pin", "p_source"],
+  whatsapp_registration_begin_attempt: ["p_session_id", "p_registration_id"], whatsapp_registration_finish_attempt: ["p_attempt_id", "p_outcome", "p_meta_code"], whatsapp_registration_link: ["p_session_id", "p_registration_id"],
   whatsapp_signup_complete: ["p_session_id", "p_waba_id", "p_phone_number_id", "p_display_phone_number", "p_business_name", "p_meta_business_id", "p_registered_at", "p_webhook_subscribed_at", "p_connection_type"] };
 const realRpc = async (fn, args) => {
   const keys = NAMED[fn];
@@ -106,11 +116,12 @@ async function run(co, o = {}) {
     platform: async () => { const r = (await su("select embedded_signup_enabled e, meta_app_id a from whatsapp_platform_settings")).rows[0]; return { enabled: r.e, appId: r.a }; },
     findPhoneOwner: async (p) => { const r = (await su("select company_id from company_whatsapp_connections where phone_number_id=$1 limit 1", [p])).rows[0]; return r ? { companyId: r.company_id } : null; },
     findActiveConnection: async (c) => { const r = (await su("select phone_number_id from company_whatsapp_connections where company_id=$1 and status='active' limit 1", [c])).rows[0]; return r ? { phoneNumberId: r.phone_number_id } : null; },
-    meta, graphVersion: "graphVersion" in o ? o.graphVersion : VERSION, appSecret: "appSecret" in o ? o.appSecret : APP_SECRET, pinSecret: "pinSecret" in o ? o.pinSecret : PIN_SECRET,
+    meta, graphVersion: "graphVersion" in o ? o.graphVersion : VERSION, appSecret: "appSecret" in o ? o.appSecret : APP_SECRET,
     ...(o.deps ?? {}),
   };
   const res = await capture(() => H.handleWhatsappSignupComplete(req, deps));
   const text = await res.text();
+  ALL_TEXT.push(text);
   let j = null; try { j = JSON.parse(text); } catch { /* sem corpo */ }
   return { res, status: res.status, j, text, meta, state, code };
 }
@@ -131,7 +142,7 @@ const bad = async (patch) => (await run(A, { state: s16, rawBody: JSON.stringify
 ck("1.7 campos ausentes/inválidos: 400 e a sessão não é consumida", (await bad({ state: "curto" })) === 400 && (await bad({ code: "" })) === 400 && (await bad({ code: 5 })) === 400
   && (await bad({ waba_id: "abc" })) === 400 && (await bad({ phone_number_id: "1" })) === 400 && (await bad({ waba_id: undefined })) === 400 && (await sessByState(s16)).status === "pending");
 const cfg = async (o) => { const s = await begin(A); const r = await run(A, { state: s, ...o }); return r.status === 503 && (await sessByState(s)).status === "pending" && r.meta.calls.length === 0; };
-ck("1.8 sem versão da Graph/ App Secret / secret do PIN (ou curto): 503 e sessão intacta", await cfg({ graphVersion: undefined }) && await cfg({ graphVersion: "99" }) && await cfg({ appSecret: undefined }) && await cfg({ pinSecret: undefined }) && await cfg({ pinSecret: "curto" }));
+ck("1.8 sem versão da Graph / App Secret no ambiente: 503 e sessão intacta (não existe mais secret de PIN)", await cfg({ graphVersion: undefined }) && await cfg({ graphVersion: "99" }) && await cfg({ appSecret: undefined }));
 await su("update whatsapp_platform_settings set embedded_signup_enabled=false");
 const sOff = await (async () => { const bTmp = await mkCo("OFF"); await su("update whatsapp_platform_settings set embedded_signup_enabled=true"); const s = await begin(bTmp); await su("update whatsapp_platform_settings set embedded_signup_enabled=false"); const r = await run(bTmp, { state: s }); return { r, s }; })();
 ck("1.9 plataforma desligada (flag false): 503, sessão intacta, Meta não chamada", sOff.r.status === 503 && (await sessByState(sOff.s)).status === "pending" && sOff.r.meta.calls.length === 0);
@@ -211,11 +222,11 @@ ck("4.3 conexão ÚNICA da empresa da sessão (company_id do corpo ignorado), ac
 ck("4.4 token gravado no Vault e ligado à conexão; sessão completed", (await su("select secret from vault.secrets where id=$1", [cD[0].token_secret_id])).rows[0].secret === TOKEN_OF(r4.code) && (await sessByState(sD)).status === "completed");
 const exch = r4.meta.calls[0], reg = r4.meta.calls[2];
 ck("4.5 troca usa o App ID do banco + App Secret do ambiente e o code recebido", exch.appId === APP_ID && exch.appSecret === APP_SECRET && exch.code === r4.code);
-ck("4.6 PIN do registro: 6 dígitos, derivado e estável para o número", /^\d{6}$/.test(reg.pin) && reg.pin === await SG.derivePin(PIN_SECRET, D.pnid) && reg.pin !== await SG.derivePin(PIN_SECRET, B.pnid) && reg.pin !== await SG.derivePin(PIN_SECRET + "x", D.pnid) && reg.pnid === D.pnid);
+ck("4.6 PIN do registro: 6 dígitos, aleatório, guardado no Vault e igual ao enviado à Meta; reg.pnid correto", /^\d{6}$/.test(reg.pin) && reg.pnid === D.pnid && (await su("select s.secret from vault.secrets s join whatsapp_number_registrations r on r.pin_secret_id = s.id where r.phone_number_id=$1", [D.pnid])).rows[0].secret === reg.pin);
 ck("4.7 a Meta recebeu o token do cliente nas chamadas seguintes", r4.meta.calls[1].token === TOKEN_OF(r4.code));
 {
   const all = r4.text + logs.join("");
-  ck("4.8 resposta e logs NÃO contêm code, token, App Secret nem secret do PIN", ![r4.code, TOKEN_OF(r4.code), APP_SECRET, PIN_SECRET, sD].some((s) => all.includes(s)));
+  ck("4.8 resposta e logs NÃO contêm code, token, App Secret nem o PIN", ![r4.code, TOKEN_OF(r4.code), APP_SECRET, reg.pin, sD].some((s) => all.includes(s)));
 }
 ck("4.9 validade informada pela Meta vira token_expires_at", await (async () => { const E = await mkCo("E"); const r = await run(E, { pnid: E.pnid, metaOpts: { expiresIn: 3600 } }); const c = (await conns(E))[0]; return r.status === 200 && Math.abs(new Date(c.token_expires_at) - Date.now() - 3600e3) < 60e3; })());
 ck("4.10 sem validade informada: token_expires_at nulo (a Meta não confirma prazo)", cD[0].token_expires_at === null);
@@ -278,13 +289,13 @@ await failCase("5.7 lista vazia de números: 400/phone_not_in_waba", "F7", { pho
   ck("5.11 erro ao guardar o token: 500/token_store_failed, nada registrado nem assinado na Meta, sem conexão", r.status === 500 && row.status === "failed" && row.error_code === "token_store_failed" && names(r.meta) === "exchange,list" && (await conns(F)).length === 0 && (await secrets()) === before);
   ck("5.11b a mensagem de erro ao usuário não vaza o erro interno", !/vault|XX000/.test(r.text));
 }
-await failCase("5.12 falha no registro do número: 502, token removido do Vault, sem conexão", "F12", { register: () => ({ ok: false, kind: "http", status: 400, code: "133005" }) }, 502, "meta_register_failed", "exchange,list,register");
+await failCase("5.12 falha no registro do número: 502, token removido do Vault, sem conexão", "F12", { register: () => ({ ok: false, kind: "http", status: 400, code: "131000" }) }, 502, "meta_register_failed", "exchange,list,register");
 await failCase("5.13 falha ao assinar o webhook: 502, token removido, sem conexão", "F13", { subscribe: () => ({ ok: false, kind: "http", status: 400, code: "100" }) }, 502, "meta_subscribe_failed", "exchange,list,register,subscribe");
 await failCase("5.14 assinatura não confirmada (nosso app fora da lista): 502, token removido", "F14", { listSub: () => ({ ok: true, appIds: ["111"] }) }, 502, "meta_subscribe_unverified", "exchange,list,register,subscribe,listSub");
 await failCase("5.15 conferência da assinatura com erro: 502/504, token removido", "F15", { listSub: () => ({ ok: false, kind: "timeout" }) }, 504, "meta_subscribe_unverified", "exchange,list,register,subscribe,listSub");
 {
   const all = logs.join("");
-  ck("5.16 nenhum log de falha contém code, token ou secrets", !all.includes(CODE) && !/EAAB-BIZ-TOKEN/.test(all) && !all.includes(APP_SECRET) && !all.includes(PIN_SECRET));
+  ck("5.16 nenhum log de falha contém code, token ou secrets", !all.includes(CODE) && !/EAAB-BIZ-TOKEN/.test(all) && !all.includes(APP_SECRET));
 }
 
 console.log("\n== 6. estágio final: respostas perdidas, corridas e recuperação ==");
@@ -407,14 +418,195 @@ console.log("\n== 8. cliente da Graph API (URLs, métodos, headers, parsing) =="
   m = SG.createSignupMeta(mkFetch(() => R(200, { data: [{ whatsapp_business_api_data: { id: "777", name: "App" } }, { whatsapp_business_api_data: { name: "sem id" } }, 5] })));
   ck("8.11 apps assinados: GET /W1/subscribed_apps → ids de data[].whatsapp_business_api_data.id", JSON.stringify((await m.listSubscribedAppIds({ version: "v99.0", wabaId: "W1", token: T })).appIds) === '["777"]');
   ck("8.12 ids com caracteres perigosos são codificados na URL", await (async () => { seen.length = 0; await SG.createSignupMeta(mkFetch(() => R(200, { data: [] }))).listWabaPhones({ version: "v99.0", wabaId: "../x?y=1", token: T }); return !seen[0].url.includes("/../") && !seen[0].url.includes("?y=1"); })());
-  ck("8.13 derivePin: determinístico, 6 dígitos, distinto por número e por secret", await (async () => { const a = await SG.derivePin("segredo-de-teste-1234567", "111"); return a === await SG.derivePin("segredo-de-teste-1234567", "111") && /^\d{6}$/.test(a) && a !== await SG.derivePin("segredo-de-teste-1234567", "112") && a !== await SG.derivePin("outro-segredo-de-teste-123", "111"); })());
+ck("8.13 o cliente da Meta não exporta mais derivePin (sem HMAC)", SG.derivePin === undefined && typeof SG.generatePin === "function");
   ck("8.14 isValidGraphVersion reutilizada: v99.0 sim; 99, vazio e injeção não", G.isValidGraphVersion("v99.0") && !G.isValidGraphVersion("99") && !G.isValidGraphVersion("v1/../x") && !G.isValidGraphVersion(undefined));
 }
+
+console.log("\n== 10. PIN individual por número (Vault), PIN já existente, limites e incerteza ==");
+const regOf = async (pnid) => (await su("select * from whatsapp_number_registrations where phone_number_id=$1", [pnid])).rows[0];
+const pinOfReg = async (pnid) => { const r = await regOf(pnid); return r?.pin_secret_id ? await secretOf(r.pin_secret_id) : null; };
+const attemptsOf = async (pnid) => (await su("select a.status, a.meta_code from whatsapp_registration_attempts a join whatsapp_number_registrations r on r.id=a.registration_id where r.phone_number_id=$1 order by a.started_at", [pnid])).rows;
+const registers = (m) => m.calls.filter((c) => c.fn === "register");
+const secretOf = async (sid) => (await su("select secret from vault.secrets where id=$1", [sid])).rows[0]?.secret ?? null;
+const FAIL = (status, code) => () => ({ ok: false, kind: "http", status, code });
+{
+  const P1 = await mkCo("P1");
+  const r = await run(P1, { pnid: P1.pnid });
+  const reg1 = await regOf(P1.pnid);
+  const seenPin = registers(r.meta)[0]?.pin;
+  ck("10.1 número novo: PIN de 6 dígitos gerado, enviado à Meta e guardado no Vault (fonte 'generated'); registro 'registered' e ligado à conexão", r.status === 200 && /^\d{6}$/.test(seenPin) && (await pinOfReg(P1.pnid)) === seenPin
+    && reg1.pin_source === "generated" && reg1.state === "registered" && reg1.connection_id === (await conns(P1))[0].id && !r.text.includes(seenPin));
+  ck("10.2 auditoria: 1 tentativa 'success' sem PIN; token e PIN são segredos distintos no Vault", JSON.stringify((await attemptsOf(P1.pnid)).map((a) => a.status)) === '["success"]' && (await conns(P1))[0].token_secret_id !== reg1.pin_secret_id);
+  PINS.add(seenPin);
+  const P2 = await mkCo("P2");
+  const r2 = await run(P2, { pnid: P2.pnid });
+  PINS.add(registers(r2.meta)[0].pin);
+  ck("10.3 números diferentes recebem PINs diferentes, cada um no seu segredo", r2.status === 200 && registers(r2.meta)[0].pin !== seenPin && (await regOf(P2.pnid)).pin_secret_id !== reg1.pin_secret_id);
+  const P3 = await mkCo("P3");
+  const r3 = await run(P3, { pnid: P3.pnid, deps: { randomPin: () => "000042" } });
+  ck("10.4 PIN com zeros à esquerda ('000042') vai à Meta e ao Vault intacto", r3.status === 200 && registers(r3.meta)[0].pin === "000042" && (await pinOfReg(P3.pnid)) === "000042");
+}
+{
+  // número que JÁ tem PIN: a Meta recusa o gerado (133005)
+  const Q = await mkCo("Q1");
+  const before = await secrets();
+  const r = await run(Q, { pnid: Q.pnid, metaOpts: { register: FAIL(400, "133005") } });
+  const reg = await regOf(Q.pnid);
+  ck("10.5 133005 com PIN gerado: 409 {code:'pin_required'}, sessão failed, registro pin_required, PIN gerado apagado, sem conexão nem assinatura", r.status === 409 && r.j.code === "pin_required" && reg.state === "pin_required" && reg.pin_secret_id === null
+    && (await conns(Q)).length === 0 && !r.meta.calls.some((c) => c.fn === "subscribe") && (await secrets()) === before);
+  ck("10.6 a mensagem pede o PIN atual e não diz qual PIN foi tentado", /PIN atual/.test(r.j.error) && !PINS_TEXT_HIT(r.text));
+  const pre = await secrets();
+  const r2 = await run(Q, { pnid: Q.pnid });
+  ck("10.7 nova tentativa SEM PIN do cliente: 409 pin_required antes de falar com a Meta (sem Vault, sem consumir cota)", r2.status === 409 && r2.j.code === "pin_required" && registers(r2.meta).length === 0 && (await secrets()) === pre && (await attemptsOf(Q.pnid)).length === 1);
+  const r3 = await run(Q, { pnid: Q.pnid, extra: { pin: "482913" } });
+  PINS.add("482913");
+  ck("10.8 com o PIN do cliente: 200; a Meta recebe o PIN do cliente; fonte 'customer' no Vault; resposta sem PIN", r3.status === 200 && registers(r3.meta)[0].pin === "482913" && (await pinOfReg(Q.pnid)) === "482913" && (await regOf(Q.pnid)).pin_source === "customer" && !r3.text.includes("482913"));
+}
+{
+  const W = await mkCo("W1");
+  await run(W, { pnid: W.pnid, metaOpts: { register: FAIL(400, "133005") } });
+  const r = await run(W, { pnid: W.pnid, extra: { pin: "135790" }, metaOpts: { register: FAIL(400, "133005") } });
+  PINS.add("135790");
+  const reg = await regOf(W.pnid);
+  ck("10.9 PIN do cliente incorreto: 409 pin_incorrect, PIN descartado do Vault, registro volta a pin_required; nada sobrescrito", r.status === 409 && r.j.code === "pin_incorrect" && reg.state === "pin_required" && reg.pin_secret_id === null && (await conns(W)).length === 0
+    && !r.text.includes("135790"));
+}
+{
+  const V = await mkCo("V1");
+  const out = [];
+  for (const bad of ["12345", "abcdef", "1234567", "12 456", 123456, true, {}]) {
+    const s = await begin(V);
+    const r = await run(V, { state: s, pnid: V.pnid, extra: { pin: bad } });
+    out.push(r.status === 400 && (await sessByState(s)).status === "pending" && r.meta.calls.length === 0 && !r.text.includes(String(bad)));
+  }
+  ck("10.10 PIN do cliente com formato inválido: 400, sessão intacta, Meta não chamada, valor não ecoado", out.every(Boolean), JSON.stringify(out));
+  const ok = await run(V, { pnid: V.pnid, extra: { pin: null } });
+  ck("10.11 pin nulo/ausente equivale a 'sem PIN do cliente'", ok.status === 200);
+}
+{
+  const L = await mkCo("L1");
+  const r = await run(L, { pnid: L.pnid, metaOpts: { register: FAIL(400, "133016") } });
+  const reg = await regOf(L.pnid);
+  ck("10.12 133016: 429 registration_blocked, estado blocked por ~72 h, PIN mantido", r.status === 429 && r.j.code === "registration_blocked" && reg.state === "blocked" && Math.abs((new Date(reg.blocked_until) - Date.now()) / 3600e3 - 72) < 0.2 && !!reg.pin_secret_id);
+  const pre = await secrets();
+  const r2 = await run(L, { pnid: L.pnid });
+  ck("10.13 sem retentativa automática: nova sessão é barrada (429) sem tocar na Meta nem no Vault", r2.status === 429 && registers(r2.meta).length === 0 && (await secrets()) === pre && (await attemptsOf(L.pnid)).length === 1);
+  await su("update whatsapp_number_registrations set blocked_until = now() - interval '1 minute' where id=$1", [reg.id]);
+  const r3 = await run(L, { pnid: L.pnid });
+  ck("10.14 bloqueio vencido: nova tentativa permitida, reaproveita o MESMO PIN e conclui", r3.status === 200 && registers(r3.meta)[0].pin === (await pinOfReg(L.pnid)) && (await attemptsOf(L.pnid)).length === 2);
+}
+{
+  const T2 = await mkCo("T2");
+  const r = await run(T2, { pnid: T2.pnid, metaOpts: { register: () => ({ ok: false, kind: "timeout" }) } });
+  const reg = await regOf(T2.pnid);
+  ck("10.15 timeout no registro: 504 registration_uncertain; estado 'uncertain'; PIN mantido (pode ter sido aplicado)", r.status === 504 && r.j.code === "registration_uncertain" && reg.state === "uncertain" && !!reg.pin_secret_id && (await conns(T2)).length === 0);
+  const pre = await secrets();
+  const r2 = await run(T2, { pnid: T2.pnid });
+  ck("10.16 resultado incerto: nenhuma nova tentativa automática (409), Meta não chamada, token não gravado", r2.status === 409 && r2.j.code === "registration_uncertain" && registers(r2.meta).length === 0 && (await secrets()) === pre);
+  await svc("select public.whatsapp_registration_resolve($1,'registered') j", [reg.id]);
+  const r3 = await run(T2, { pnid: T2.pnid });
+  ck("10.17 após conferência humana (resolve 'registered'): a conexão conclui SEM registrar de novo", r3.status === 200 && registers(r3.meta).length === 0 && (await conns(T2))[0]?.status === "active");
+  const U2 = await mkCo("U2");
+  const r5 = await run(U2, { pnid: U2.pnid, metaOpts: { register: () => ({ ok: false, kind: "http", status: 500 }) } });
+  const r6 = await run(U2, { pnid: U2.pnid, metaOpts: { register: () => ({ ok: true }) } });
+  ck("10.18 5xx também é incerto (não repete); resposta inesperada idem", r5.status === 502 && (await regOf(U2.pnid)).state === "uncertain" && r6.status === 409);
+}
+{
+  const S = await mkCo("S1");
+  const r = await run(S, { pnid: S.pnid, metaOpts: { subscribe: FAIL(400, "100") } });
+  const reg = await regOf(S.pnid);
+  const pinBefore = await pinOfReg(S.pnid);
+  ck("10.19 falha DEPOIS do registro (assinatura): 502, mas o registro fica 'registered' com o PIN guardado", r.status === 502 && reg.state === "registered" && !!pinBefore && (await conns(S)).length === 0);
+  const r2 = await run(S, { pnid: S.pnid });
+  ck("10.20 a retentativa NÃO registra de novo (sem gastar cota) e conclui; PIN do Vault inalterado", r2.status === 200 && registers(r2.meta).length === 0 && (await pinOfReg(S.pnid)) === pinBefore && (await attemptsOf(S.pnid)).length === 1);
+  const r3 = await run(S, { pnid: S.pnid, extra: { pin: "246810" } });
+  PINS.add("246810");
+  ck("10.21 reconexão com PIN enviado por engano: ignorado (nunca sobrescreve o PIN de um número registrado)", r3.status === 200 && registers(r3.meta).length === 0 && (await pinOfReg(S.pnid)) === pinBefore);
+}
+{
+  const F2 = await mkCo("F2");
+  let n = 0;
+  const flaky = async (fn, args) => (fn === "whatsapp_registration_finish_attempt" ? { data: null, error: { message: "banco fora", code: "XX000" } } : realRpc(fn, args));
+  const r = await run(F2, { pnid: F2.pnid, rpc: flaky });
+  ck("10.22 Meta aceitou mas o resultado não pôde ser gravado: 503 registration_uncertain; registro 'in_progress' (não repete)", r.status === 503 && r.j.code === "registration_uncertain" && (await regOf(F2.pnid)).state === "in_progress" && registers(r.meta).length === 1);
+  const r2 = await run(F2, { pnid: F2.pnid });
+  ck("10.23 logo depois: 409 registration_in_progress sem nova chamada à Meta", r2.status === 409 && r2.j.code === "registration_in_progress" && registers(r2.meta).length === 0);
+}
+{
+  const G2 = await mkCo("G2");
+  const pre = (await su("select count(*) n from vault.secrets where starts_with(name,'wa_pin_')")).rows[0].n;
+  const failing = async (fn, args) => (fn === "whatsapp_registration_store_pin" ? { data: null, error: { message: "vault indisponível", code: "XX000" } } : realRpc(fn, args));
+  const r = await run(G2, { pnid: G2.pnid, rpc: failing });
+  ck("10.24 falha ao guardar o PIN no Vault: 500 pin_store_failed, Meta NÃO chamada, nenhuma tentativa aberta, erro interno não vaza", r.status === 500 && r.j.code === "pin_store_failed" && registers(r.meta).length === 0 && (await attemptsOf(G2.pnid)).length === 0 && !/vault|XX000/.test(r.text)
+    && (await su("select count(*) n from vault.secrets where starts_with(name,'wa_pin_')")).rows[0].n === pre);
+}
+{
+  const X2 = await mkCo("X2");
+  const reg0 = await run(X2, { pnid: X2.pnid, metaOpts: { register: FAIL(400, "131000") } });
+  ck("10.25 falha definitiva da Meta (4xx qualquer): 502 meta_register_failed, estado failed, PIN mantido, 1 tentativa auditada com o código", reg0.status === 502 && reg0.j.code === "meta_register_failed" && (await regOf(X2.pnid)).state === "failed" && !!(await pinOfReg(X2.pnid)) && (await attemptsOf(X2.pnid))[0].meta_code === "131000");
+  const keep = await pinOfReg(X2.pnid);
+  const again = await run(X2, { pnid: X2.pnid });
+  ck("10.26 tentativa seguinte: mesmo PIN, uma única chamada, conclui", again.status === 200 && registers(again.meta).length === 1 && registers(again.meta)[0].pin === keep);
+  const Y2 = await mkCo("Y2");
+  await run(Y2, { pnid: Y2.pnid, metaOpts: { register: FAIL(400, "131000") } });
+  const rid2 = (await regOf(Y2.pnid)).id;
+  await su("delete from whatsapp_registration_attempts where registration_id=$1", [rid2]);
+  await su("insert into whatsapp_registration_attempts (registration_id, status, finished_at) select $1, 'failed', now() from generate_series(1,3)", [rid2]);
+  const lim = await run(Y2, { pnid: Y2.pnid });
+  ck("10.27 limite próprio de 3 tentativas em 72 h: 429 attempts_exhausted sem chamar a Meta", lim.status === 429 && lim.j.code === "attempts_exhausted" && registers(lim.meta).length === 0);
+}
+{
+  const Z1 = await mkCo("Z1"), Z2 = await mkCo("Z2");
+  await su("insert into whatsapp_number_registrations (company_id, phone_number_id, state) values ($1,$2,'pending')", [Z1.c, Z2.pnid]);
+  const pre = await secrets();
+  const r = await run(Z2, { pnid: Z2.pnid });
+  ck("10.28 número com registro de OUTRA empresa (mesmo sem conexão): 409 phone_in_use; sem token no Vault, sem Meta de registro", r.status === 409 && r.j.code === "phone_in_use" && registers(r.meta).length === 0 && (await secrets()) === pre && (await regOf(Z2.pnid)).company_id === Z1.c);
+}
+{
+  const K1 = await mkCo("K1"), K2 = await mkCo("K2");
+  const shared = String(++pn + 1000);
+  const [stK1, stK2] = [await begin(K1), await begin(K2)];
+  const [ra, rb] = await Promise.all([run(K1, { state: stK1, pnid: shared, metaOpts: { phones: [{ id: shared, displayPhoneNumber: "+55 1", verifiedName: "A" }] } }), run(K2, { state: stK2, pnid: shared, metaOpts: { phones: [{ id: shared, displayPhoneNumber: "+55 1", verifiedName: "A" }] } })]);
+  const sts = [ra.status, rb.status].sort();
+  ck("10.29 concorrência (duas empresas, mesmo número): exatamente uma conclui (200) e a outra recebe 409; um registro e uma conexão", JSON.stringify(sts) === "[200,409]" && Number((await su("select count(*) n from whatsapp_number_registrations where phone_number_id=$1", [shared])).rows[0].n) === 1
+    && Number((await su("select count(*) n from company_whatsapp_connections where phone_number_id=$1", [shared])).rows[0].n) === 1 && registers(ra.meta).length + registers(rb.meta).length === 1, JSON.stringify(sts));
+  const K3 = await mkCo("K3");
+  const sx = await begin(K3), sy = await begin(K3);
+  const sn = String(++pn + 2000);
+  const metaOpts = { phones: [{ id: sn, displayPhoneNumber: "+55 2", verifiedName: "B" }] };
+  const [r1, r2] = await Promise.all([run(K3, { state: sx, pnid: sn, metaOpts }), run(K3, { state: sy, pnid: sn, metaOpts })]);
+  ck("10.30 concorrência (mesma empresa, duas sessões, mesmo número): a Meta recebe no máximo UM registro, nenhum 5xx, uma conexão", registers(r1.meta).length + registers(r2.meta).length <= 1 && ![r1.status, r2.status].some((s) => s >= 500)
+    && Number((await su("select count(*) n from company_whatsapp_connections where phone_number_id=$1", [sn])).rows[0].n) <= 1, JSON.stringify([r1.status, r2.status]));
+  const pinNow = await pinOfReg(sn);
+  const used = [...registers(r1.meta), ...registers(r2.meta)].map((c) => c.pin);
+  ck("10.31 o PIN usado na Meta é exatamente o que ficou no Vault", used.length === 0 || used.every((p) => p === pinNow));
+}
+ck("10.32 cliente nunca recebe o PIN: nenhuma resposta da suíte contém um PIN usado", !PINS_TEXT_HIT(ALL_TEXT.join("\n")));
+{
+  const srcH = fs.readFileSync(path.join(root, "supabase/functions/whatsapp-signup-complete/handler.ts"), "utf8");
+  const srcG = fs.readFileSync(path.join(root, "supabase/functions/_shared/whatsapp-signup-graph.ts"), "utf8");
+  const srcI = fs.readFileSync(path.join(root, "supabase/functions/whatsapp-signup-complete/index.ts"), "utf8");
+  ck("10.33 sem HMAC/derivePin/WHATSAPP_REGISTRATION_PIN_SECRET/Math.random em nenhum código da Edge", ![srcH, srcG, srcI].some((t) => /derivePin|HMAC|REGISTRATION_PIN_SECRET|pinSecret|Math\.random/.test(t.replace(/\/\/.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, ""))));
+  ck("10.34 PIN só entra em log por nenhuma chamada de console no handler/index", !/console\.(log|error|warn|info)\([^)]*\bpin\b/i.test(srcH));
+}
+{
+  const draw = (vals) => { let i = 0; return SG.generatePin((b) => { b[0] = vals[Math.min(i++, vals.length - 1)]; }); };
+  ck("10.35 generatePin: zeros à esquerda e limites (0→000000, 42→000042, 999999→999999, 1234567→234567)", draw([0]) === "000000" && draw([42]) === "000042" && draw([999999]) === "999999" && draw([1234567]) === "234567");
+  ck("10.36 generatePin: amostragem por rejeição (valores ≥ 4.294.000.000 são descartados e o seguinte é usado)", draw([4294000000, 7]) === "000007" && draw([4294967295, 4294000001, 4293999999]) === String(4293999999 % 1_000_000).padStart(6, "0"));
+  const pins = Array.from({ length: 60000 }, () => SG.generatePin());
+  const first = new Array(10).fill(0); for (const p of pins) first[Number(p[0])]++;
+  ck("10.37 generatePin: formato sempre 6 dígitos e primeiro dígito uniforme (±10%) com CSPRNG real", pins.every((p) => /^\d{6}$/.test(p)) && first.every((n) => Math.abs(n - 6000) < 600) && new Set(pins).size > 55000, JSON.stringify(first));
+  ck("10.38 generatePin: RNG que só devolve valores rejeitados falha fechado (não devolve PIN fraco)", (() => { try { SG.generatePin((b) => { b[0] = 4294967295; }); return false; } catch { return true; } })());
+  ck("10.39 classifyRegisterFailure: 133005/133016/133008/133009/4xx/5xx/timeout/rede/resposta inesperada", SG.classifyRegisterFailure({ kind: "http", status: 400, code: "133005" }) === "pin_incorrect" && SG.classifyRegisterFailure({ kind: "http", status: 400, code: "133016" }) === "rate_limited"
+    && SG.classifyRegisterFailure({ kind: "http", status: 400, code: "133008" }) === "too_many_guesses" && SG.classifyRegisterFailure({ kind: "http", status: 400, code: "133009" }) === "too_many_guesses" && SG.classifyRegisterFailure({ kind: "http", status: 403 }) === "failed"
+    && SG.classifyRegisterFailure({ kind: "http", status: 500 }) === "uncertain" && SG.classifyRegisterFailure({ kind: "timeout" }) === "uncertain" && SG.classifyRegisterFailure({ kind: "network" }) === "uncertain" && SG.classifyRegisterFailure({ kind: "invalid_response" }) === "uncertain");
+}
+
 
 console.log("\n== 9. vazamento e estado final ==");
 {
   const all = logs.join("");
-  ck("9.1 nenhum log da suíte inteira contém code, token de negócio, App Secret ou secret do PIN", !all.includes("AQD-AUTH-CODE") && !all.includes("EAAB-BIZ-TOKEN") && !all.includes(APP_SECRET) && !all.includes(PIN_SECRET));
+  ck("9.1 nenhum log da suíte inteira contém code, token de negócio, App Secret nem PIN", !all.includes("AQD-AUTH-CODE") && !all.includes("EAAB-BIZ-TOKEN") && !all.includes(APP_SECRET) && !PINS_TEXT_HIT(all));
   const leaks = (await su(`select (select count(*) from whatsapp_signup_sessions s where s::text like '%EAAB-BIZ-TOKEN%' or s::text like '%AQD-AUTH%')
     + (select count(*) from company_whatsapp_connections c where c::text like '%EAAB-BIZ-TOKEN%')
     + (select count(*) from whatsapp_webhook_events e where e::text like '%EAAB-BIZ-TOKEN%') n`)).rows[0].n;

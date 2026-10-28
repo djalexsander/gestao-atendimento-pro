@@ -90,6 +90,21 @@ await svc("select public.whatsapp_signup_fail($1,'x') j", [fSid]);
 await su("update whatsapp_signup_sessions set status='reserved', created_at = now() - interval '20 minutes', expires_at = now() - interval '5 minutes' where id=$1", [fSid]).catch(() => {});
 await svc("select public.whatsapp_signup_sweep() j");
 ck("6.3 fail/sweep não alteram conexões, conversas nem mensagens", (await dig()) === dBefore);
+// sessão VENCIDA (pending/reserved) apontando para segredo ligado a conexão: nunca apagado, mesmo com o nome do signup
+const G1 = await mkCo("G1");
+const g1 = await ready(G1);
+const linked = (await su("insert into vault.secrets (name, secret) values ('wa_token_signup_ligado','TOKEN-LIGADO-A-CONEXAO') returning id")).rows[0].id;
+await su("insert into company_whatsapp_connections (company_id,status,phone_number_id,token_secret_id) values ($1,'disconnected','910000009',$2)", [G1.c, linked]);
+await su("update whatsapp_signup_sessions set token_secret_id=$1, created_at = now() - interval '20 minutes', expires_at = now() - interval '5 minutes' where id=$2", [linked, g1]);
+await svc("select public.whatsapp_signup_sweep() j");
+ck("7.1 sweep de sessão vencida não apaga segredo ligado a conexão (mesmo com prefixo do signup)", (await secretOf(linked)) === "TOKEN-LIGADO-A-CONEXAO" && (await sess(g1)).status === "expired" && (await sess(g1)).token_secret_id === null);
+const G2 = await mkCo("G2");
+const g2 = await ready(G2);
+const foreign2 = (await su("insert into vault.secrets (name, secret) values ('wa_token_manual_vencida','TOKEN-MANUAL-VENCIDA') returning id")).rows[0].id;
+await su("update whatsapp_signup_sessions set token_secret_id=$1, created_at = now() - interval '20 minutes', expires_at = now() - interval '5 minutes' where id=$2", [foreign2, g2]);
+await svc("select public.whatsapp_signup_sweep() j");
+ck("7.2 sweep de sessão vencida não apaga segredo sem o prefixo do signup", (await secretOf(foreign2)) === "TOKEN-MANUAL-VENCIDA");
+
 ck("5.1 ACL inalterada: sweep e fail só service_role", !(await A.owner("select public.whatsapp_signup_sweep() j")).ok && !(await anon("select public.whatsapp_signup_fail($1,'x') j", [aSid])).ok
   && (await su("select has_function_privilege('service_role','public.whatsapp_signup_fail(uuid,text)','execute') a, has_function_privilege('authenticated','public.whatsapp_signup_fail(uuid,text)','execute') b, has_function_privilege('authenticated','public.whatsapp_signup_sweep(uuid)','execute') c")).rows.every((r) => r.a && !r.b && !r.c));
 summary("WHATSAPP SIGNUP CLEANUP");

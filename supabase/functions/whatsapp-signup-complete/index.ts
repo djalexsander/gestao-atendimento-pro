@@ -5,7 +5,7 @@
 // Secrets (Edge Function secrets — NUNCA no git/frontend/VITE_):
 //   WHATSAPP_GRAPH_API_VERSION         já existente (envio); versão vigente da Graph API
 //   WHATSAPP_APP_SECRET                já existente (assinatura do webhook) = App Secret do app Meta; usado na troca do code
-//   WHATSAPP_REGISTRATION_PIN_SECRET   NOVO: >= 16 caracteres aleatórios; deriva o PIN de 6 dígitos do registro do número
+// Não há secret de PIN: cada número recebe um PIN aleatório guardado no Vault (ou o PIN informado pelo cliente).
 // O App ID e o Config ID não são secrets: vêm de whatsapp_platform_settings (preenchidos pelo operador).
 import { createClient } from "npm:@supabase/supabase-js@2.117.1";
 import { createSignupMeta } from "../_shared/whatsapp-signup-graph.ts";
@@ -50,6 +50,5 @@ Deno.serve((req: Request) =>
     meta,
     graphVersion: Deno.env.get("WHATSAPP_GRAPH_API_VERSION"),
     appSecret: Deno.env.get("WHATSAPP_APP_SECRET"),
-    pinSecret: Deno.env.get("WHATSAPP_REGISTRATION_PIN_SECRET"),
   })
 );

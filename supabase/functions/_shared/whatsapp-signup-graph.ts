@@ -153,13 +153,34 @@ export function createSignupMeta(fetchFn: FetchFn): SignupMeta {
 }
 
 /**
- * PIN de 6 dígitos da verificação em duas etapas, DERIVADO (HMAC-SHA256 do phone_number_id com um secret do servidor):
- * é o mesmo em toda tentativa para aquele número e dispensa guardar o PIN no banco.
+ * PIN de 6 dígitos (verificação em duas etapas) aleatório e criptograficamente seguro. Amostragem por rejeição: descarta valores
+ * acima do maior múltiplo de 1.000.000 em 2^32 para não haver viés, e preserva zeros à esquerda. Nunca usa Math.random.
+ * `random` só existe para os testes injetarem valores conhecidos.
  */
-export async function derivePin(secret: string, phoneNumberId: string): Promise<string> {
-  const enc = new TextEncoder();
-  const key = await crypto.subtle.importKey("raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  const sig = new Uint8Array(await crypto.subtle.sign("HMAC", key, enc.encode(`wa-registration-pin:${phoneNumberId}`)));
-  const n = ((sig[0] << 24) | (sig[1] << 16) | (sig[2] << 8) | sig[3]) >>> 0;
-  return String(n % 1_000_000).padStart(6, "0");
+const PIN_LIMIT = 4_294_000_000; // floor(2^32 / 1e6) * 1e6
+export function generatePin(random: (buf: Uint32Array<ArrayBuffer>) => void = (b) => { crypto.getRandomValues(b); }): string {
+  const buf = new Uint32Array(new ArrayBuffer(4));
+  for (let i = 0; i < 1000; i += 1) {
+    random(buf);
+    if (buf[0] < PIN_LIMIT) return String(buf[0] % 1_000_000).padStart(6, "0");
+  }
+  throw new Error("rng");
+}
+
+export const PIN_RE = /^[0-9]{6}$/;
+
+/**
+ * Classifica a falha do POST /{phone_number_id}/register. Códigos da documentação oficial de erros: 133005 (PIN incorreto),
+ * 133008 e 133009 (excesso/pressa de tentativas de PIN), 133016 (limite de registros em 72 h). Falha sem resposta definitiva da Meta
+ * (timeout, rede, 5xx, corpo inesperado) é 'uncertain': o pedido pode ter sido aplicado e NUNCA é repetido automaticamente.
+ */
+export type RegisterOutcome = "pin_incorrect" | "rate_limited" | "too_many_guesses" | "failed" | "uncertain";
+export function classifyRegisterFailure(f: { kind: string; status?: number; code?: string }): RegisterOutcome {
+  if (f.kind === "http" && f.status !== undefined && f.status >= 400 && f.status < 500) {
+    if (f.code === "133005") return "pin_incorrect";
+    if (f.code === "133016") return "rate_limited";
+    if (f.code === "133008" || f.code === "133009") return "too_many_guesses";
+    return "failed";
+  }
+  return "uncertain";
 }
