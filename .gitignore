@@ -4,8 +4,15 @@ dist-desktop/
 dist-ssr/
 *.local
 
-.claude/
-
+# Só ficam versionados os testes de banco do Embedded Signup (e o carregador que eles usam); o resto de .claude/ é local.
+.claude/*
+!.claude/db-tests/
+.claude/db-tests/*
+!.claude/db-tests/full-db.mjs
+!.claude/db-tests/whatsapp-signup-foundation.mjs
+!.claude/db-tests/mutate-whatsapp-signup-foundation.mjs
+!.claude/db-tests/whatsapp-signup-foundation.rollback.sql
+!.claude/db-tests/whatsapp-signup-complete.mjs
 .env
 .env.*
 !.env.example
