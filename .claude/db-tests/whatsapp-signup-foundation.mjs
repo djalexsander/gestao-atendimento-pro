@@ -10,7 +10,7 @@ const NEW = "20261104010000_whatsapp_embedded_signup_foundation.sql";
 
 // baseline: o mesmo banco SEM a migration nova, para provar que a mudança é aditiva
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "mig-nosignup-"));
-for (const f of fs.readdirSync(MIG)) if (f.endsWith(".sql") && f !== NEW) fs.copyFileSync(path.join(MIG, f), path.join(tmp, f));
+for (const f of fs.readdirSync(MIG)) if (f.endsWith(".sql") && f < NEW) fs.copyFileSync(path.join(MIG, f), path.join(tmp, f));
 const inv = `
   select 'col:'||table_name||'.'||column_name k from information_schema.columns where table_schema='public'
   union all select 'idx:'||indexname from pg_indexes where schemaname='public'

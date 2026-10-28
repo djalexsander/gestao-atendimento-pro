@@ -69,6 +69,12 @@ verify_jwt = false
 # janela de 24 h e modo de teste são decididos no banco). O token da Meta só é lido pelo service_role, a partir do Vault.
 verify_jwt = true
 
+[functions.whatsapp-signup-complete]
+# Conclusão da conexão por Embedded Signup v4. JWT obrigatório na borda; o handler confere o dono da sessão (criada por
+# whatsapp_signup_begin), troca o code e valida o número na Meta, e só então grava via RPCs service_role. Só responde com
+# whatsapp_platform_settings.embedded_signup_enabled = true.
+verify_jwt = true
+
 [functions.whatsapp-webhook]
 # Webhook da WhatsApp Business Platform (público). Autenticação = assinatura X-Hub-Signature-256 (WHATSAPP_APP_SECRET,
 # tempo constante) no POST e WHATSAPP_VERIFY_TOKEN no GET de verificação; a empresa vem de metadata.phone_number_id.

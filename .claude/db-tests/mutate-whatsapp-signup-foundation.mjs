@@ -41,6 +41,10 @@ for (const [name, from, to, from2, to2] of M.filter(Boolean)) {
   let mut = sql.replace(from, () => to);
   if (from2) mut = mut.replace(from2, () => to2);
   fs.writeFileSync(path.join(dir, NEW), mut);
+  // 20261105010000 redefine fail/sweep: a mutação vale nas duas versões
+  const NEXT = "20261105010000_whatsapp_signup_failed_cleanup.sql";
+  const nextSql = fs.readFileSync(path.join(SRC, NEXT), "utf8");
+  fs.writeFileSync(path.join(dir, NEXT), nextSql.includes(from) ? nextSql.split(from).join(to) : nextSql);
   let out = "";
   try { out = execFileSync("node", ["whatsapp-signup-foundation.mjs"], { cwd: path.dirname(fileURLToPath(import.meta.url)), env: { ...process.env, MIG_DIR: dir }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 600000 }); }
   catch (e) { out = (e.stdout ?? "") + (e.stderr ?? ""); }
