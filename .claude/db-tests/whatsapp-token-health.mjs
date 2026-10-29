@@ -411,8 +411,11 @@ console.log("\n== 10. registros incertos: análise e resolução administrativa 
   ck("10.4 owner da empresa, owner de outra empresa e anon NÃO listam nem resolvem", !(await OWR("select public.master_whatsapp_registration_list()")).ok && !(await OWN2("select public.master_whatsapp_registration_list()")).ok && !(await as("anon", null, "select public.master_whatsapp_registration_list()")).ok
     && !(await OWR("select public.master_whatsapp_registration_resolve($1,'failed','meta_dashboard','motivo suficiente aqui','evidência suficiente aqui')", [u1.reg])).ok && !(await svc("select public.master_whatsapp_registration_resolve($1,'failed','meta_dashboard','motivo suficiente aqui','evidência suficiente aqui')", [u1.reg])).ok);
   const R = (reg, outcome, type = "meta_dashboard", reason = "Conferido no painel da Meta pelo suporte", evid = "Número aparece como CONECTADO no WhatsApp Manager em 29/10") => MASTER("select public.master_whatsapp_registration_resolve($1,$2,$3,$4,$5) j", [reg, outcome, type, reason, evid]);
-  ck("10.5 exige evidência: motivo/evidência curtos ou ausentes, tipo de evidência e resultado inválidos são recusados", !(await R(u1.reg, "registered", "meta_dashboard", "curto", "evidência suficiente aqui")).ok && !(await R(u1.reg, "registered", "meta_dashboard", "motivo suficiente aqui", "")).ok && !(await R(u1.reg, "registered", "palpite", "motivo suficiente aqui", "evidência suficiente aqui")).ok && !(await R(u1.reg, "pending")).ok
-    && (await su("select state from whatsapp_number_registrations where id=$1", [u1.reg])).rows[0].state === "uncertain" && Number((await su("select count(*) n from whatsapp_registration_resolutions")).rows[0].n) === 0);
+  const refuse400 = (r, re) => !r.ok && r.code === "PT400" && re.test(r.err);
+  ck("10.5 exige evidência NA PRÓPRIA RPC (erro PT400 de validação, não o CHECK da tabela): motivo/evidência curtos ou ausentes, tipo de evidência e resultado inválidos", refuse400(await R(u1.reg, "registered", "meta_dashboard", "curto", "evidência suficiente aqui"), /motivo/i) && refuse400(await R(u1.reg, "registered", "meta_dashboard", "motivo suficiente aqui", ""), /evidência/i) && refuse400(await R(u1.reg, "registered", "palpite", "motivo suficiente aqui", "evidência suficiente aqui"), /evidência/i) && refuse400(await R(u1.reg, "pending"), /Resultado/i)
+    && refuse400(await R(u1.reg, "registered", "meta_dashboard", "x".repeat(501), "evidência suficiente aqui"), /motivo/i) && refuse400(await R(u1.reg, "registered", "meta_dashboard", "motivo suficiente aqui", "y".repeat(1001)), /evidência/i)
+    && (await su("select state from whatsapp_number_registrations where id=$1", [u1.reg])).rows[0].state === "uncertain" && Number((await su("select count(*) n from whatsapp_registration_resolutions")).rows[0].n) === 0
+    && Number((await su("select count(*) n from whatsapp_registration_attempts where registration_id=$1 and status like 'manual_%'", [u1.reg])).rows[0].n) === 0);
   const res = (await R(u1.reg, "registered")).rows[0].j;
   const row = (await su("select * from whatsapp_registration_resolutions where registration_id=$1", [u1.reg])).rows[0];
   ck("10.6 resolução com evidência: state=registered; auditoria com quem, quando, motivo, tipo e texto da evidência e o estado anterior", res.ok === true && (await su("select state from whatsapp_number_registrations where id=$1", [u1.reg])).rows[0].state === "registered" && row.resolved_by === master && !!row.resolved_at && row.prior_state === "uncertain" && row.evidence_type === "meta_dashboard" && /painel da Meta/.test(row.reason) && /CONECTADO/.test(row.evidence));
@@ -430,6 +433,29 @@ console.log("\n== 10. registros incertos: análise e resolução administrativa 
   // in_progress: só se a tentativa estiver parada há mais de 30 min
   const u3 = await mkUncertain("777000333", null);
   ck("10.12 tentativa EM CURSO (iniciada agora): resolução recusada — a chamada à Meta pode estar em andamento — e token/PIN preservados", (await R(u3.reg, "failed")).rows[0].j.error === "operation_may_be_in_flight" && (await su("select state from whatsapp_number_registrations where id=$1", [u3.reg])).rows[0].state === "in_progress" && (await tokAlive(u3.sid)) === 1 && (await pinAlive(u3.reg)) === 1);
+  {
+    // CAMINHOS ALTERNATIVOS para a mesma tentativa em curso: nenhum resolve (RPC antiga do service_role, clientes, UPDATE direto)
+    const before = JSON.stringify((await su("select state, registered_at, blocked_until, last_error_code from whatsapp_number_registrations where id=$1", [u3.reg])).rows[0]);
+    const viaSvcOk = (await svc("select public.whatsapp_registration_resolve($1,'registered') j", [u3.reg])).rows[0]?.j;
+    const viaSvcFail = (await svc("select public.whatsapp_registration_resolve($1,'failed') j", [u3.reg])).rows[0]?.j;
+    const viaClients = [await OWR("select public.whatsapp_registration_resolve($1,'failed') j", [u3.reg]), await MASTER("select public.whatsapp_registration_resolve($1,'failed') j", [u3.reg]), await as("anon", null, "select public.whatsapp_registration_resolve($1,'failed') j", [u3.reg])];
+    const direct = [await OWR("update whatsapp_number_registrations set state='registered' where id=$1", [u3.reg]), await MASTER("update whatsapp_number_registrations set state='registered' where id=$1", [u3.reg])];
+    ck("10.12b tentativa em curso: nem a RPC antiga (service_role) resolve — 'operation_may_be_in_flight' —; clientes e UPDATE direto não alteram; nada de auditoria, token ou PIN afetado",
+      viaSvcOk?.error === "operation_may_be_in_flight" && viaSvcFail?.error === "operation_may_be_in_flight" && viaClients.every((r) => !r.ok)
+      && direct.every((r) => !r.ok || r.rowCount === 0 || r.rows?.length === 0)
+      && JSON.stringify((await su("select state, registered_at, blocked_until, last_error_code from whatsapp_number_registrations where id=$1", [u3.reg])).rows[0]) === before
+      && Number((await su("select count(*) n from whatsapp_registration_attempts where registration_id=$1 and status like 'manual_%'", [u3.reg])).rows[0].n) === 0
+      && Number((await su("select count(*) n from whatsapp_registration_resolutions where registration_id=$1", [u3.reg])).rows[0].n) === 0 && (await tokAlive(u3.sid)) === 1 && (await pinAlive(u3.reg)) === 1);
+  }
+  {
+    // em andamento SEM nenhuma tentativa registrada (sem evidência de que parou): também não se resolve por nenhum caminho
+    const u4 = await mkUncertain("777000444", null);
+    await su("delete from whatsapp_registration_attempts where registration_id=$1", [u4.reg]);
+    const st = async () => (await su("select state from whatsapp_number_registrations where id=$1", [u4.reg])).rows[0].state;
+    const viaSvc = (await svc("select public.whatsapp_registration_resolve($1,'failed') j", [u4.reg])).rows[0].j;
+    const viaMaster = (await R(u4.reg, "failed", "meta_support", "Suporte da Meta confirmou que não houve registro", "Ticket do suporte confirmando ausência de registro para o número")).rows[0].j;
+    ck("10.12c em andamento sem NENHUMA tentativa registrada: recusado pelos dois caminhos ('operation_may_be_in_flight'); estado, token e PIN preservados", viaSvc.error === "operation_may_be_in_flight" && viaMaster.error === "operation_may_be_in_flight" && (await st()) === "in_progress" && (await tokAlive(u4.sid)) === 1 && (await pinAlive(u4.reg)) === 1);
+  }
   await su("update whatsapp_registration_attempts set started_at = now() - interval '31 minutes' where id=$1", [u3.attempt]);
   const res3 = (await R(u3.reg, "failed", "meta_support", "Suporte da Meta confirmou que não houve registro", "Ticket do suporte confirmando ausência de registro para o número")).rows[0].j;
   ck("10.13 tentativa parada há mais de 30 min: pode ser resolvida (evidência do suporte) e então o token é limpo", res3.ok === true && (await tokAlive(u3.sid)) === 0);

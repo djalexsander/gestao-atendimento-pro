@@ -217,6 +217,16 @@ console.log("\n== 3. token expirado pelo prazo: bloqueio ANTES de chamar a Graph
   const x = await say(ph, "quanto custa o espeto de carne?");
   const inb = await inboundCount(x.conv);
   ck("3.1 IA com token vencido: ZERO chamadas à Graph, mensagem registrada como falha 'token_expired', job failed_send com o motivo", graphCalls() === c0 && x.last?.status === "failed" && x.last.error_code === "token_expired" && (await lastJob(x.conv)).outcome === "failed_send" && (await lastJob(x.conv)).reason_code === "token_expired");
+  {
+    // RESPOSTA PRÓPRIA do bloqueio ao consumidor do despacho compartilhado (a IA só registra o código; o contrato http/friendly vale para
+    // whatsapp-send e whatsapp-order-notify, que usam o MESMO despacho): 409 + mensagem amigável, sem Graph, mensagem registrada como falha
+    const msgRow = (await su("insert into whatsapp_messages (company_id, connection_id, conversation_id, direction, type, body, status, origin) select company_id, connection_id, id, 'outbound', 'text', 'Oi', 'queued', 'system' from whatsapp_conversations where id=$1 returning id", [x.conv]));
+    const dm = await import(pathToFileURL(path.join(tmp, "whatsapp-dispatch.mjs")).href);
+    const g0 = graphCalls();
+    const out = msgRow.ok ? await dm.dispatchQueuedMessage({ admin, graph, graphVersion: "v99.0" }, msgRow.rows[0].id) : null;
+    ck("3.1b despacho direto com token vencido: 409, mensagem amigável própria (não a genérica de 503), ZERO chamadas à Graph e falha registrada", !!out && out.ok === false && out.errorCode === "token_expired" && out.http === 409 && /expirou ou foi revogada/.test(out.friendly) && graphCalls() === g0
+      && (await su("select error_code from whatsapp_messages where id=$1", [msgRow.rows?.[0]?.id])).rows[0]?.error_code === "token_expired", msgRow.err);
+  }
   ck("3.2 o recebimento continua: a mensagem do cliente foi gravada e gerou o job normalmente (webhook independe do token)", inb === 1 && (await jobsCount(x.conv)) === 1);
   const n0 = (await outbound(x.conv)).length, j0 = await jobsCount(x.conv), dc = countDeciderCalls();
   await tick(); await tick(); await tick();

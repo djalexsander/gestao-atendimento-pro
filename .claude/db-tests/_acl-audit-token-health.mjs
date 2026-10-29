@@ -17,7 +17,9 @@ const tq = `select c.relname, c.relrowsecurity rls, has_table_privilege('anon', 
 const pre = await loadAll(tmp, { legacyIaMirror: false });
 const before = new Map((await pre.pg.query(q)).rows.map((r) => [r.sig, r]));
 const beforeT = new Map((await pre.pg.query(tq)).rows.map((r) => [r.relname, r]));
-const post = await loadAll(undefined, { legacyIaMirror: false });
+const tmpPost = fs.mkdtempSync(path.join(os.tmpdir(), "acl-post-"));
+for (const f of fs.readdirSync(SRC)) if (f.endsWith(".sql") && f <= NEW) fs.copyFileSync(path.join(SRC, f), path.join(tmpPost, f)); // só até a migration auditada (as posteriores têm auditoria própria)
+const post = await loadAll(tmpPost, { legacyIaMirror: false });
 const after = (await post.pg.query(q)).rows;
 const afterT = (await post.pg.query(tq)).rows;
 let bad = 0;

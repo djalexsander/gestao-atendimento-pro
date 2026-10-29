@@ -9,7 +9,9 @@ import { fileURLToPath } from "node:url";
 const ROOT = "D:/orça facil";
 const SRC = path.join(ROOT, "supabase/migrations");
 const NEW = "20261108010000_whatsapp_token_health_and_registration_recovery.sql";
+const NEW2 = "20261109010000_whatsapp_token_health_sweep_schedule.sql";
 const sql = fs.readFileSync(path.join(SRC, NEW), "utf8");
+const sql2 = fs.readFileSync(path.join(SRC, NEW2), "utf8");
 const here = path.dirname(fileURLToPath(import.meta.url));
 const NL = String.fromCharCode(10);
 const L = (...a) => a.join(NL);
@@ -29,19 +31,19 @@ const SQLM = [
   ["falha não confirmada rebaixa estado confirmado", "if v_conn.token_status not in ('revoked', 'expired') then", "if true then"],
   ["envio ok passa a mexer em 'unknown'", "and token_status in ('error', 'revoked', 'expired')", "and token_status in ('unknown', 'error', 'revoked', 'expired')"],
   ["envio ok restaura mesmo com prazo vencido", "and (token_expires_at is null or token_expires_at > now())", ""],
-  ["varredura toca conexões sem prazo conhecido", "where status = 'active' and token_expires_at is not null and token_status not in ('revoked')", "where status = 'active' and token_status not in ('revoked')"],
   ["aviso aparece para qualquer papel", "case when v_role in ('owner', 'admin') and v_wa then", "case when true then"],
   ["aviso repetido não conta a ocorrência (dedupe quebrado)", "occurrences = public.whatsapp_token_alerts.occurrences + 1;", "occurrences = public.whatsapp_token_alerts.occurrences;"],
   ["resolução de registro sem Admin Master", L("  perform public.assert_master_admin();", "  v_actor := auth.uid();", "  if p_outcome is null or p_outcome not in ('registered', 'failed') then"), L("  v_actor := auth.uid();", "  if p_outcome is null or p_outcome not in ('registered', 'failed') then")],
   ["resolução sem exigir motivo/evidência", "if char_length(v_reason) not between 10 and 500 or char_length(v_evidence) not between 10 and 1000 then", "if false then"],
-  ["resolve tentativa em curso sem esperar 30 min", "if v_last is null or v_last > now() - interval '30 minutes' then", "if false then"],
   ["auditoria sem quem resolveu", "v_reason, v_evidence, v_actor);", "v_reason, v_evidence, null);"],
   ["sem limpeza segura após a resolução", "v_sweep := public.whatsapp_signup_sweep(v_r.company_id);", "v_sweep := jsonb_build_object('secrets_removed', 0);"],
   ["listagem expõe a referência do PIN", "'pin_stored', r.pin_secret_id is not null,", "'pin_stored', r.pin_secret_id,"],
   ["saúde por empresa sem Admin Master", L("begin", "  perform public.assert_master_admin();", "  return coalesce((", "    select jsonb_agg(jsonb_build_object(", "             'company_id', c.company_id"), L("begin", "  return coalesce((", "    select jsonb_agg(jsonb_build_object(", "             'company_id', c.company_id")],
   ["relatório de falha liberado a usuários", "grant execute on function public.whatsapp_connection_report_send_ok(uuid) to service_role;", "grant execute on function public.whatsapp_connection_report_send_ok(uuid) to service_role, authenticated;"],
   ["tabela de alertas acessível ao cliente", "revoke all on public.whatsapp_token_alerts from public, anon, authenticated;", "revoke all on public.whatsapp_token_alerts from public, anon;"],
-  ["resolução de registro aceita 'in_progress' recente por outro caminho (estado anterior ignorado)", "if v_r.state not in ('uncertain', 'in_progress') then", "if v_r.state not in ('uncertain', 'in_progress', 'registered', 'failed') then"],
+  ["resolve tentativa em curso sem esperar 30 min (nos DOIS caminhos: RPC do Admin Master e RPC antiga)", L("if v_last is null or v_last > now() - interval '30 minutes' then", "      return jsonb_build_object('ok', false, 'error', 'operation_may_be_in_flight');"), L("if false then", "      return jsonb_build_object('ok', false, 'error', 'operation_may_be_in_flight');"), "both"],
+  ["caminho alternativo (RPC antiga do service_role) resolve tentativa em curso sem esperar 30 min", L("if v_last is null or v_last > now() - interval '30 minutes' then", "      return jsonb_build_object('ok', false, 'error', 'operation_may_be_in_flight');"), L("if false then", "      return jsonb_build_object('ok', false, 'error', 'operation_may_be_in_flight');"), "new2"],
+  ["caminho alternativo aceita tentativa em curso sem tentativas registradas (v_last nulo)", L("if v_last is null or v_last > now() - interval '30 minutes' then", "      return jsonb_build_object('ok', false, 'error', 'operation_may_be_in_flight');"), L("if v_last > now() - interval '30 minutes' then", "      return jsonb_build_object('ok', false, 'error', 'operation_may_be_in_flight');"), "new2"],
 ];
 const EDGEM = [
   [DSP, "classifica TODO erro http como token inválido", 'if (r.kind !== "http" || r.code !== "190") return null;', 'if (r.kind !== "http") return null;'],
@@ -62,11 +64,13 @@ const runSuite = (env) => {
   const m = out.match(/(\d+) ok \/ (\d+) falhas/);
   return { m, detected: !m || Number(m[2]) > 0 };
 };
-for (const [name, from, to] of SQLM) {
-  if (!sql.includes(from)) { console.log("SKIP (trecho não encontrado):", name); continue; }
+for (const [name, from, to, which] of SQLM) {
+  const base = which === "new2" ? sql2 : sql;
+  if (!base.includes(from)) { console.log("SKIP (trecho não encontrado):", name); continue; }
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "mut-tok-"));
   for (const f of fs.readdirSync(SRC)) if (f.endsWith(".sql")) fs.copyFileSync(path.join(SRC, f), path.join(dir, f));
-  fs.writeFileSync(path.join(dir, NEW), sql.replace(from, () => to));
+  fs.writeFileSync(path.join(dir, NEW), which === "new2" ? sql : sql.replace(from, () => to));
+  fs.writeFileSync(path.join(dir, NEW2), which === "new2" || which === "both" ? sql2.replace(from, () => to) : sql2);
   const { m, detected } = runSuite({ MIG_DIR: dir });
   total++; if (detected) killed++;
   console.log(`${detected ? "DETECTADO " : "SOBREVIVEU "} ${name}${m ? ` (${m[2]} falhas)` : " (abortou)"}`);

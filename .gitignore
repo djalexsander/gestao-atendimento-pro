@@ -34,6 +34,11 @@ dist-ssr/
 !.claude/db-tests/_acl-audit-token-health.mjs
 !.claude/db-tests/whatsapp-ai-token-health-e2e.mjs
 !.claude/db-tests/mutate-whatsapp-ai-token-health.mjs
+!.claude/db-tests/whatsapp-token-sweep.mjs
+!.claude/db-tests/mutate-whatsapp-token-sweep.mjs
+!.claude/db-tests/_acl-audit-token-sweep.mjs
+!.claude/db-tests/gen-token-sweep-rollback.mjs
+!.claude/db-tests/whatsapp-token-sweep.rollback.sql
 .env
 .env.*
 !.env.example
