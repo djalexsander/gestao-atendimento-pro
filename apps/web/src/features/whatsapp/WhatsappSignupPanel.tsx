@@ -135,12 +135,12 @@ export function WhatsappSignupPanel({
   return (
     <>
       <button type="button" className="btn-primary btn-auto" disabled={!card.enabled} title={card.hint ?? undefined} onClick={() => void prepare()}>
-        Conectar meu WhatsApp
+        {card.label}
       </button>
       {card.hint && <p className="field-hint" role="status">{card.hint}</p>}
 
       {open && (
-        <Modal title="Conectar meu WhatsApp" onClose={closeModal}>
+        <Modal title={card.label} onClose={closeModal}>
           {phase.name === "preparing" && <p role="status">Preparando a conexão segura com a Meta…</p>}
 
           {phase.name === "ready" && (

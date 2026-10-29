@@ -23,6 +23,19 @@ export interface DispatchRpcClient {
 
 export const SEND_GENERIC_ERROR = "Não foi possível enviar a mensagem agora. Tente novamente em instantes.";
 
+export const TOKEN_BLOCKED_FRIENDLY = "A conexão do WhatsApp expirou ou foi revogada e precisa ser refeita. Procure o administrador da empresa.";
+
+/**
+ * Falha de autenticação CONFIRMADA pela Graph API: erro 190 (OAuthException). Meta: 190 = "token expirado, revogado ou inválido"
+ * (com ou sem subcódigo 458/460/463/467) -> 'invalid'. Subcódigos de checkpoint (459/464) são problema da conta do usuário, não do
+ * token -> 'error' (não bloqueia). HTTP 401 SEM o código 190, timeout, rede, 5xx e 429 NÃO dizem nada sobre o token -> null.
+ */
+export function classifyGraphAuthFailure(r: { kind: string; status?: number; code?: string; subcode?: string }): "invalid" | "error" | null {
+  if (r.kind !== "http" || r.code !== "190") return null;
+  if (r.subcode === "459" || r.subcode === "464") return "error";
+  return "invalid";
+}
+
 export type DispatchResult =
   | { ok: true }
   | { ok: false; errorCode: string; http: number; friendly: string };
@@ -75,6 +88,10 @@ export async function dispatchQueuedMessage(
     if (reason === "connection_inactive") {
       return { ok: false, errorCode: reason, http: 409, friendly: "O WhatsApp desta empresa não está conectado." };
     }
+    if (reason === "token_expired" || reason === "token_revoked") {
+      // credencial comprovadamente vencida/inválida: NENHUMA chamada à Graph (tentativa inútil); a mensagem fica registrada como falha
+      return { ok: false, errorCode: reason, http: 409, friendly: TOKEN_BLOCKED_FRIENDLY };
+    }
     if (reason === "module_inactive") {
       return { ok: false, errorCode: reason, http: 403, friendly: "O módulo WhatsApp não está contratado. O histórico continua disponível para consulta." };
     }
@@ -89,6 +106,18 @@ export async function dispatchQueuedMessage(
     return { ok: false, errorCode: "context_error", http: 502, friendly: SEND_GENERIC_ERROR };
   }
 
+  // saúde do token: só uma falha de autenticação CONFIRMADA pela Graph (erro 190) é registrada; o envio bem-sucedido restaura quem estava
+  // marcado error/revoked/expired (inclusive após a sondagem). Best-effort: um erro aqui nunca muda o resultado do envio.
+  const connectionId = typeof ctx.connection_id === "string" ? ctx.connection_id : "";
+  const reportAuthFailure = async (f: { kind: string; status?: number; code?: string; subcode?: string }): Promise<"invalid" | "error" | null> => {
+    const k = classifyGraphAuthFailure(f);
+    if (!k || !connectionId) return k;
+    const r = await call(admin, "whatsapp_connection_report_token_failure", { p_connection_id: connectionId, p_kind: k, p_code: f.code ?? null, p_subcode: f.subcode ?? null });
+    if (r.error) console.error("whatsapp-dispatch: não registrou a saúde do token", { code: r.error.code ?? null });
+    return k;
+  };
+  const unhealthyBefore = ctx.token_probe === true || (typeof ctx.token_status === "string" && ["error", "revoked", "expired"].includes(ctx.token_status));
+
   // 3) Graph API
   let result;
   if (document) {
@@ -101,8 +130,9 @@ export async function dispatchQueuedMessage(
     if (!up.ok) {
       const upCode = (up.kind === "http" ? `media_${up.code ?? up.status ?? "error"}` : `media_${up.kind}`).slice(0, 64);
       console.error("whatsapp-dispatch: upload da mídia falhou", { kind: up.kind, status: up.status ?? null, code: upCode });
+      const upAuth = await reportAuthFailure(up);
       await markMessageFailed(admin, messageId, upCode);
-      return { ok: false, errorCode: upCode, http: up.kind === "timeout" ? 504 : 502, friendly: SEND_GENERIC_ERROR };
+      return { ok: false, errorCode: upCode, http: up.kind === "timeout" ? 504 : 502, friendly: upAuth === "invalid" ? "A conexão do WhatsApp precisa ser reconectada. Procure o administrador." : SEND_GENERIC_ERROR };
     }
     result = await graph.sendDocument({ version: graphVersion, phoneNumberId, accessToken: token, to: recipient, mediaId: up.mediaId, filename: document.filename, caption: text });
   } else {
@@ -113,6 +143,10 @@ export async function dispatchQueuedMessage(
     let mark = await call(admin, "whatsapp_mark_message_sent", { p_message_id: messageId, p_provider_message_id: result.messageId });
     if (mark.error) mark = await call(admin, "whatsapp_mark_message_sent", { p_message_id: messageId, p_provider_message_id: result.messageId });
     if (mark.error) console.error("whatsapp-dispatch: enviada, mas não registrou o id", { code: mark.error.code ?? null });
+    if (unhealthyBefore && connectionId) {
+      const ok = await call(admin, "whatsapp_connection_report_send_ok", { p_connection_id: connectionId });
+      if (ok.error) console.error("whatsapp-dispatch: não restaurou a saúde do token", { code: ok.error.code ?? null });
+    }
     return { ok: true };
   }
 
@@ -139,6 +173,7 @@ export async function dispatchQueuedMessage(
     errorCode = `graph_${result.code ?? result.status ?? "error"}`;
   }
   console.error("whatsapp-dispatch: envio falhou", { kind: result.kind, status: result.status ?? null, code: errorCode });
+  await reportAuthFailure(result);
   await markMessageFailed(admin, messageId, errorCode);
   return { ok: false, errorCode, http, friendly };
 }

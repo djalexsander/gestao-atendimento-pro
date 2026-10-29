@@ -7,6 +7,14 @@ export interface SignupAvailability {
   reason: string | null;
 }
 
+/** Aviso de saúde do token para owner/admin (nunca traz token nem segredo). */
+export interface TokenAlert {
+  kind: "expiring" | "expired" | "revoked";
+  level: "warning" | "critical";
+  daysLeft: number | null;
+  reconnect: boolean;
+}
+
 export interface ModuleState {
   whatsapp: boolean;
   ia: boolean;
@@ -15,6 +23,7 @@ export interface ModuleState {
   hasHistory: boolean;
   canManage: boolean;
   signup: SignupAvailability;
+  tokenAlert: TokenAlert | null;
 }
 
 export interface AiIndicators {
@@ -40,8 +49,34 @@ export function toModuleState(raw: unknown): ModuleState {
     hasHistory: o.has_history === true,
     canManage: o.can_manage === true,
     signup: { available: s.available === true, reason: typeof s.reason === "string" ? s.reason : null },
+    tokenAlert: toTokenAlert(o.connection_alert),
   };
 }
+
+export function toTokenAlert(raw: unknown): TokenAlert | null {
+  const o = (raw && typeof raw === "object" ? raw : null) as Record<string, unknown> | null;
+  if (!o) return null;
+  const kind = o.kind;
+  if (kind !== "expiring" && kind !== "expired" && kind !== "revoked") return null;
+  const days = typeof o.days_left === "number" && Number.isFinite(o.days_left) ? Math.max(0, Math.floor(o.days_left)) : null;
+  return { kind, level: kind === "expiring" ? "warning" : "critical", daysLeft: kind === "expiring" ? days : null, reconnect: o.reconnect === true };
+}
+
+/** Texto do aviso. Nunca menciona token, PIN ou credencial (só o que o usuário precisa fazer). */
+export function tokenAlertText(a: TokenAlert): string {
+  if (a.kind === "expiring") {
+    const d = a.daysLeft;
+    const when = d === null ? "em breve" : d <= 0 ? "hoje" : d === 1 ? "em 1 dia" : `em ${d} dias`;
+    return `A autorização da conexão do WhatsApp vence ${when}. Refaça a conexão antes disso para não interromper o envio de mensagens.`;
+  }
+  if (a.kind === "expired") {
+    return "A autorização da conexão do WhatsApp expirou. O recebimento de mensagens continua, mas o envio está pausado até a conexão ser refeita.";
+  }
+  return "A autorização da conexão do WhatsApp foi revogada ou ficou inválida. O recebimento de mensagens continua, mas o envio está pausado até a conexão ser refeita.";
+}
+
+export const TOKEN_RECONNECT_SUPPORT_TEXT =
+  "A reconexão automática ainda não está liberada para a sua empresa. Fale com a equipe da Alex Pro Apps para refazer a conexão do número; o histórico é mantido.";
 
 export function toAiIndicators(raw: unknown): AiIndicators {
   const o = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;

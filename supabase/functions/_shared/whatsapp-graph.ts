@@ -17,7 +17,7 @@ export interface GraphSendArgs {
   body: string;
 }
 
-export type GraphFailure = { ok: false; kind: "http" | "timeout" | "network" | "invalid_response"; status?: number; code?: string };
+export type GraphFailure = { ok: false; kind: "http" | "timeout" | "network" | "invalid_response"; status?: number; code?: string; subcode?: string };
 export type GraphSendResult = { ok: true; messageId: string } | GraphFailure;
 
 export interface GraphUploadArgs {
@@ -118,7 +118,8 @@ async function callGraph(
     if (!res.ok) {
       const err = obj.error && typeof obj.error === "object" ? (obj.error as Record<string, unknown>) : {};
       const code = typeof err.code === "number" || typeof err.code === "string" ? String(err.code) : undefined;
-      return { ok: false, kind: "http", status: res.status, code };
+      const sub = typeof err.error_subcode === "number" || typeof err.error_subcode === "string" ? String(err.error_subcode) : undefined;
+      return { ok: false, kind: "http", status: res.status, code, ...(sub && /^[0-9]{1,6}$/.test(sub) ? { subcode: sub } : {}) };
     }
     return { ok: true, status: res.status, obj };
   } catch (e) {

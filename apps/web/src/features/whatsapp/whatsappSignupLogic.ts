@@ -2,7 +2,7 @@
 // O servidor decide de verdade (RPC whatsapp_signup_begin + Edge whatsapp-signup-complete); aqui só se decide o que MOSTRAR e como
 // interpretar o que o navegador recebe. Nada que venha do navegador (postMessage, IDs) é prova de nada: o backend revalida tudo.
 import type { ModuleState } from "./whatsappModulesLogic";
-import { SIGNUP_NOT_AUTHORIZED_TEXT, SIGNUP_UNAVAILABLE_TEXT } from "./whatsappModulesLogic";
+import { SIGNUP_NOT_AUTHORIZED_TEXT, SIGNUP_UNAVAILABLE_TEXT, TOKEN_RECONNECT_SUPPORT_TEXT, type TokenAlert } from "./whatsappModulesLogic";
 
 /** SDK oficial (documentação do Embedded Signup v4 / Facebook Login for Business). */
 export const FACEBOOK_SDK_URL = "https://connect.facebook.net/en_US/sdk.js";
@@ -26,20 +26,29 @@ export interface ConnectCard {
   /** O botão está utilizável? Só com a plataforma liberada (flag do operador) e fora do app Desktop. */
   enabled: boolean;
   hint: string | null;
+  /** Texto do botão: reconectar quando o token pede refazer a conexão. */
+  label: string;
 }
 
 export const DESKTOP_UNSUPPORTED_TEXT =
   "Para conectar o WhatsApp, abra o sistema pelo navegador (versão web). A janela da Meta não funciona no aplicativo de computador.";
 
-export function connectCard(state: Pick<ModuleState, "whatsapp" | "canManage" | "connectionActive" | "signup">, desktop = false): ConnectCard {
-  const visible = state.canManage && state.whatsapp && !state.connectionActive;
-  if (!visible) return { visible: false, enabled: false, hint: null };
-  if (desktop) return { visible: true, enabled: false, hint: DESKTOP_UNSUPPORTED_TEXT };
+export const CONNECT_LABEL = "Conectar meu WhatsApp";
+export const RECONNECT_LABEL = "Reconectar meu WhatsApp";
+
+export function connectCard(state: Pick<ModuleState, "whatsapp" | "canManage" | "connectionActive" | "signup"> & { tokenAlert?: TokenAlert | null }, desktop = false): ConnectCard {
+  // conexão ativa com token vencido/revogado/prestes a vencer: o MESMO fluxo reconecta o mesmo número (sem desconectar nem registrar de novo)
+  const reconnect = state.connectionActive && state.tokenAlert?.reconnect === true;
+  const label = reconnect ? RECONNECT_LABEL : CONNECT_LABEL;
+  const visible = state.canManage && state.whatsapp && (!state.connectionActive || reconnect);
+  if (!visible) return { visible: false, enabled: false, hint: null, label };
+  if (desktop) return { visible: true, enabled: false, hint: DESKTOP_UNSUPPORTED_TEXT, label };
   if (!state.signup.available) {
     // empresa fora do piloto: botão desabilitado, mensagem própria e o SDK da Meta nunca é carregado (só carrega após o clique)
-    return { visible: true, enabled: false, hint: state.signup.reason === "company_not_authorized" ? SIGNUP_NOT_AUTHORIZED_TEXT : SIGNUP_UNAVAILABLE_TEXT };
+    const hint = reconnect ? TOKEN_RECONNECT_SUPPORT_TEXT : state.signup.reason === "company_not_authorized" ? SIGNUP_NOT_AUTHORIZED_TEXT : SIGNUP_UNAVAILABLE_TEXT;
+    return { visible: true, enabled: false, hint, label };
   }
-  return { visible: true, enabled: true, hint: null };
+  return { visible: true, enabled: true, hint: null, label };
 }
 
 // ---------------------------------------------------------------------------------------------------------------------

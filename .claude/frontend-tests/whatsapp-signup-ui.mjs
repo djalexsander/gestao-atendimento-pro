@@ -51,6 +51,13 @@ ck("1.5b empresa FORA do piloto (flag ligada, não autorizada): visível porém 
 ck("1.5c empresa fora do piloto sem permissão/módulo/ou já conectada continua invisível (a allowlist não mostra nada a quem não deve ver)", [{ canManage: false }, { whatsapp: false }, { connectionActive: true }].every((p) => L.connectCard({ ...MODSTATE, ...p, signup: { available: false, reason: "company_not_authorized" } }).visible === false));
 ck("1.5d autorizada + flag ligada continua habilitada", L.connectCard({ ...MODSTATE, signup: { available: true, reason: null } }).enabled === true);
 ck("1.5e mapCompleteFailure('company_not_authorized'): mensagem de empresa não liberada, sem nova tentativa nem PIN", (() => { const f = L.mapCompleteFailure(403, "company_not_authorized"); return f.kind === "not_authorized" && f.canRetry === false && f.pinNeeded === false && /não foi liberada/.test(f.message); })());
+const REV = { kind: "revoked", level: "critical", daysLeft: null, reconnect: true };
+const EXP = { kind: "expiring", level: "warning", daysLeft: 3, reconnect: true };
+ck("1.8 conexão ativa SEM aviso de token: botão continua invisível", L.connectCard({ ...MODSTATE, connectionActive: true, tokenAlert: null }).visible === false);
+ck("1.9 conexão ativa com token revogado/expirando: aparece 'Reconectar meu WhatsApp' (mesmo número, sem desconectar), habilitado se a plataforma liberou", [REV, EXP].every((al) => { const c = L.connectCard({ ...MODSTATE, connectionActive: true, tokenAlert: al }); return c.visible && c.enabled && c.label === "Reconectar meu WhatsApp"; }));
+ck("1.10 reconexão com empresa fora do piloto/flag desligada: desabilitado com orientação de falar com o suporte (histórico mantido)", [{ available: false, reason: "company_not_authorized" }, { available: false, reason: "pending_meta_approval" }].every((sg) => { const c = L.connectCard({ ...MODSTATE, connectionActive: true, tokenAlert: REV, signup: sg }); return c.visible && !c.enabled && /Alex Pro Apps/.test(c.hint) && /histórico é mantido/.test(c.hint); }));
+ck("1.11 reconexão nunca aparece para quem não gerencia ou sem o módulo", [{ canManage: false }, { whatsapp: false }].every((pp) => L.connectCard({ ...MODSTATE, connectionActive: true, tokenAlert: REV, ...pp }).visible === false));
+ck("1.12 primeira conexão mantém o texto 'Conectar meu WhatsApp'", L.connectCard(MODSTATE).label === "Conectar meu WhatsApp");
 ck("1.6 app Desktop (Tauri): indisponível com orientação para usar o navegador", (() => { const c = L.connectCard(MODSTATE, true); return c.visible && !c.enabled && /navegador/.test(c.hint); })());
 ck("1.7 empresa com conexão antiga DESCONECTADA pode reconectar", L.connectCard({ ...MODSTATE, connectionActive: false }).visible === true);
 
@@ -282,7 +289,19 @@ console.log("\n== 8. garantias estáticas ==");
   ck("8.7 campo de PIN: password, numérico, autocomplete off, 6 dígitos", /type="password"/.test(panel) && /inputMode="numeric"/.test(panel) && /autoComplete="off"/.test(panel) && /maxLength=\{6\}/.test(panel));
   ck("8.8 limite de envios de PIN por tela (MAX_PIN_SUBMISSIONS) e fechar limpa tudo", /MAX_PIN_SUBMISSIONS/.test(panel) && /function reset\(\)[\s\S]*pinRef\.current = ""[\s\S]*setPinInput\(""\)/.test(panel));
   const conn = read(W + "WhatsappConnection.tsx");
-  ck("8.9 tela de conexão usa o painel novo e não tem mais o botão antigo desabilitado", /WhatsappSignupPanel/.test(conn) && !/Conectar WhatsApp</.test(conn) && /connectCard\(state, isTauri\(\)\)/.test(conn));
+  {
+  const M2 = await import(pathToFileURL(path.join(tmp, "whatsappModulesLogic.mjs")).href);
+  const base = { whatsapp: true, ia: false, ai_allowed: false, connection_active: true, has_history: true, can_manage: true, signup: { available: false } };
+  const t1 = M2.toModuleState({ ...base, connection_alert: { kind: "expiring", days_left: 4.7, reconnect: true } }).tokenAlert;
+  ck("9.1 aviso de token do servidor vira TokenAlert (dias inteiros, nível pelo tipo)", t1.kind === "expiring" && t1.level === "warning" && t1.daysLeft === 4 && t1.reconnect === true);
+  ck("9.2 lixo/ausente/tipo desconhecido => sem aviso (nunca inventa)", [undefined, null, "x", {}, { kind: "hack" }, { kind: 5 }].every((v) => M2.toModuleState({ ...base, connection_alert: v }).tokenAlert === null));
+  ck("9.3 expired/revoked são críticos e não carregam dias", ["expired", "revoked"].every((k) => { const a = M2.toModuleState({ ...base, connection_alert: { kind: k, days_left: 9, reconnect: true } }).tokenAlert; return a.level === "critical" && a.daysLeft === null; }));
+  const texts = [{ kind: "expiring", level: "warning", daysLeft: 3, reconnect: true }, { kind: "expiring", level: "warning", daysLeft: 1, reconnect: true }, { kind: "expiring", level: "warning", daysLeft: 0, reconnect: true }, { kind: "expired", level: "critical", daysLeft: null, reconnect: true }, { kind: "revoked", level: "critical", daysLeft: null, reconnect: true }].map((a) => M2.tokenAlertText(a));
+  ck("9.4 textos dos avisos: dizem o que fazer, sem mencionar token, PIN, senha ou credencial", /em 3 dias/.test(texts[0]) && /em 1 dia/.test(texts[1]) && /hoje/.test(texts[2]) && /envio está pausado/.test(texts[3] + texts[4]) && texts.every((t) => !/token|pin\b|senha|credencial|secret/i.test(t)));
+  const conn2 = fs.readFileSync(path.join(root, "apps/web/src/features/whatsapp/WhatsappConnection.tsx"), "utf8");
+  ck("9.5 a tela só mostra o aviso a quem gerencia (canManage) e como alerta acessível", /state\.canManage && state\.tokenAlert/.test(conn2) && /role="alert"[^>]*data-testid="wa-token-alert"/.test(conn2));
+}
+ck("8.9 tela de conexão usa o painel novo e não tem mais o botão antigo desabilitado", /WhatsappSignupPanel/.test(conn) && !/Conectar WhatsApp</.test(conn) && /connectCard\(state, isTauri\(\)\)/.test(conn));
   const api = files.find(([f]) => f === "whatsappSignupApi.ts")[1];
   ck("8.10 API real: RPC whatsapp_signup_begin e Edge whatsapp-signup-complete; company_id NÃO vai no corpo da Edge", /rpc\("whatsapp_signup_begin"/.test(api) && /invoke\("whatsapp-signup-complete"/.test(api) && !/company_id/.test(api.slice(api.indexOf("async function complete"))));
   ck("8.11 CompletePayload só tem state, code, waba_id, phone_number_id e pin opcional", /state: string;\s*code: string;\s*waba_id: string;\s*phone_number_id: string;\s*pin\?: string;/.test(read(W + "whatsappSignupFlow.ts")));

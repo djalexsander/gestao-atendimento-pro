@@ -8,6 +8,7 @@ import {
   WHATSAPP_NOT_CONTRACTED_TEXT,
   connectionStatusLabel,
   type ModuleState,
+  tokenAlertText,
 } from "./whatsappModulesLogic";
 import { READONLY_MODULE_TEXT, type ConnectionSummary } from "./whatsappLogic";
 import { WhatsappSignupPanel } from "./WhatsappSignupPanel";
@@ -84,6 +85,11 @@ export function WhatsappConnection({
       {error && <div className="form-error" role="alert">{error}</div>}
       {notice && <div className="form-notice" role="status">{notice}</div>}
       {!state.whatsapp && <div className="form-notice" role="status">{READONLY_MODULE_TEXT}</div>}
+      {state.canManage && state.tokenAlert && (
+        <div className={state.tokenAlert.level === "critical" ? "form-error" : "form-notice"} role="alert" data-testid="wa-token-alert">
+          {tokenAlertText(state.tokenAlert)}
+        </div>
+      )}
 
       <section className="settings-section wa-conn-card" aria-label="Número conectado">
         <h3 className="settings-section-title">Número conectado</h3>

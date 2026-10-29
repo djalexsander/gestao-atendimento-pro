@@ -417,6 +417,7 @@ console.log("\n== 10. rollback seguro ==");
   const pinSecretsBefore = Number((await su("select count(*) n from vault.secrets where starts_with(name,'wa_pin_')")).rows[0].n);
   const tokSecretsBefore = Number((await su("select count(*) n from vault.secrets where not starts_with(name,'wa_pin_')")).rows[0].n);
   const fs2 = (await import("node:fs")).default;
+  await pg.exec(fs2.readFileSync("D:/orça facil/.claude/db-tests/whatsapp-token-health.rollback.sql", "utf8")); // desfaz 1108 (a tabela de resoluções depende dos registros)
   await pg.exec(fs2.readFileSync("D:/orça facil/.claude/db-tests/whatsapp-registration-pin.rollback.sql", "utf8"));
   ck("10.1 rollback preserva conexões, sessões e todos os segredos do Vault (tokens e PINs)", JSON.stringify((await su("select id, company_id, status, mode, waba_id, phone_number_id, token_secret_id from company_whatsapp_connections order by id")).rows) === connsBefore
     && Number((await su("select count(*) n from whatsapp_signup_sessions")).rows[0].n) === sessBefore && Number((await su("select count(*) n from vault.secrets where starts_with(name,'wa_pin_')")).rows[0].n) === pinSecretsBefore

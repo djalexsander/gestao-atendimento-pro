@@ -94,7 +94,7 @@ const after = new Set((await pg.query(inv)).rows.map((r) => r.k));
 const missing = [...baseline].filter((k) => !after.has(k));
 ck("1.1 todo objeto pré-existente (colunas, índices, constraints, políticas, funções, triggers) continua", missing.length === 0, missing.join(", "));
 const added = [...after].filter((k) => !baseline.has(k));
-ck("1.2 o que foi criado é só da migration nova (nada inesperado)", added.every((k) => /signup|registration|pin_reveal|pilot|connection_set_health|connections|connection_(source|type)|meta_business|token_|registered_at|webhook_subscribed|last_error/.test(k)), added.join(", "));
+ck("1.2 o que foi criado é só da migration nova (nada inesperado)", added.every((k) => /signup|registration|pin_reveal|pilot|token_alert|token_health|token_effective|report_token|report_send|master_whatsapp|connection_alert|connection_set_health|connections|connection_(source|type)|meta_business|token_|registered_at|webhook_subscribed|last_error/.test(k)), added.join(", "));
 
 console.log("\n== 2. conexões antigas: defaults seguros ==");
 const old = await mkConn(A, { mode: "live" });
@@ -395,6 +395,7 @@ const snap = async () => JSON.stringify((await su(`select c.id, c.company_id, c.
   from company_whatsapp_connections c order by c.id`)).rows);
 const msgs = async () => Number((await su("select (select count(*) from whatsapp_messages) + (select count(*) from whatsapp_conversations) n")).rows[0].n);
 const snapBefore = await snap(), msgsBefore = await msgs();
+await pg.exec(fs.readFileSync("D:/orça facil/.claude/db-tests/whatsapp-token-health.rollback.sql", "utf8")); // desfaz 1108 (saúde do token)
 await pg.exec(fs.readFileSync("D:/orça facil/.claude/db-tests/whatsapp-signup-pilot.rollback.sql", "utf8")); // desfaz 1107 (allowlist do piloto)
 await pg.exec(fs.readFileSync("D:/orça facil/.claude/db-tests/whatsapp-registration-pin.rollback.sql", "utf8")); // desfaz 1106 (a 1104 não é desfeita antes)
 await pg.exec(fs.readFileSync("D:/orça facil/.claude/db-tests/whatsapp-signup-foundation.rollback.sql", "utf8"));
