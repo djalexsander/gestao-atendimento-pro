@@ -125,6 +125,18 @@ const go = async (env, opts) => { const r = await FL.prepareSignup(env.deps); if
   ck("4.7 FINISH repetido não gera segunda conclusão (code é de uso único)", out.status === "success" && env.completes.length === 1);
 }
 {
+  const env = mkEnv({ onLogin: (cb, e) => { e.emit(META, FIN()); e.emit(META, FIN("999999999999", "888888888888")); cb({ authResponse: { code: CODE } }); } });
+  const { out } = await go(env);
+  ck("4.7b FINISH contraditório (IDs diferentes) encerra a tentativa e nada é enviado ao backend", out.status === "failed" && out.failure.kind === "meta_error" && env.completes.length === 0);
+}
+{
+  const env = mkEnv({ onLogin: (cb, e) => { e.emit(META, FIN("999999999999", "888888888888")); e.emit(META, FIN()); cb({ authResponse: { code: CODE } }); } });
+  const { out } = await go(env);
+  ck("4.7c vale o primeiro FINISH recebido: o contraditório posterior também aborta (nunca troca IDs)", out.status === "failed" && env.completes.length === 0);
+}
+ck("2.9 estruturas oficiais: FINISH com business_id extra, ERROR com session_id/timestamp, CANCEL só com current_step", L.parseSignupMessage("https://www.facebook.com", msg("FINISH", { waba_id: "12345", phone_number_id: "67890", business_id: "555555" })).kind === "finish" && L.parseSignupMessage("https://web.facebook.com", msg("ERROR", { error_message: "m", error_code: "100", session_id: "s", timestamp: "1700000000000" })).kind === "error" && L.parseSignupMessage("https://www.facebook.com", msg("CANCEL", { current_step: "PHONE_NUMBER_SETUP" })).kind === "cancel");
+ck("2.10 FB.login usa exatamente os parâmetros da página oficial de implementação (extras.setup vazio, sem version/featureType/sessionInfoVersion)", /extras: \{ setup: \{\} \}/.test(fs.readFileSync(path.join(root, "apps/web/src/features/whatsapp/whatsappSignupFlow.ts"), "utf8")) && !/sessionInfoVersion|featureType|extras: \{[^}]*version/.test(fs.readFileSync(path.join(root, "apps/web/src/features/whatsapp/whatsappSignupFlow.ts"), "utf8").replace(/\/\/.*$/gm, "")));
+{
   const env = mkEnv({ onLogin: (cb, e) => { e.emit("https://evil.example", FIN()); cb({ authResponse: { code: CODE } }); } });
   const h = await FL.prepareSignup(env.deps); const handle = FL.launchSignup(h.prepared, env.deps);
   await Promise.resolve();

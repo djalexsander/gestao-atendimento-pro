@@ -118,6 +118,11 @@ export function launchSignup(
       const msg = parseSignupMessage(event.origin, event.data);
       if (!msg) return;
       if (msg.kind === "finish") {
+        if (ids) {
+          // FINISH repetido: o mesmo é ignorado; um que contradiz o primeiro é suspeito e encerra a tentativa (nada é enviado).
+          if (ids.wabaId !== msg.wabaId || ids.phoneNumberId !== msg.phoneNumberId) settle({ status: "failed", failure: signupFailure("meta_error") });
+          return;
+        }
         ids = { wabaId: msg.wabaId, phoneNumberId: msg.phoneNumberId };
         maybeComplete();
       } else if (msg.kind === "cancel") {

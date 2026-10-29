@@ -41,6 +41,17 @@ Facebook Login for Business → Settings → Client OAuth settings: *Client OAut
 *Embedded Browser OAuth Login*, *Use Strict Mode for redirect URIs*, *Login with the JavaScript SDK* = Sim; domínio do app em
 *Allowed domains* e *Valid OAuth redirect URIs* (só HTTPS). Sem isso o FINISH não é devolvido.
 
+## Conferência 6.2 (docs oficiais, 2026-10-29)
+- **Versão do Embedded Signup ≠ `sessionInfoVersion`.** Na página *Versions* da Meta, o v4 é definido pela **configuração do Facebook Login for Business**
+  (produtos selecionados → v4) e "o objeto `extras` é propositalmente vazio para v4". `extras.version` só existe para v3 (`"3"`/`"v3"`);
+  `sessionInfoVersion: '3'` é do v2 (sessão agora é enviada em todos os fluxos). Não são a mesma coisa.
+- `extras: { setup: {} }` é exatamente o exemplo da página *Implementation* → **mantido**. `extras.version: "v4"` (do configurador) não consta como
+  valor documentado; sem `version` válida, a Meta serve v4 após a descontinuação do v2/v3 (15/10/2026). Não enviar `featureType`/`sessionInfoVersion`.
+- Eventos: `FINISH` (`phone_number_id`, `waba_id`, `business_id`, ...), `CANCEL` (`current_step`), `ERROR` (`error_message`, `error_code`, `session_id`,
+  `timestamp`). Fechar o popup na tela final conta como sucesso. Ordem entre callback do `FB.login` e `postMessage` **não é definida** → tratamos as duas ordens.
+- Endurecimento: um `FINISH` repetido é ignorado; um que contradiz os IDs do primeiro aborta a tentativa sem enviar nada.
+- Graph API v26.0 é a versão atual nos exemplos da Meta; o backend lê `WHATSAPP_GRAPH_API_VERSION` (sem default) e **não foi alterado**.
+
 ## Decisões a registrar
 - `FB.init` com `autoLogAppEvents: false` e `xfbml: false` (a documentação mostra `true`/`true` no exemplo, mas não são exigidos): evita
   enviar eventos do app à Meta e varrer a tela que tem o campo de PIN.
