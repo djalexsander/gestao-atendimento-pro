@@ -2169,7 +2169,31 @@ button {
   position: sticky;
   top: 12px;
   max-height: calc(100svh - 24px);
+  overflow: hidden;
+}
+
+/* Cabeçalho/avisos/rodapé não encolhem; só a lista (.cart-scroll) rola, então total e "Enviar pedido" ficam sempre à vista. */
+.cart-panel > * {
+  flex-shrink: 0;
+}
+
+.cart-panel > .cart-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+.cart-footer {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.cart-panel > .form-error,
+.cart-panel > .form-notice {
+  overflow-wrap: anywhere;
 }
 
 .cart-panel-head {

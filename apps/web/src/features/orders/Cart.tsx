@@ -1,3 +1,4 @@
+import { useEffect, useRef } from "react";
 import { formatReais } from "../../lib/money";
 import { ModifierLines } from "../modifiers/ModifierDialog";
 import { cartItemCount, cartItemUnitPrice, cartTotal, NOTES_MAX_LENGTH, type CartItem } from "./ordersLogic";
@@ -78,6 +79,45 @@ function CartItemRow({
   );
 }
 
+// Desktop/tablet: o painel é sticky e nasce abaixo do cabeçalho, então "100svh" fixo o deixaria passar do
+// rodapé da janela (total e botão fora de alcance até rolar a página). Limita a altura ao que cabe de
+// fato entre a posição atual dele e a base da janela; a lista interna é quem rola (.cart-scroll).
+// No celular (<768px) o painel é um bottom sheet fixo e o CSS (85svh) já basta.
+function useFitToViewport(ref: React.RefObject<HTMLDivElement | null>) {
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const mq = window.matchMedia("(min-width: 768px)");
+    let scrollParent: HTMLElement | null = el.parentElement;
+    while (scrollParent && !/(auto|scroll)/.test(getComputedStyle(scrollParent).overflowY)) scrollParent = scrollParent.parentElement;
+    const apply = () => {
+      if (!mq.matches) {
+        el.style.maxHeight = "";
+        return;
+      }
+      // Referência = início da célula do grid (onde o painel nasce), não o próprio painel: a posição dele
+      // muda com o sticky e com a altura que acabamos de definir.
+      // A área visível é a do ancestral rolável mais próximo (ex.: corpo do "Novo pedido" de Delivery) ou a janela.
+      const bounds = scrollParent?.getBoundingClientRect();
+      const viewTop = Math.max(bounds?.top ?? 0, 0);
+      const viewBottom = Math.min(bounds?.bottom ?? window.innerHeight, window.innerHeight);
+      const top = Math.max((el.parentElement ?? el).getBoundingClientRect().top, viewTop + 12);
+      el.style.maxHeight = `${Math.max(viewBottom - top - 12, 240)}px`;
+    };
+    const schedule = apply;
+    apply();
+    window.addEventListener("scroll", schedule, { passive: true, capture: true });
+    window.addEventListener("resize", schedule);
+    mq.addEventListener("change", schedule);
+    return () => {
+      window.removeEventListener("scroll", schedule, true);
+      window.removeEventListener("resize", schedule);
+      mq.removeEventListener("change", schedule);
+      el.style.maxHeight = "";
+    };
+  }, [ref]);
+}
+
 // Painel da cesta: sidebar fixa no desktop/tablet, bottom sheet no celular (CSS troca o
 // comportamento via .cart-panel/.cart-panel-open — mesmo mecanismo do drawer da sidebar
 // administrativa, em index.css). `open` só importa no celular; no desktop o painel já é visível.
@@ -117,11 +157,13 @@ export function CartPanel({
   hint?: string;
 }) {
   const total = cartTotal(cart);
+  const panelRef = useRef<HTMLDivElement>(null);
+  useFitToViewport(panelRef);
 
   return (
     <>
       <div className={`cart-scrim${open ? " cart-scrim-visible" : ""}`} onClick={onClose} aria-hidden="true" />
-      <div className={`cart-panel${open ? " cart-panel-open" : ""}`} role="region" aria-label="Cesta do pedido">
+      <div ref={panelRef} className={`cart-panel${open ? " cart-panel-open" : ""}`} role="region" aria-label="Cesta do pedido">
         <div className="cart-panel-head">
           <h3 className="cart-panel-title">Cesta</h3>
           <button className="btn-secondary btn-small cart-panel-close" type="button" onClick={onClose} aria-label="Fechar cesta">
@@ -136,28 +178,32 @@ export function CartPanel({
           <p className="cart-empty">Nenhum item na cesta ainda. Toque em um produto para adicionar.</p>
         ) : (
           <>
-            <ul className="cart-list">
-              {cart.map((item) => (
-                <CartItemRow
-                  key={item.lineId}
-                  item={item}
-                  imageUrl={item.imagePath ? (imageUrls.get(item.imagePath) ?? null) : null}
-                  onIncrement={() => onIncrement(item.lineId)}
-                  onDecrement={() => onDecrement(item.lineId)}
-                  onRemove={() => onRemove(item.lineId)}
-                  onNotesChange={(notes) => onNotesChange(item.lineId, notes)}
-                  onEdit={onEdit(item)}
-                />
-              ))}
-            </ul>
-            <div className="cart-totals">
-              <span>Total da cesta</span>
-              <span>{formatReais(total)}</span>
+            <div className="cart-scroll">
+              <ul className="cart-list">
+                {cart.map((item) => (
+                  <CartItemRow
+                    key={item.lineId}
+                    item={item}
+                    imageUrl={item.imagePath ? (imageUrls.get(item.imagePath) ?? null) : null}
+                    onIncrement={() => onIncrement(item.lineId)}
+                    onDecrement={() => onDecrement(item.lineId)}
+                    onRemove={() => onRemove(item.lineId)}
+                    onNotesChange={(notes) => onNotesChange(item.lineId, notes)}
+                    onEdit={onEdit(item)}
+                  />
+                ))}
+              </ul>
             </div>
-            <span className="field-hint">{hint}</span>
-            <button className="btn-primary" type="button" disabled={submitting} onClick={onSubmit}>
-              {submitting ? "Enviando…" : submitLabel}
-            </button>
+            <div className="cart-footer">
+              <div className="cart-totals">
+                <span>Total da cesta</span>
+                <span>{formatReais(total)}</span>
+              </div>
+              <span className="field-hint">{hint}</span>
+              <button className="btn-primary" type="button" disabled={submitting} onClick={onSubmit}>
+                {submitting ? "Enviando…" : submitLabel}
+              </button>
+            </div>
           </>
         )}
       </div>
