@@ -20,6 +20,7 @@ export function MasterLayout() {
             <NavLink to="/master/anomalias">Anomalias</NavLink>
             <NavLink to="/master/planos">Planos</NavLink>
             <NavLink to="/master/modulos">Módulos</NavLink>
+            <NavLink to="/master/whatsapp">WhatsApp</NavLink>
             <NavLink to="/master/configuracoes">Configurações</NavLink>
           </nav>
         </div>

@@ -26,6 +26,7 @@ import { MasterInvoiceDetailPage } from "./pages/MasterInvoiceDetailPage";
 import { MasterInvoicesPage } from "./pages/MasterInvoicesPage";
 import { MasterModulesPage } from "./pages/MasterModulesPage";
 import { MasterSettingsPage } from "./pages/MasterSettingsPage";
+import { MasterWhatsappPage } from "./pages/MasterWhatsappPage";
 import { MasterOverviewPage } from "./pages/MasterOverviewPage";
 import { MasterPlansPage } from "./pages/MasterPlansPage";
 import { ModulePlaceholderPage } from "./pages/ModulePlaceholderPage";
@@ -273,6 +274,7 @@ function App() {
         <Route path="anomalias" element={<MasterBillingAnomaliesPage />} />
         <Route path="planos"element={<MasterPlansPage />} />
         <Route path="modulos" element={<MasterModulesPage />} />
+        <Route path="whatsapp" element={<MasterWhatsappPage />} />
         <Route path="configuracoes" element={<MasterSettingsPage />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

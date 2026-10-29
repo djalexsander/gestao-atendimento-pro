@@ -4815,6 +4815,16 @@ button {
 .mst-dl dt { color: var(--text-muted); }
 .mst-dl dd { margin: 0; overflow-wrap: anywhere; }
 .mst-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+/* área WhatsApp do Painel Master: .btn-primary é width:100% no app; aqui os botões de ação têm largura própria */
+.wa-master .btn-primary { width: auto; }
+.wa-master .mst-table td .mst-actions { flex-wrap: nowrap; }
+.wa-master .mst-toolbar > div { min-width: 0; max-width: 100%; }
+.wa-master .mst-toolbar select { max-width: 100%; }
+.wa-master dialog.modal label { display: block; margin-top: 10px; }
+.wa-master dialog.modal select, .wa-master dialog.modal textarea { display: block; width: 100%; box-sizing: border-box; }
+@media (max-width: 480px) {
+  .wa-master .mst-kpis { grid-template-columns: minmax(0, 1fr); }
+}
 @media (max-width: 900px) {
   .mst-grid-2 { grid-template-columns: minmax(0, 1fr); }
   .mst-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }

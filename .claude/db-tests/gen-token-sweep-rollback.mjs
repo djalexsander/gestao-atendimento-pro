@@ -37,7 +37,9 @@ const sig = async (pg) => ({
   tbls: (await pg.query("select relname from pg_class where relnamespace='public'::regnamespace and relkind='r' order by 1")).rows.map((r) => r.relname),
 });
 const base = await sig(pre.pg);
-const full = await loadAll(undefined, { legacyIaMirror: false });
+const upto = fs.mkdtempSync(path.join(os.tmpdir(), "swrb-full-"));
+for (const f of fs.readdirSync(SRC)) if (f.endsWith(".sql") && f <= NEW) fs.copyFileSync(path.join(SRC, f), path.join(upto, f)); // as posteriores têm rollback próprio
+const full = await loadAll(upto, { legacyIaMirror: false });
 await full.pg.exec(`insert into companies (id,name,slug,document,email) values ('00000000-0000-4000-8000-0000000000aa','Emp RB','rb-e','11222333000181','rb@x.com');
   insert into company_whatsapp_connections (id, company_id, status, mode, phone_number_id, token_status) values ('00000000-0000-4000-8000-0000000000ab','00000000-0000-4000-8000-0000000000aa','active','live','999111','unknown');
   select public.whatsapp_token_health_sweep();`);

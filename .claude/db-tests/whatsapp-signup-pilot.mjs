@@ -144,7 +144,7 @@ const beginRaw = (co, role = "owner") => co[role]("select public.whatsapp_signup
 const setFlag = (v) => su("update whatsapp_platform_settings set embedded_signup_enabled=$1", [v]);
 const snapConn = async () => (await su("select md5(string_agg(concat_ws('|', id, company_id, status, mode, waba_id, phone_number_id, token_secret_id, token_status, connected_at), ';' order by id)) h, count(*) n from company_whatsapp_connections")).rows[0];
 const snapSecrets = async () => (await su("select md5(string_agg(concat_ws('|', id, name, secret), ';' order by id)) h, count(*) n from vault.secrets")).rows[0];
-const mset = (c, on, note = null) => M("select public.master_whatsapp_pilot_set($1, $2, $3) j", [c, on, note]);
+const mset = (c, on, note = "motivo do teste") => M("select public.master_whatsapp_pilot_set($1, $2, $3) j", [c, on, note]);
 const insertSession = (co, hex) => su("insert into whatsapp_signup_sessions (company_id, user_id, state_hash) values ($1,$2,encode(sha256(convert_to($3,'UTF8')),'hex'))", [co.c, co.ids.owner, hex]);
 
 console.log("\n== 1. estrutura e valores iniciais ==");
@@ -203,7 +203,7 @@ ck("4.4 owner não lê as tabelas diretamente (sem grant)", !(await A.owner("sel
 }
 ck("4.7 autorizar de novo é idempotente (sem novo evento)", (await mset(A.c, true)).rows[0].j.changed === false && (await events(A.c)).length === 1);
 ck("4.8 empresa inexistente / parâmetros nulos: erro", !(await mset(id(777777), true)).ok && !(await M("select public.master_whatsapp_pilot_set($1, null, null)", [A.c])).ok && !(await M("select public.master_whatsapp_pilot_set(null, true, null)")).ok);
-ck("4.9 nota é limitada a 500 caracteres", (await mset(D.c, true, "x".repeat(900))).ok && (await pilotRow(D.c)).note.length === 500);
+ck("4.9 nota acima de 500 caracteres é RECUSADA (PT400), sem gravar (Etapa 10.1)", (await mset(D.c, true, "x".repeat(900))).code === "PT400" && !(await pilotRow(D.c)) && (await mset(D.c, true, "x".repeat(500))).ok && (await pilotRow(D.c)).note.length === 500);
 {
   const list = (await M("select public.master_whatsapp_pilot_list() j")).rows[0].j;
   ck("4.10 listagem do master: só empresas da allowlist, campos mínimos, sem segredos/tokens/PINs", Array.isArray(list) && list.length === 3 && list.every((x) => ["company_id", "company_name", "authorized", "authorized_by", "authorized_at", "revoked_by", "revoked_at", "note", "connection_active"].every((k) => k in x)) && !JSON.stringify(list).match(/token|secret|pin|state/i) && !list.some((x) => x.company_id === B.c));
@@ -248,7 +248,7 @@ console.log("\n== 5. Edge: autorização verificada no backend ==");
 console.log("\n== 6. revogação ==");
 {
   const C = await mkCo("R");
-  await mset(C.c, true, "R");
+  await mset(C.c, true, "piloto R");
   const ok1 = await run(C, { state: await begin(C) });
   ck("6.0 pré-condição: empresa conectou", ok1.status === 200 && (await conns(C)).length === 1);
   await su("update company_whatsapp_connections set status='disconnected', disconnected_at=now() where company_id=$1", [C.c]);

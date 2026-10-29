@@ -39,6 +39,17 @@ dist-ssr/
 !.claude/db-tests/_acl-audit-token-sweep.mjs
 !.claude/db-tests/gen-token-sweep-rollback.mjs
 !.claude/db-tests/whatsapp-token-sweep.rollback.sql
+!.claude/db-tests/whatsapp-master-history.mjs
+!.claude/db-tests/mutate-whatsapp-master-history.mjs
+!.claude/db-tests/_acl-audit-token-history.mjs
+!.claude/db-tests/whatsapp-token-sweep-history.rollback.sql
+!.claude/db-tests/whatsapp-pilot-note.mjs
+!.claude/db-tests/mutate-whatsapp-pilot-note.mjs
+!.claude/db-tests/whatsapp-pilot-note.rollback.sql
+!.claude/db-tests/whatsapp-rollback-order.mjs
+!.claude/db-tests/_acl-audit-pilot-note.mjs
+!.claude/frontend-tests/master-whatsapp-ui.mjs
+!.claude/frontend-tests/_mutate-master-whatsapp-ui.mjs
 .env
 .env.*
 !.env.example
