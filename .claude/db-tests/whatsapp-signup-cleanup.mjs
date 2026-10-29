@@ -17,6 +17,7 @@ await su("update whatsapp_platform_settings set embedded_signup_enabled=true, me
 let seq = 300;
 async function mkCo(tag) {
   const c = (await su("insert into companies (name,slug,document,email) values ($1,$2,'11222333000181',$3) returning id", ["Emp " + tag, "cl-" + tag.toLowerCase(), `${tag.toLowerCase()}@x.com`])).rows[0].id;
+  await su("insert into whatsapp_signup_pilot_companies (company_id, authorized, authorized_at) values ($1, true, now())", [c]);
   const u = id(++seq);
   await su(`insert into auth.users (id,email) values ('${u}','o-${tag}@x.com')`);
   await su(`insert into public.profiles (user_id,email,full_name) values ('${u}','o-${tag}@x.com','o ${tag}') on conflict (user_id) do update set full_name = excluded.full_name`);

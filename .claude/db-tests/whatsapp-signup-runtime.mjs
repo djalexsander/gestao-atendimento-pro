@@ -72,7 +72,7 @@ const server = http.createServer(async (req, res) => {
       return r.ok ? send(200, r.rows[0].j) : send(400, { code: r.code ?? "P0001", message: r.err });
     }
     seen.rest.push(name);
-    const allowed = { whatsapp_platform_settings: ["embedded_signup_enabled", "meta_app_id"], company_whatsapp_connections: ["company_id", "phone_number_id", "status"] };
+    const allowed = { whatsapp_platform_settings: ["embedded_signup_enabled", "meta_app_id"], company_whatsapp_connections: ["company_id", "phone_number_id", "status"], whatsapp_signup_pilot_companies: ["company_id", "authorized"] };
     if (!allowed[name]) return send(404, { message: "tabela inesperada" });
     const where = []; const params = [];
     for (const [k, v] of url.searchParams) { if (["select", "limit", "order"].includes(k)) continue; const m = /^eq\.(.*)$/.exec(v); if (!allowed[name].includes(k) || !m) return send(400, { message: "filtro inesperado" }); params.push(m[1]); where.push(`${k} = $${params.length}`); }
@@ -134,6 +134,7 @@ let seq = 900, pn = 940000000;
 const PNID = String(++pn);
 async function mkCo(tag) {
   const c = (await su("insert into companies (name,slug,document,email) values ($1,$2,'11222333000181',$3) returning id", ["Emp " + tag, "rt-" + tag.toLowerCase(), `${tag.toLowerCase()}@x.com`])).rows[0].id;
+  await su("insert into whatsapp_signup_pilot_companies (company_id, authorized, authorized_at) values ($1, true, now())", [c]);
   const out = { c, ids: {} };
   for (const role of ["owner", "attendant"]) {
     const u = id(++seq);
@@ -169,7 +170,7 @@ ck("2.6 fluxo completo pelo index.ts real: 200 {ok, active, test}", ok.status ==
 const conn = (await su("select * from company_whatsapp_connections where company_id=$1", [A.c])).rows[0];
 ck("2.7 conexão criada na empresa da sessão (RPCs e leituras via PostgREST com service_role), token só no Vault", conn?.status === "active" && conn.phone_number_id === PNID && conn.connection_source === "embedded_signup"
   && (await su("select secret from vault.secrets where id=$1", [conn.token_secret_id])).rows[0].secret === TOKEN);
-ck("2.8 RPCs chamadas, na ordem do fluxo, e leituras só nas duas tabelas esperadas", seen.rpc.join(",") === "whatsapp_signup_reserve,whatsapp_registration_prepare,whatsapp_signup_store_token,whatsapp_registration_store_pin,whatsapp_registration_begin_attempt,whatsapp_registration_finish_attempt,whatsapp_signup_complete,whatsapp_registration_link" && seen.rest.every((t) => ["whatsapp_platform_settings", "company_whatsapp_connections"].includes(t)) && seen.rest.includes("whatsapp_platform_settings"), seen.rpc.join(",") + " | " + seen.rest.join(","));
+ck("2.8 RPCs chamadas, na ordem do fluxo, e leituras só nas tabelas esperadas (inclui a allowlist, três vezes: antes da Meta, antes do registro e antes de assinar o webhook)", seen.rpc.join(",") === "whatsapp_signup_reserve,whatsapp_registration_prepare,whatsapp_signup_store_token,whatsapp_registration_store_pin,whatsapp_registration_begin_attempt,whatsapp_registration_finish_attempt,whatsapp_signup_complete,whatsapp_registration_link" && seen.rest.every((t) => ["whatsapp_platform_settings", "company_whatsapp_connections", "whatsapp_signup_pilot_companies"].includes(t)) && seen.rest.includes("whatsapp_platform_settings") && seen.rest.filter((t) => t === "whatsapp_signup_pilot_companies").length === 3, seen.rpc.join(",") + " | " + seen.rest.join(","));
 const paths = metaCalls.map((c) => `${c.method} ${c.path.replace(/\/[0-9]{5,}\//, "/{id}/")}`);
 ck("2.9 Meta simulada recebeu, em ordem: troca, números da WABA, registro, assinatura, conferência — todas em /v99.0", metaCalls.length === 5 && metaCalls.every((c) => c.path.startsWith("/v99.0/"))
   && /oauth\/access_token$/.test(metaCalls[0].path) && /phone_numbers$/.test(metaCalls[1].path) && /register$/.test(metaCalls[2].path) && metaCalls[3].method === "POST" && /subscribed_apps$/.test(metaCalls[3].path) && metaCalls[4].method === "GET", paths.join(" | "));

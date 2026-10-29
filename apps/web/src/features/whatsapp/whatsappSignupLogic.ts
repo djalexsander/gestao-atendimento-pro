@@ -2,7 +2,7 @@
 // O servidor decide de verdade (RPC whatsapp_signup_begin + Edge whatsapp-signup-complete); aqui só se decide o que MOSTRAR e como
 // interpretar o que o navegador recebe. Nada que venha do navegador (postMessage, IDs) é prova de nada: o backend revalida tudo.
 import type { ModuleState } from "./whatsappModulesLogic";
-import { SIGNUP_UNAVAILABLE_TEXT } from "./whatsappModulesLogic";
+import { SIGNUP_NOT_AUTHORIZED_TEXT, SIGNUP_UNAVAILABLE_TEXT } from "./whatsappModulesLogic";
 
 /** SDK oficial (documentação do Embedded Signup v4 / Facebook Login for Business). */
 export const FACEBOOK_SDK_URL = "https://connect.facebook.net/en_US/sdk.js";
@@ -35,7 +35,10 @@ export function connectCard(state: Pick<ModuleState, "whatsapp" | "canManage" | 
   const visible = state.canManage && state.whatsapp && !state.connectionActive;
   if (!visible) return { visible: false, enabled: false, hint: null };
   if (desktop) return { visible: true, enabled: false, hint: DESKTOP_UNSUPPORTED_TEXT };
-  if (!state.signup.available) return { visible: true, enabled: false, hint: SIGNUP_UNAVAILABLE_TEXT };
+  if (!state.signup.available) {
+    // empresa fora do piloto: botão desabilitado, mensagem própria e o SDK da Meta nunca é carregado (só carrega após o clique)
+    return { visible: true, enabled: false, hint: state.signup.reason === "company_not_authorized" ? SIGNUP_NOT_AUTHORIZED_TEXT : SIGNUP_UNAVAILABLE_TEXT };
+  }
   return { visible: true, enabled: true, hint: null };
 }
 
@@ -122,6 +125,7 @@ export function parseSignupMessage(origin: unknown, data: unknown): SignupMessag
 // ---------------------------------------------------------------------------------------------------------------------
 export type SignupFailureKind =
   | "unavailable"
+  | "not_authorized"
   | "forbidden"
   | "session_invalid"
   | "state_invalid"
@@ -157,6 +161,7 @@ const F = (kind: SignupFailureKind, message: string, canRetry = true, pinNeeded 
 
 export const SIGNUP_TEXT = {
   unavailable: SIGNUP_UNAVAILABLE_TEXT,
+  notAuthorized: SIGNUP_NOT_AUTHORIZED_TEXT,
   forbidden: "Você não tem permissão para conectar o WhatsApp desta empresa.",
   sessionInvalid: "Sua sessão expirou. Entre novamente e tente de novo.",
   stateInvalid: "A sessão de conexão é inválida. Inicie a conexão novamente.",
@@ -201,6 +206,7 @@ export function mapCompleteFailure(status: number | null, code: string | null | 
     case "registration_blocked": case "attempts_exhausted": return F("blocked", SIGNUP_TEXT.blocked, false);
     case "registration_uncertain": case "registration_in_progress": return F("uncertain", SIGNUP_TEXT.uncertain, false);
     case "user_mismatch": return F("forbidden", SIGNUP_TEXT.forbidden, false);
+    case "company_not_authorized": return F("not_authorized", SIGNUP_TEXT.notAuthorized, false);
     case "meta_code_exchange": return status !== null && status >= 500 ? F("meta_unreachable", SIGNUP_TEXT.metaUnreachable) : F("meta_authorization", SIGNUP_TEXT.metaAuthorization);
     case "meta_waba_lookup": case "phone_not_in_waba": return status !== null && status >= 500 ? F("meta_unreachable", SIGNUP_TEXT.metaUnreachable) : F("meta_account", SIGNUP_TEXT.metaAccount);
     case "meta_register_failed": case "meta_subscribe_failed": case "meta_subscribe_unverified": return F("meta_failed", SIGNUP_TEXT.metaFailed);

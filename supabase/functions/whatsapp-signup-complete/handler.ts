@@ -37,6 +37,8 @@ export interface SignupDeps {
   platform(): Promise<{ enabled: boolean; appId: string | null } | null>;
   findPhoneOwner(phoneNumberId: string): Promise<{ companyId: string } | null>;
   findActiveConnection(companyId: string): Promise<{ phoneNumberId: string | null } | null>;
+  /** service_role: a empresa está na allowlist do piloto? (leitura direta, independente do RPC; null/erro = falha fechada). */
+  pilotAuthorized(companyId: string): Promise<boolean | null>;
   meta: SignupMeta;
   /** WHATSAPP_GRAPH_API_VERSION (mesmo secret do envio; sem default). */
   graphVersion: string | undefined;
@@ -76,6 +78,7 @@ const SESSION_ERRORS: Record<string, [number, string]> = {
   cancelled: [410, "Esta sessão de conexão foi substituída por outra. Inicie novamente."],
   already_used: [409, "Esta sessão de conexão já foi utilizada."],
   unauthorized: [403, "Você não tem permissão para conectar o WhatsApp desta empresa."],
+  company_not_authorized: [403, "Sua empresa ainda não foi liberada para a conexão automática do WhatsApp."],
 };
 
 export async function handleWhatsappSignupComplete(req: Request, deps: SignupDeps): Promise<Response> {
@@ -137,7 +140,7 @@ export async function handleWhatsappSignupComplete(req: Request, deps: SignupDep
   }
   if (reserved.data.ok !== true) {
     const [status, message] = SESSION_ERRORS[String(reserved.data.error)] ?? [400, GENERIC];
-    return json({ error: message }, status);
+    return json(reserved.data.error === "company_not_authorized" ? { error: message, code: "company_not_authorized" } : { error: message }, status);
   }
   const sessionId = String(reserved.data.session_id);
   const companyId = String(reserved.data.company_id);
@@ -155,6 +158,12 @@ export async function handleWhatsappSignupComplete(req: Request, deps: SignupDep
   // a sessão pertence a quem a criou
   if (String(reserved.data.user_id) !== auth.userId) {
     return abort("session_owner", "user_mismatch", 403, SESSION_ERRORS.unauthorized[1]);
+  }
+
+  // piloto: a allowlist é conferida no banco (reserve) e AQUI de novo, antes de qualquer chamada à Meta
+  const pilotOk = await deps.pilotAuthorized(companyId).catch(() => null);
+  if (pilotOk !== true) {
+    return abort("pilot_gate", "company_not_authorized", 403, SESSION_ERRORS.company_not_authorized[1]);
   }
 
   // 2) trocar o code (vale ~30 s; nada de logar o code)
@@ -230,6 +239,11 @@ export async function handleWhatsappSignupComplete(req: Request, deps: SignupDep
       if (!already && (sp.error || !isObj(sp.data) || sp.data.ok !== true)) return abort("pin_store", "pin_store_failed", 500, GENERIC, { rpc_code: sp.error?.code ?? null });
     }
 
+    // revogação no meio do caminho: confere a allowlist de novo antes do único efeito irreversível na Meta (registrar o número)
+    if ((await deps.pilotAuthorized(companyId).catch(() => null)) !== true) {
+      return abort("pilot_gate", "company_not_authorized", 403, SESSION_ERRORS.company_not_authorized[1]);
+    }
+
     // 6b) UMA tentativa auditada e limitada (3 por número em 72 h); devolve o PIN do Vault para ESTA chamada. Nada é repetido sozinho.
     const ba = await rpc(deps, "whatsapp_registration_begin_attempt", { p_session_id: sessionId, p_registration_id: registrationId });
     if (ba.error || !isObj(ba.data)) return abort("registration_attempt", "registration_attempt_failed", 500, GENERIC, { rpc_code: ba.error?.code ?? null });
@@ -269,8 +283,14 @@ export async function handleWhatsappSignupComplete(req: Request, deps: SignupDep
     registeredAt = (deps.now?.() ?? new Date()).toISOString();
   }
 
+  // revogação enquanto a Meta respondia ao registro: o resultado do registro JÁ foi gravado (estado recuperável: 'registered'/'uncertain',
+  // com o PIN preservado) e a conexão NÃO é ativada; não há mais nenhum efeito na Meta (nada de assinar o webhook) nem nova tentativa.
+  if ((await deps.pilotAuthorized(companyId).catch(() => null)) !== true) {
+    return abort("pilot_gate", "company_not_authorized", 403, SESSION_ERRORS.company_not_authorized[1]);
+  }
+
   // 7) assinar o app na WABA do cliente e conferir (idempotente na Meta)
-  const sub = await deps.meta.subscribeApp({ version, wabaId, token });
+  const sub =await deps.meta.subscribeApp({ version, wabaId, token });
   if (!sub.ok) return abort("subscribe", "meta_subscribe_failed", metaStatus(sub), "Não foi possível ativar o recebimento de mensagens na Meta. Tente novamente.", metaDetail(sub));
   const apps = await deps.meta.listSubscribedAppIds({ version, wabaId, token });
   if (!apps.ok || !apps.appIds.includes(appId)) {

@@ -49,6 +49,7 @@ const TOKEN = "EAAB-TOKEN-SECRETO-DE-TESTE-0001";
 let seq = 100, pn = 810000000;
 async function mkCo(tag, { wa = true } = {}) {
   const c = (await su("insert into companies (name,slug,document,email) values ($1,$2,'11222333000181',$3) returning id", ["Emp " + tag, "sg-" + tag.toLowerCase(), `${tag.toLowerCase()}@x.com`])).rows[0].id;
+  await su("insert into whatsapp_signup_pilot_companies (company_id, authorized, authorized_at) values ($1, true, now())", [c]);
   const out = { c, ids: {} };
   for (const role of ["owner", "admin", "attendant", "cashier"]) {
     const u = id(++seq);
@@ -93,7 +94,7 @@ const after = new Set((await pg.query(inv)).rows.map((r) => r.k));
 const missing = [...baseline].filter((k) => !after.has(k));
 ck("1.1 todo objeto pré-existente (colunas, índices, constraints, políticas, funções, triggers) continua", missing.length === 0, missing.join(", "));
 const added = [...after].filter((k) => !baseline.has(k));
-ck("1.2 o que foi criado é só da migration nova (nada inesperado)", added.every((k) => /signup|registration|pin_reveal|connection_set_health|connections|connection_(source|type)|meta_business|token_|registered_at|webhook_subscribed|last_error/.test(k)), added.join(", "));
+ck("1.2 o que foi criado é só da migration nova (nada inesperado)", added.every((k) => /signup|registration|pin_reveal|pilot|connection_set_health|connections|connection_(source|type)|meta_business|token_|registered_at|webhook_subscribed|last_error/.test(k)), added.join(", "));
 
 console.log("\n== 2. conexões antigas: defaults seguros ==");
 const old = await mkConn(A, { mode: "live" });
@@ -394,6 +395,7 @@ const snap = async () => JSON.stringify((await su(`select c.id, c.company_id, c.
   from company_whatsapp_connections c order by c.id`)).rows);
 const msgs = async () => Number((await su("select (select count(*) from whatsapp_messages) + (select count(*) from whatsapp_conversations) n")).rows[0].n);
 const snapBefore = await snap(), msgsBefore = await msgs();
+await pg.exec(fs.readFileSync("D:/orça facil/.claude/db-tests/whatsapp-signup-pilot.rollback.sql", "utf8")); // desfaz 1107 (allowlist do piloto)
 await pg.exec(fs.readFileSync("D:/orça facil/.claude/db-tests/whatsapp-registration-pin.rollback.sql", "utf8")); // desfaz 1106 (a 1104 não é desfeita antes)
 await pg.exec(fs.readFileSync("D:/orça facil/.claude/db-tests/whatsapp-signup-foundation.rollback.sql", "utf8"));
 ck("15.1 rollback preserva todas as conexões (colunas originais idênticas) e mensagens", (await snap()) === snapBefore && (await msgs()) === msgsBefore);

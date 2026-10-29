@@ -50,6 +50,10 @@ for (const [name, from, to, from2, to2] of M.filter(Boolean)) {
   const NEXT3 = "20261106010000_whatsapp_registration_pin.sql";
   const next3 = fs.readFileSync(path.join(SRC, NEXT3), "utf8");
   fs.writeFileSync(path.join(dir, NEXT3), next3.includes(from) ? next3.split(from).join(to) : next3);
+  // 20261107010000 redefine begin/reserve/complete: a mutação vale também na cópia posterior
+  const NEXT4 = "20261107010000_whatsapp_signup_pilot_allowlist.sql";
+  const next4 = fs.readFileSync(path.join(SRC, NEXT4), "utf8");
+  fs.writeFileSync(path.join(dir, NEXT4), next4.includes(from) ? next4.split(from).join(to) : next4);
   let out = "";
   try { out = execFileSync("node", [process.env.TEST_FILE ?? "whatsapp-signup-foundation.mjs"], { cwd: path.dirname(fileURLToPath(import.meta.url)), env: { ...process.env, MIG_DIR: dir }, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 600000 }); }
   catch (e) { out = (e.stdout ?? "") + (e.stderr ?? ""); }

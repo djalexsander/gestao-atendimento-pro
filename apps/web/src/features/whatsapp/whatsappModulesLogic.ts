@@ -76,6 +76,9 @@ export const WHATSAPP_NOT_CONTRACTED_TEXT = "O módulo WhatsApp ainda não está
 export const SIGNUP_UNAVAILABLE_TEXT =
   "A conexão automática pela Meta (Cadastro Integrado) ainda depende de aprovação da Meta e não está liberada. Enquanto isso, o número é conectado pela equipe da Alex Pro Apps.";
 
+export const SIGNUP_NOT_AUTHORIZED_TEXT =
+  "A conexão automática pela Meta ainda não foi liberada para a sua empresa. Fale com a equipe da Alex Pro Apps para participar do piloto; enquanto isso, o número é conectado por eles.";
+
 /** Palavra que o usuário digita para confirmar a desconexão (o banco confere de novo). */
 export const DISCONNECT_CONFIRM_WORD = "DESCONECTAR";
 export const DISCONNECT_WARNING =

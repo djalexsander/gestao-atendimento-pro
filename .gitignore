@@ -22,6 +22,11 @@ dist-ssr/
 !.claude/frontend-tests/whatsapp-signup-ui.mjs
 !.claude/db-tests/mutate-whatsapp-registration-pin.mjs
 !.claude/db-tests/whatsapp-registration-pin.rollback.sql
+!.claude/db-tests/whatsapp-signup-pilot.mjs
+!.claude/db-tests/mutate-whatsapp-signup-pilot.mjs
+!.claude/db-tests/whatsapp-signup-pilot.rollback.sql
+!.claude/db-tests/gen-pilot-rollback.mjs
+!.claude/db-tests/_acl-audit-pilot.mjs
 .env
 .env.*
 !.env.example

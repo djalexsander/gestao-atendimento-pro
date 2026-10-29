@@ -47,6 +47,11 @@ Deno.serve((req: Request) =>
       if (error) throw new Error("lookup");
       return data && data.length ? { phoneNumberId: data[0].phone_number_id ?? null } : null;
     },
+    pilotAuthorized: async (companyId: string) => {
+      const { data, error } = await admin.from("whatsapp_signup_pilot_companies").select("authorized").eq("company_id", companyId).maybeSingle();
+      if (error) return null;
+      return data?.authorized === true;
+    },
     meta,
     graphVersion: Deno.env.get("WHATSAPP_GRAPH_API_VERSION"),
     appSecret: Deno.env.get("WHATSAPP_APP_SECRET"),

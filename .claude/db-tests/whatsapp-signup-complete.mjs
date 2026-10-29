@@ -47,6 +47,7 @@ await su("update whatsapp_platform_settings set embedded_signup_enabled=true, me
 let seq = 700, pn = 920000000;
 async function mkCo(tag, { wa = true } = {}) {
   const c = (await su("insert into companies (name,slug,document,email) values ($1,$2,'11222333000181',$3) returning id", ["Emp " + tag, "sc-" + tag.toLowerCase() + "-" + (++seq), `${tag.toLowerCase()}${seq}@x.com`])).rows[0].id;
+  await su("insert into whatsapp_signup_pilot_companies (company_id, authorized, authorized_at) values ($1, true, now())", [c]);
   const out = { c, ids: {}, pnid: String(++pn) };
   for (const role of ["owner", "admin", "attendant"]) {
     const u = id(++seq);
@@ -65,7 +66,7 @@ const PINS_TEXT_HIT = (t) => [...PINS].some((p) => new RegExp(`(?<![0-9])${p}(?!
 const conns = async (co) => (await su("select * from company_whatsapp_connections where company_id=$1 order by created_at", [co.c])).rows;
 const sessOf = async (co) => (await su("select * from whatsapp_signup_sessions where company_id=$1 order by created_at desc limit 1", [co.c])).rows[0];
 const sessByState = async (state) => (await su("select * from whatsapp_signup_sessions where state_hash = encode(sha256(convert_to($1,'UTF8')),'hex')", [state])).rows[0];
-const begin = async (co, role = "owner") => (await su("delete from whatsapp_signup_sessions where company_id=$1 and status in ('completed','failed','expired','cancelled')", [co.c]), await co[role]("select public.whatsapp_signup_begin($1) j", [co.c])).rows[0].j.state;
+const begin = async (co, role = "owner") => (await su("delete from whatsapp_signup_sessions where company_id=$1 and status in ('completed','failed','expired','cancelled') and token_secret_id is null", [co.c]), await co[role]("select public.whatsapp_signup_begin($1) j", [co.c])).rows[0].j.state;
 
 // ---------------------------------------------------------------- Meta simulada
 const TOKEN_OF = (code) => `EAAB-BIZ-TOKEN-${code}-0123456789`;
@@ -116,6 +117,7 @@ async function run(co, o = {}) {
     platform: async () => { const r = (await su("select embedded_signup_enabled e, meta_app_id a from whatsapp_platform_settings")).rows[0]; return { enabled: r.e, appId: r.a }; },
     findPhoneOwner: async (p) => { const r = (await su("select company_id from company_whatsapp_connections where phone_number_id=$1 limit 1", [p])).rows[0]; return r ? { companyId: r.company_id } : null; },
     findActiveConnection: async (c) => { const r = (await su("select phone_number_id from company_whatsapp_connections where company_id=$1 and status='active' limit 1", [c])).rows[0]; return r ? { phoneNumberId: r.phone_number_id } : null; },
+    pilotAuthorized: async (c) => { const r = (await su("select authorized from whatsapp_signup_pilot_companies where company_id=$1", [c])).rows[0]; return r ? r.authorized === true : false; },
     meta, graphVersion: "graphVersion" in o ? o.graphVersion : VERSION, appSecret: "appSecret" in o ? o.appSecret : APP_SECRET,
     ...(o.deps ?? {}),
   };
@@ -611,10 +613,10 @@ console.log("\n== 9. vazamento e estado final ==");
     + (select count(*) from company_whatsapp_connections c where c::text like '%EAAB-BIZ-TOKEN%')
     + (select count(*) from whatsapp_webhook_events e where e::text like '%EAAB-BIZ-TOKEN%') n`)).rows[0].n;
   ck("9.2 token e code não aparecem em sessões, conexões nem eventos (só no Vault)", Number(leaks) === 0);
-  const left = Number((await su("select count(*) n from whatsapp_signup_sessions s where s.status = 'failed' and s.token_secret_id is not null")).rows[0].n);
-  ck("9.3 nenhuma sessão failed guarda referência de segredo", left === 0);
+  const left = Number((await su("select count(*) n from whatsapp_signup_sessions s where s.status = 'failed' and s.token_secret_id is not null and not public.whatsapp_signup_external_op_open(s.id)")).rows[0].n);
+  ck("9.3 nenhuma sessão failed guarda referência de segredo (exceto token preservado por registro incerto/em curso)", left === 0);
   const orphans = Number((await su(`select count(*) n from vault.secrets v where v.name like 'wa_token_signup_%' and not exists (select 1 from company_whatsapp_connections c where c.token_secret_id = v.id)
-     and not exists (select 1 from whatsapp_signup_sessions s where s.token_secret_id = v.id and s.status = 'reserved')`)).rows[0].n);
+     and not exists (select 1 from whatsapp_signup_sessions s where s.token_secret_id = v.id and (s.status = 'reserved' or public.whatsapp_signup_external_op_open(s.id)))`)).rows[0].n);
   ck("9.4 nenhum segredo de signup órfão no Vault ao final", orphans === 0, orphans);
 }
 fs.rmSync(tmp, { recursive: true, force: true });

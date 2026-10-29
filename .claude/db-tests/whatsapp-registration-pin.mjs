@@ -19,6 +19,7 @@ await su("update whatsapp_platform_settings set embedded_signup_enabled=true, me
 let seq = 1200, pn = 950000000;
 async function mkCo(tag, { wa = true } = {}) {
   const c = (await su("insert into companies (name,slug,document,email) values ($1,$2,'11222333000181',$3) returning id", ["Emp " + tag, "pn-" + tag.toLowerCase(), `${tag.toLowerCase()}@x.com`])).rows[0].id;
+  await su("insert into whatsapp_signup_pilot_companies (company_id, authorized, authorized_at) values ($1, true, now())", [c]);
   const out = { c, ids: {}, pnid: String(++pn) };
   for (const role of ["owner", "admin", "attendant"]) {
     const u = id(++seq);

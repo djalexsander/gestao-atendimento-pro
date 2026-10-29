@@ -47,6 +47,10 @@ ck("1.2 sem permissão de gerenciar (atendente/caixa): invisível", L.connectCar
 ck("1.3 módulo WhatsApp não contratado: invisível", L.connectCard({ ...MODSTATE, whatsapp: false }).visible === false);
 ck("1.4 empresa já conectada (conexão ativa): invisível", L.connectCard({ ...MODSTATE, connectionActive: true }).visible === false);
 ck("1.5 flag desligada: visível porém INDISPONÍVEL, com a explicação amigável", (() => { const c = L.connectCard({ ...MODSTATE, signup: { available: false, reason: "pending_meta_approval" } }); return c.visible && !c.enabled && /aprovação da Meta/.test(c.hint); })());
+ck("1.5b empresa FORA do piloto (flag ligada, não autorizada): visível porém desabilitada, com mensagem própria de empresa não liberada", (() => { const c = L.connectCard({ ...MODSTATE, signup: { available: false, reason: "company_not_authorized" } }); return c.visible && !c.enabled && /ainda não foi liberada para a sua empresa/.test(c.hint) && !/aprovação da Meta/.test(c.hint); })());
+ck("1.5c empresa fora do piloto sem permissão/módulo/ou já conectada continua invisível (a allowlist não mostra nada a quem não deve ver)", [{ canManage: false }, { whatsapp: false }, { connectionActive: true }].every((p) => L.connectCard({ ...MODSTATE, ...p, signup: { available: false, reason: "company_not_authorized" } }).visible === false));
+ck("1.5d autorizada + flag ligada continua habilitada", L.connectCard({ ...MODSTATE, signup: { available: true, reason: null } }).enabled === true);
+ck("1.5e mapCompleteFailure('company_not_authorized'): mensagem de empresa não liberada, sem nova tentativa nem PIN", (() => { const f = L.mapCompleteFailure(403, "company_not_authorized"); return f.kind === "not_authorized" && f.canRetry === false && f.pinNeeded === false && /não foi liberada/.test(f.message); })());
 ck("1.6 app Desktop (Tauri): indisponível com orientação para usar o navegador", (() => { const c = L.connectCard(MODSTATE, true); return c.visible && !c.enabled && /navegador/.test(c.hint); })());
 ck("1.7 empresa com conexão antiga DESCONECTADA pode reconectar", L.connectCard({ ...MODSTATE, connectionActive: false }).visible === true);
 
@@ -256,6 +260,8 @@ console.log("\n== 7. painel renderizado (react-dom/server) ==");
   ck("7.1 habilitado: botão 'Conectar meu WhatsApp' sem disabled e sem modal aberto", /Conectar meu WhatsApp/.test(on) && !/disabled/.test(on) && !/<dialog/.test(on));
   const off = render(L.connectCard({ ...MODSTATE, signup: { available: false, reason: "pending_meta_approval" } }));
   ck("7.2 flag desligada: botão desabilitado e mensagem amigável visível", /disabled/.test(off) && /aprovação da Meta/.test(off));
+  const notAuth = render(L.connectCard({ ...MODSTATE, signup: { available: false, reason: "company_not_authorized" } }));
+  ck("7.2b empresa fora do piloto: botão desabilitado + mensagem própria; renderizar não cria deps nem carrega o SDK", /disabled/.test(notAuth) && /ainda não foi liberada para a sua empresa/.test(notAuth) && !/aprovação da Meta/.test(notAuth));
   ck("7.3 invisível (sem permissão / módulo / já conectado): nada é renderizado", render(L.connectCard({ ...MODSTATE, canManage: false })) === "" && render(L.connectCard({ ...MODSTATE, whatsapp: false })) === "" && render(L.connectCard({ ...MODSTATE, connectionActive: true })) === "");
   ck("7.4 Desktop: desabilitado com orientação", /disabled/.test(render(L.connectCard(MODSTATE, true))) && /navegador/.test(render(L.connectCard(MODSTATE, true))));
 }
