@@ -102,7 +102,17 @@ function useFitToViewport(ref: React.RefObject<HTMLDivElement | null>) {
       const viewTop = Math.max(bounds?.top ?? 0, 0);
       const viewBottom = Math.min(bounds?.bottom ?? window.innerHeight, window.innerHeight);
       const top = Math.max((el.parentElement ?? el).getBoundingClientRect().top, viewTop + 12);
-      el.style.maxHeight = `${Math.max(viewBottom - top - 12, 240)}px`;
+      // Um sticky não passa do fim da célula do grid: ao rolar até o fim do catálogo, um painel mais alto que o
+      // espaço restante seria empurrado para cima e perderia o cabeçalho. Por isso o limite inferior também é o
+      // fim do conteúdo ao lado (catálogo), ignorando o próprio painel para não criar realimentação.
+      let contentBottom = Infinity;
+      for (const sibling of Array.from(el.parentElement?.children ?? [])) {
+        if (sibling === el) continue;
+        const r = sibling.getBoundingClientRect();
+        if (r.height > 0) contentBottom = Math.max(contentBottom === Infinity ? -Infinity : contentBottom, r.bottom);
+      }
+      const limit = Math.min(viewBottom - 12, contentBottom);
+      el.style.maxHeight = `${Math.max(limit - top, 240)}px`;
     };
     const schedule = apply;
     apply();

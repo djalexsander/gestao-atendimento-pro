@@ -30,6 +30,7 @@ export function OpenSessionDialog({
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const openedAt = useRef(0);
+  const inFlight = useRef(false);
 
   useEffect(() => {
     openedAt.current = Date.now();
@@ -38,11 +39,17 @@ export function OpenSessionDialog({
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
     if (Date.now() - openedAt.current < IGNORE_SUBMIT_MS) return;
+    if (inFlight.current) return; // Enter/clique repetido: uma única abertura por vez
+    inFlight.current = true;
     setError(null);
     setSubmitting(true);
-    const problem = await onSubmit(customer.trim() || null, selected?.id ?? null);
-    setSubmitting(false);
-    if (problem) setError(problem);
+    try {
+      const problem = await onSubmit(customer.trim() || null, selected?.id ?? null);
+      if (problem) setError(problem);
+    } finally {
+      inFlight.current = false;
+      setSubmitting(false);
+    }
   }
 
   return (

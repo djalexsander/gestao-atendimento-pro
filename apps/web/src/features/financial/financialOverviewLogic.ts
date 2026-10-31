@@ -296,6 +296,20 @@ export function buildSalesSeries(rows: ClosedSessionRow[], period: ReportPeriod)
   return { granularity, points, maxCents: points.reduce((m, p) => Math.max(m, p.cents), 0) };
 }
 
+// De quantas em quantas barras mostrar o rótulo do eixo X para que não se sobreponham, dada a largura
+// real do gráfico. Só decide a legenda: nenhuma barra/valor é removido.
+export function labelStride(pointCount: number, chartWidthPx: number, labelWidthPx: number): number {
+  if (pointCount <= 1 || chartWidthPx <= 0) return 1;
+  const slot = chartWidthPx / pointCount;
+  return Math.max(1, Math.ceil(labelWidthPx / slot));
+}
+
+// Rótulo completo para o tooltip: "04/10/2026" (dia) ou "14h às 15h" (hora).
+export function pointFullLabel(granularity: SalesSeries["granularity"], point: SeriesPoint): string {
+  if (granularity === "hour") return `${point.key}h às ${(Number(point.key) + 1) % 24}h`;
+  return `${point.key.slice(8, 10)}/${point.key.slice(5, 7)}/${point.key.slice(0, 4)}`;
+}
+
 // --- Modelo da tela -----------------------------------------------------------------------------
 
 export interface Delta {

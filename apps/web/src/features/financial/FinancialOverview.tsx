@@ -12,6 +12,8 @@ import {
   FINANCIAL_PRESETS,
   financialPeriod,
   financialPeriodProblem,
+  labelStride,
+  pointFullLabel,
   type Delta,
   type FinancialOverviewModel,
   type FinancialPeriodKey,
@@ -74,23 +76,61 @@ function Skeleton() {
 
 export function SalesChart({ model }: { model: FinancialOverviewModel }) {
   const { series } = model;
-  const dense = series.points.length > 31;
+  const chartRef = useRef<HTMLDivElement>(null);
+  const [width, setWidth] = useState(0);
+  const [active, setActive] = useState<number | null>(null);
+  const hasChart = series.maxCents > 0;
+  useEffect(() => {
+    const el = chartRef.current;
+    if (!el) return;
+    setWidth(el.clientWidth);
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => setWidth(el.clientWidth));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [hasChart]);
+  const stride = labelStride(series.points.length, width, series.granularity === "hour" ? 28 : 44);
+  const activePoint = active !== null ? series.points[active] : undefined;
   return (
     <section className="fin-card">
       <h3>{series.granularity === "hour" ? "Vendas por hora" : "Vendas por dia"}</h3>
       {series.maxCents === 0 ? (
         <p className="muted">Sem vendas para exibir neste período.</p>
       ) : (
-        <div className="fin-chart" role="img" aria-label={series.granularity === "hour" ? "Gráfico de vendas por hora" : "Gráfico de vendas por dia"}>
-          {series.points.map((p, i) => (
-            <div key={p.key} className="fin-bar-col" title={`${p.label}: ${formatCents(p.cents)}`}>
-              <div className="fin-bar-track">
-                <div className="fin-bar" style={{ height: `${Math.max(p.cents > 0 ? 3 : 0, (p.cents / series.maxCents) * 100)}%` }} />
+        <>
+          <div className="fin-chart-tip" aria-live="polite">
+            {activePoint ? (
+              <>
+                <strong>{pointFullLabel(series.granularity, activePoint)}</strong>
+                <span>Faturamento: {formatCents(activePoint.cents)}</span>
+              </>
+            ) : (
+              <span className="muted">Toque ou passe o mouse sobre uma barra para ver o valor.</span>
+            )}
+          </div>
+          <div
+            ref={chartRef}
+            className="fin-chart"
+            role="img"
+            aria-label={series.granularity === "hour" ? "Gráfico de vendas por hora" : "Gráfico de vendas por dia"}
+            onMouseLeave={() => setActive(null)}
+          >
+            {series.points.map((p, i) => (
+              <div
+                key={p.key}
+                className={active === i ? "fin-bar-col fin-bar-col-active" : "fin-bar-col"}
+                title={`${pointFullLabel(series.granularity, p)}: ${formatCents(p.cents)}`}
+                onMouseEnter={() => setActive(i)}
+                onClick={() => setActive(i)}
+              >
+                <div className="fin-bar-track">
+                  <div className="fin-bar" style={{ height: `${Math.max(p.cents > 0 ? 3 : 0, (p.cents / series.maxCents) * 100)}%` }} />
+                </div>
+                {i % stride === 0 && <span className="fin-bar-label">{p.label}</span>}
               </div>
-              {(!dense ? true : i % 7 === 0) && (series.granularity === "day" || i % 3 === 0) && <span className="fin-bar-label">{p.label}</span>}
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        </>
       )}
       {model.seriesPartial && <p className="field-hint">Período com muitas contas: o gráfico mostra apenas parte delas.</p>}
     </section>

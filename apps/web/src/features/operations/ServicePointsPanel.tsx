@@ -326,26 +326,32 @@ export function ServicePointsPanel({
     openPoint(target);
   }
 
-  // Abre o atendimento e já mostra o cartão em atendimento (o backend grava quem abriu); a
-  // recarga em seguida acerta qualquer diferença com o que está no banco.
+  // Abre o atendimento e, só depois do banco confirmar, vai direto para a tela do pedido (a mesma de
+  // clicar numa comanda em atendimento). O cartão já fica em atendimento no cache local, para a lista
+  // estar certa quando o usuário voltar. Em falha, devolve o erro e o diálogo permanece aberto.
+  const opening = useRef(false);
   async function submitOpen(point: ServicePoint, customer: string | null, customerId: string | null): Promise<string | null> {
-    const result = await source.open(point.id, customer, customerId);
-    if (result.error || !result.session) {
-      if (result.conflict) void reload();
-      return result.error ?? "Não foi possível abrir o atendimento.";
+    if (opening.current) return null; // clique/Enter repetido enquanto a abertura está em andamento
+    opening.current = true;
+    try {
+      const result = await source.open(point.id, customer, customerId);
+      if (result.error || !result.session) {
+        if (result.conflict) void reload();
+        return result.error ?? "Não foi possível abrir o atendimento.";
+      }
+      const session: OpenSession = { ...result.session, opened_by_name: result.session.opened_by_name ?? myName };
+      setData((prev) =>
+        prev && {
+          ...prev,
+          points: prev.points.map((p) => (p.id === point.id ? { ...p, open_session: session } : p)),
+        },
+      );
+      setDialog(null);
+      navigate(`${OPERATIONAL_PATH[area]}/${session.id}`);
+      return null;
+    } finally {
+      opening.current = false;
     }
-    const session: OpenSession = { ...result.session, opened_by_name: result.session.opened_by_name ?? myName };
-    setData((prev) =>
-      prev && {
-        ...prev,
-        points: prev.points.map((p) => (p.id === point.id ? { ...p, open_session: session } : p)),
-      },
-    );
-    setDialog(null);
-    setNotice(`${point.display_name} aberta${customer ? ` para ${customer}` : ""}.`);
-    focusSearch();
-    void reload();
-    return null;
   }
 
   const pointsContent = (() => {

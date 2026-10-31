@@ -3780,6 +3780,20 @@ button {
   border-radius: 3px 3px 0 0;
   background: var(--accent);
 }
+.fin-bar-col-active .fin-bar {
+  filter: brightness(0.85);
+}
+.fin-chart-tip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  min-height: 22px;
+  margin-bottom: 8px;
+  font-size: 13px;
+}
+.fin-chart {
+  margin-bottom: 8px;
+}
 .fin-bar-label {
   position: absolute;
   bottom: -18px;
