@@ -2168,6 +2168,10 @@ button {
   background: var(--surface);
   position: sticky;
   top: 12px;
+  /* Acima do bloco fixo de busca/categorias do catálogo (.catalog-sticky, z-index 6, cujo fundo vai até as bordas da
+     tela): sem isso ele é pintado por cima do topo da cesta e esconde o título e o primeiro item. No celular o
+     bottom sheet define o próprio z-index (55). */
+  z-index: 7;
   max-height: calc(100svh - 24px);
   overflow: hidden;
 }
