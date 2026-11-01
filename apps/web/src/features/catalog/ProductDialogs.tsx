@@ -535,6 +535,8 @@ export function EditProductDialog({
   const [genBusy, setGenBusy] = useState(false);
   const [genError, setGenError] = useState<string | null>(null);
   const [confirmingRegenerate, setConfirmingRegenerate] = useState(false);
+  // O EAN-13 gerado já está GRAVADO no banco (RPC): Salvar não é necessário e Cancelar não o desfaz. A dica avisa isso.
+  const [savedByGeneration, setSavedByGeneration] = useState(false);
   const { error, submitting, run } = useSubmit();
 
   // Gera direto (sem confirmação): só chamado quando o campo está vazio. Escreve no banco
@@ -549,6 +551,7 @@ export function EditProductDialog({
       return;
     }
     setBarcode(result.barcode ?? "");
+    setSavedByGeneration(true);
   }
 
   // Regenera (com confirmação prévia, ver RegenerateConfirmDialog): mesmo formato Promise<string
@@ -559,6 +562,7 @@ export function EditProductDialog({
     setGenBusy(false);
     if (result.error) return result.error;
     setBarcode(result.barcode ?? "");
+    setSavedByGeneration(true);
     return null;
   }
 
@@ -579,7 +583,7 @@ export function EditProductDialog({
         (normalizedCode !== product.code && existingCodes.has(normalizedCode) ? "Já existe um produto com este código." : null) ??
         (categoryId ? null : "Informe a categoria.") ??
         validateBarcode(barcode.trim()) ??
-        (normalizedBarcode && normalizedBarcode !== product.barcode && existingBarcodes.has(normalizedBarcode)
+        (normalizedBarcode && existingBarcodes.has(normalizedBarcode) // existingBarcodes = só OUTROS produtos (barcodesOfOthers)
           ? "Já existe um produto com este código de barras."
           : null) ??
         validateDescription(description) ??
@@ -614,8 +618,11 @@ export function EditProductDialog({
               id="product-edit-barcode"
               maxLength={BARCODE_MAX_LENGTH}
               value={barcode}
-              onChange={setBarcode}
-              hint={genBusy ? "Gerando…" : undefined}
+              onChange={(value) => {
+                setBarcode(value);
+                setSavedByGeneration(false);
+              }}
+              hint={genBusy ? "Gerando…" : savedByGeneration ? "EAN-13 gerado e já salvo no produto (Cancelar não o desfaz)." : undefined}
               action={{ label: barcode.trim() ? "Gerar novo EAN-13" : "Gerar EAN-13", onClick: handleGenerateClick, disabled: genBusy }}
             />
           }

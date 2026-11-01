@@ -8,6 +8,7 @@ import { EditProductDialog, NewProductDialog, ToggleProductDialog } from "./Prod
 import type { ProcessedImage } from "./productImage";
 import { supabaseProductsAdminSource, type NewProduct, type ProductsAdminSource } from "./productsApi";
 import {
+  barcodesOfOthers,
   buildImagePath,
   effectiveSector,
   filterProducts,
@@ -382,7 +383,7 @@ export function ProductsAdmin({ source = supabaseProductsAdminSource }: { source
           categories={categories}
           sectors={sectors}
           existingCodes={existingCodes}
-          existingBarcodes={existingBarcodes}
+          existingBarcodes={barcodesOfOthers(list, dialog.product.id)}
           imageUrl={imageUrls.get(buildImagePath(companyId!, dialog.product.id)) ?? null}
           onSubmit={(input) => submit(() => source.update(dialog.product.id, input), `${input.name} atualizado.`)}
           onUploadImage={(blob) => handleUploadImage(dialog.product.id, blob)}

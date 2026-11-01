@@ -92,6 +92,16 @@ export function normalizeBarcode(barcode: string): string | null {
   return trimmed ? trimmed : null;
 }
 
+// Códigos de barras em uso por OUTROS produtos da empresa (o próprio produto fica de fora, pelo ID). É contra
+// este conjunto que o formulário confere duplicidade: o produto pode manter o seu EAN-13 — inclusive um recém-gerado
+// (generate_product_ean13 grava na hora, e a lista já recarregada o contém). A unicidade real é do banco
+// (products_company_barcode_key, por empresa).
+export function barcodesOfOthers(products: Pick<AdminProduct, "id" | "barcode">[], excludeProductId: string): Set<string> {
+  const set = new Set<string>();
+  for (const p of products) if (p.id !== excludeProductId && p.barcode) set.add(p.barcode);
+  return set;
+}
+
 // Preço em formato brasileiro ("18,00" ou "18.00"); devolve reais (não centavos — sale_price é
 // numeric(12,2) em reais, ver productsApi.ts/money.ts). parseReais já recusa sinal negativo.
 export function parsePrice(raw: string): { value: number | null; error: string | null } {
