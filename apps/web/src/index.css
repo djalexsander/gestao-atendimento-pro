@@ -681,6 +681,51 @@ button {
   vertical-align: middle;
 }
 
+/* ---------------------------------------------------------------------------
+   Desktop (Tauri) APENAS: página de Produtos ocupa toda a área ao lado do menu lateral. Tudo escopado em .app-body-fluid,
+   classe que o AppLayout só aplica quando isTauri() é verdadeiro — Web/PWA (inclusive no computador) não mudam.
+   --------------------------------------------------------------------------- */
+.app-body-fluid {
+  max-width: none;
+}
+
+/* Colunas proporcionais: Nome e Código ganham espaço; Foto, Preço e Ações ficam do tamanho do conteúdo. A rolagem horizontal
+   (.table-scroll) continua existindo e só aparece quando a janela é estreita demais para a tabela. */
+.app-body-fluid .product-table .data-table {
+  table-layout: auto;
+}
+
+.app-body-fluid .product-table .data-table th:nth-child(1) { width: 64px; }
+.app-body-fluid .product-table .data-table th:nth-child(2) { width: 30%; min-width: 14rem; }
+.app-body-fluid .product-table .data-table th:nth-child(3) { width: 20%; }
+.app-body-fluid .product-table .data-table th:nth-child(4) { width: 11%; }
+.app-body-fluid .product-table .data-table th:nth-child(6) { width: 12%; }
+.app-body-fluid .product-table .data-table th:nth-child(7) { width: 12%; }
+
+/* Demais telas de cadastro (Categorias, Setores, Funcionários, Comandas/Mesas): a tabela se estica pela área toda; os botões de
+   ação ficam numa linha só quando há espaço (em janela estreita voltam a quebrar, como antes) e a coluna de ações não quebra. */
+.app-body-fluid .data-table td:last-child {
+  white-space: nowrap;
+}
+
+@media (min-width: 1180px) {
+  .app-body-fluid .data-table .row-actions {
+    flex-wrap: nowrap;
+  }
+}
+
+/* Adicionais / opções: cartões mais largos (menos quebra de nomes de opção e dos botões do grupo). */
+.app-body-fluid .print-cards {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 480px), 1fr));
+}
+
+/* Código e preço nunca quebram; o nome só quebra quando passa da coluna (que agora é larga). */
+.app-body-fluid .product-table .data-table td:nth-child(3),
+.app-body-fluid .product-table .data-table td:nth-child(5),
+.app-body-fluid .product-table .data-table td:nth-child(8) {
+  white-space: nowrap;
+}
+
 .status-badge {
   display: inline-block;
   padding: 2px 10px;

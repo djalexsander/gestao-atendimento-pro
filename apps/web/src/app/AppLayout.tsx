@@ -3,8 +3,10 @@ import { Link, Outlet, useLocation } from "react-router-dom";
 import { AdminSidebar } from "./AdminSidebar";
 import { CompanySwitcher } from "./CompanySwitcher";
 import { CommercialBanner } from "../features/commercial/CommercialBanner";
+import { isTauri } from "../lib/appVersion";
 import { isManagedAccount } from "../lib/managedAccount";
 import { useAuth } from "./useAuth";
+import { bodyClass } from "./widePages";
 
 const ROLE_LABEL: Record<string, string> = {
   owner: "Dono(a)",
@@ -15,8 +17,6 @@ const ROLE_LABEL: Record<string, string> = {
   courier: "Entregador",
 };
 
-// Páginas com tabelas/listas que pedem a largura maior (demais seguem em 720px).
-const WIDE_PATHS = ["/app", "/app/configuracoes/notificacoes", "/app/financeiro/visao", "/app/financeiro/contas-a-receber", "/app/financeiro/contas-a-pagar", "/app/financeiro/caixa", "/app/cadastros/estoque", "/app/cadastros/clientes", "/app/configuracoes/sistema", "/app/financeiro/relatorios", "/app/configuracoes/impressao"];
 
 // Administrativo (owner/admin — a rota /app já garante isso, ver accessRules.ts): sidebar FIXA à esquerda no desktop/notebook
 // (acompanha a rolagem da página) e DRAWER no celular/tablet (≤900px): barra compacta fixa no topo com o botão de menu; o drawer
@@ -48,8 +48,8 @@ export function AppLayout() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const hamburgerRef = useRef<HTMLButtonElement>(null);
   const closeNav = useCallback(() => setMobileNavOpen(false), []);
-  // Só o Financeiro > Caixa (histórico com tabela) usa a largura maior; as demais páginas seguem em 720px.
-  const isWidePage = WIDE_PATHS.includes(useLocation().pathname.replace(/\/+$/, ""));
+  // Largura do conteúdo: ver widePages.ts (Produtos preenche a janela só no Desktop/Tauri; Web/PWA inalterados).
+  const bodyClassName = bodyClass(useLocation().pathname, isTauri());
 
   return (
     <div className="admin-shell">
@@ -82,7 +82,7 @@ export function AppLayout() {
           <UserCluster className="app-user" />
         </header>
         <CommercialBanner />
-        <main className={isWidePage ? "app-body app-body-wide" : "app-body"}>
+        <main className={bodyClassName}>
           <Outlet />
         </main>
       </div>
