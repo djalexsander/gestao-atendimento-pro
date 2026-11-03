@@ -91,10 +91,11 @@ const OTHER = await mkCo("O");
 
 console.log("\n== 1. aditiva: nada existente foi removido ==");
 const after = new Set((await pg.query(inv)).rows.map((r) => r.k));
-const missing = [...baseline].filter((k) => !after.has(k));
+// 20261113010000 TROCA (de propósito) as assinaturas de 12 argumentos de create/update_customer_address pelas de 13 (p_kind); nada mais pode sumir
+const missing = [...baseline].filter((k) => !after.has(k) && !/^fn:(create|update)_customer_address\(/.test(k));
 ck("1.1 todo objeto pré-existente (colunas, índices, constraints, políticas, funções, triggers) continua", missing.length === 0, missing.join(", "));
 const added = [...after].filter((k) => !baseline.has(k));
-ck("1.2 o que foi criado é só da migration nova (nada inesperado)", added.every((k) => /signup|registration|pin_reveal|pilot|token_alert|token_health|token_effective|report_token|report_send|master_whatsapp|connection_alert|connection_set_health|connections|connection_(source|type)|meta_business|token_|registered_at|webhook_subscribed|last_error/.test(k)), added.join(", "));
+ck("1.2 o que foi criado é só da migration nova (nada inesperado)", added.every((k) => /delete_customer|customer_address|feature_events|customer_recognition|recognition_on|customer_link_source|link_source|address_offer|offer_guard|draft_offer|offer_address|offer_shown|offer_status|auto_link_customer|saved_address|customer_context|greeting|customer_match|customer_synced|draft_events_type_check|conversation_events_type_check|signup|registration|pin_reveal|pilot|token_alert|token_health|token_effective|report_token|report_send|master_whatsapp|connection_alert|connection_set_health|connections|connection_(source|type)|meta_business|token_|registered_at|webhook_subscribed|last_error/.test(k)), added.join(", "));
 
 console.log("\n== 2. conexões antigas: defaults seguros ==");
 const old = await mkConn(A, { mode: "live" });
@@ -395,6 +396,9 @@ const snap = async () => JSON.stringify((await su(`select c.id, c.company_id, c.
   from company_whatsapp_connections c order by c.id`)).rows);
 const msgs = async () => Number((await su("select (select count(*) from whatsapp_messages) + (select count(*) from whatsapp_conversations) n")).rows[0].n);
 const snapBefore = await snap(), msgsBefore = await msgs();
+await pg.exec(fs.readFileSync("D:/orça facil/.claude/db-tests/customer-delete.rollback.sql", "utf8")); // desfaz 1114 (exclusão segura de cliente)
+await pg.exec(fs.readFileSync("D:/orça facil/.claude/db-tests/whatsapp-customer-address-primary.rollback.sql", "utf8")); // desfaz 1113 (tipo/principal/duplicidade de endereços)
+await pg.exec(fs.readFileSync("D:/orça facil/.claude/db-tests/whatsapp-customer-auto-link.rollback.sql", "utf8")); // desfaz 1112 (vínculo automático de cliente / endereço salvo / saudação)
 await pg.exec(fs.readFileSync("D:/orça facil/.claude/db-tests/whatsapp-pilot-note.rollback.sql", "utf8")); // desfaz 1111 (nota obrigatória do piloto)
 await pg.exec(fs.readFileSync("D:/orça facil/.claude/db-tests/whatsapp-token-sweep-history.rollback.sql", "utf8")); // desfaz 1110 (histórico da varredura)
 await pg.exec(fs.readFileSync("D:/orça facil/.claude/db-tests/whatsapp-token-sweep.rollback.sql", "utf8")); // desfaz 1109 (varredura dos tokens)

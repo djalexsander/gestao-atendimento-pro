@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { formatCents } from "../../lib/money";
 import { useCommercial } from "../commercial/CommercialProvider";
 import { moduleAccess } from "../commercial/commercialLogic";
@@ -217,6 +217,7 @@ export function CustomerDetailDialog({
   customerId,
   onEdit,
   onToggleActive,
+  onDelete,
   onClose,
 }: {
   source: CustomersSource;
@@ -224,6 +225,7 @@ export function CustomerDetailDialog({
   customerId: string;
   onEdit: () => void;
   onToggleActive: (customer: CustomerDetail) => void;
+  onDelete: (customer: CustomerDetail) => void;
   onClose: () => void;
 }) {
   const [customer, setCustomer] = useState<CustomerDetail | null>(null);
@@ -332,6 +334,9 @@ export function CustomerDetailDialog({
           </button>
           {customer && (
             <>
+              <button className="btn-secondary btn-auto btn-danger-text" type="button" onClick={() => onDelete(customer)}>
+                Excluir
+              </button>
               <button className="btn-secondary btn-auto" type="button" onClick={() => onToggleActive(customer)}>
                 {customer.isActive ? "Inativar" : "Ativar"}
               </button>
@@ -340,6 +345,77 @@ export function CustomerDetailDialog({
               </button>
             </>
           )}
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// Exclusão DEFINITIVA: confirmação com o nome, um clique por vez e, se o servidor recusar (histórico), o motivo + atalho para Inativar.
+// Quem decide é sempre o servidor (delete_customer); a tela só mostra a opção na rota de owner/admin.
+export function CustomerDeleteDialog({
+  source,
+  customer,
+  onDeleted,
+  onInactivate,
+  onClose,
+}: {
+  source: CustomersSource;
+  customer: { id: string; name: string; isActive: boolean };
+  onDeleted: (name: string) => void;
+  onInactivate: (id: string, name: string) => void;
+  onClose: () => void;
+}) {
+  const [confirmed, setConfirmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inFlight = useRef(false);
+
+  async function confirmDelete() {
+    if (!confirmed || inFlight.current) return;
+    inFlight.current = true;
+    setBusy(true);
+    setError(null);
+    const result = await source.remove(customer.id);
+    inFlight.current = false;
+    setBusy(false);
+    if (result.error) {
+      setError(result.error);
+      return;
+    }
+    onDeleted(customer.name);
+  }
+
+  return (
+    <Modal title="Excluir cliente" onClose={busy ? () => undefined : onClose}>
+      <div className="rec-form cus-delete">
+        <p>
+          Você vai excluir <strong>{customer.name}</strong> <strong>definitivamente</strong>. Esta ação <strong>não pode ser desfeita</strong> e os endereços cadastrados deste cliente também serão excluídos.
+        </p>
+        <p className="field-hint">
+          Só é possível excluir clientes sem histórico (pedidos, atendimentos, recebíveis ou conversas). Se houver histórico, a exclusão é recusada e você pode usar “Inativar”, que oculta o cliente e mantém o histórico.
+        </p>
+        {error && (
+          <div className="form-error" role="alert">
+            {error}
+          </div>
+        )}
+        <label className="cus-delete-confirm">
+          <input type="checkbox" checked={confirmed} disabled={busy} onChange={(e) => setConfirmed(e.target.checked)} />
+          Entendo que a exclusão de {customer.name} é definitiva.
+        </label>
+        <div className="modal-actions">
+          <button className="btn-secondary" type="button" disabled={busy} onClick={onClose}>
+            Cancelar
+          </button>
+          {error && customer.isActive && (
+            <button className="btn-secondary btn-auto" type="button" disabled={busy} onClick={() => onInactivate(customer.id, customer.name)}>
+              Inativar cliente
+            </button>
+          )}
+          <button className="btn-danger btn-auto" type="button" disabled={!confirmed || busy} onClick={() => void confirmDelete()}>
+            {busy ? "Excluindo…" : "Excluir definitivamente"}
+          </button>
         </div>
       </div>
     </Modal>

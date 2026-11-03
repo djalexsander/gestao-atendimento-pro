@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "../../app/useAuth";
 import { formatCents } from "../../lib/money";
 import type { AddressesSource } from "./CustomerAddressesSection";
-import { ActiveBadge, CustomerDetailDialog, CustomerFormDialog } from "./CustomerDialogs";
+import { ActiveBadge, CustomerDeleteDialog, CustomerDetailDialog, CustomerFormDialog } from "./CustomerDialogs";
 import { CUSTOMERS_PAGE, supabaseCustomersSource, type CustomersSource } from "./customersApi";
 import {
   CUSTOMER_TYPE_LABEL,
@@ -25,7 +25,7 @@ import {
 const LOAD_ERROR = "Não foi possível carregar os clientes agora. Tente novamente.";
 const STALE_AFTER_MS = 60_000;
 
-type Dialog = { kind: "new" } | { kind: "edit"; id: string } | { kind: "detail"; id: string };
+type Dialog = { kind: "new" } | { kind: "edit"; id: string } | { kind: "detail"; id: string } | { kind: "delete"; id: string; name: string; isActive: boolean };
 
 function SummaryCard({ label, value, hint }: { label: string; value: number; hint?: string }) {
   return (
@@ -138,6 +138,14 @@ export function CustomersPage({ source = supabaseCustomersSource, addressSource 
       return;
     }
     setNotice(active ? `${name} foi ativado.` : `${name} foi inativado e não aparece mais em novos atendimentos.`);
+    void load(filtersRef.current);
+  }
+
+  // exclusão concluída: fecha o diálogo e recarrega lista + indicadores (sem recarregar a página)
+  function deleted(name: string) {
+    setDialog(null);
+    setError(null);
+    setNotice(`${name} foi excluído definitivamente.`);
     void load(filtersRef.current);
   }
 
@@ -284,6 +292,9 @@ export function CustomersPage({ source = supabaseCustomersSource, addressSource 
                   <button type="button" className="btn-secondary btn-auto" onClick={() => void toggleActive(row.id, row.name, !row.isActive)}>
                     {row.isActive ? "Inativar" : "Ativar"}
                   </button>
+                  <button type="button" className="btn-secondary btn-auto btn-danger-text" onClick={() => setDialog({ kind: "delete", id: row.id, name: row.name, isActive: row.isActive })}>
+                    Excluir
+                  </button>
                 </div>
               </li>
             ))}
@@ -308,6 +319,17 @@ export function CustomersPage({ source = supabaseCustomersSource, addressSource 
           customerId={dialog.id}
           onEdit={() => setDialog({ kind: "edit", id: dialog.id })}
           onToggleActive={(c) => void toggleActive(c.id, c.name, !c.isActive)}
+          onDelete={(c) => setDialog({ kind: "delete", id: c.id, name: c.name, isActive: c.isActive })}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {dialog?.kind === "delete" && (
+        <CustomerDeleteDialog
+          key={dialog.id}
+          source={source}
+          customer={dialog}
+          onDeleted={deleted}
+          onInactivate={(id, name) => void toggleActive(id, name, false)}
           onClose={() => setDialog(null)}
         />
       )}

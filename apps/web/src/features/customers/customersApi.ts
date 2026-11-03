@@ -12,6 +12,7 @@ import type {
 
 const LOAD_ERROR = "Não foi possível carregar os clientes agora. Tente novamente.";
 const SAVE_ERROR = "Não foi possível salvar o cliente agora. Tente novamente.";
+const DELETE_ERROR = "Não foi possível excluir o cliente agora. Tente novamente ou use “Inativar”.";
 export const CUSTOMERS_PAGE = 30;
 
 export type Result<T> = { data: T; error: null } | { data: null; error: string };
@@ -26,6 +27,8 @@ export interface CustomersSource {
   create(companyId: string, payload: CustomerPayload): Promise<Result<{ id: string }>>;
   update(id: string, payload: CustomerPayload): Promise<Result<null>>;
   setActive(id: string, active: boolean): Promise<Result<null>>;
+  /** Exclusão DEFINITIVA (só sem histórico; o servidor recusa com o motivo). Apaga também os endereços não usados. */
+  remove(id: string): Promise<Result<{ addressesDeleted: number }>>;
   // todos os papéis operacionais (id, nome e final do telefone apenas)
   search(companyId: string, term: string): Promise<Result<CustomerOption[]>>;
   quickCreate(companyId: string, name: string, phone: string | null): Promise<Result<CustomerOption>>;
@@ -155,6 +158,12 @@ export const supabaseCustomersSource: CustomersSource = {
     const { error } = await supabase.rpc("set_customer_active", { p_customer_id: id, p_active: active });
     if (error) return fail(error, SAVE_ERROR);
     return { data: null, error: null };
+  },
+
+  async remove(id) {
+    const { data, error } = await supabase.rpc("delete_customer", { p_customer_id: id });
+    if (error) return fail(error, DELETE_ERROR);
+    return { data: { addressesDeleted: Number((data as { addresses_deleted?: unknown } | null)?.addresses_deleted ?? 0) }, error: null };
   },
 
   async search(companyId, term) {
