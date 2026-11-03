@@ -32,9 +32,9 @@ import {
   parseKnowledge,
   type KnowledgeFacts,
 } from "../_shared/ai-knowledge.ts";
-import { ORDER_EXTRACT_SCHEMA, validateExtraction } from "../_shared/ai-order.ts";
+import { ORDER_EXTRACT_SCHEMA, maskSavedAddress, validateExtraction } from "../_shared/ai-order.ts";
 import { runOrderFlow, type OrderFlowIo } from "../_shared/ai-order-flow.ts";
-import { composeWithIntro, greetingReply, isGreetingOnly } from "../_shared/ai-intro.ts";
+import { composeWithIntro, greetingReply, isGreetingOnly, parseGreetingParts, personalGreetingReply, personalPrefix } from "../_shared/ai-intro.ts";
 import { authorizeInternalRequest } from "../_shared/push-core.ts";
 import { MENU_CAPTION, MENU_OFFER_TEXT, menuFilename, menuIntent } from "../_shared/ai-menu.ts";
 import { MENU_PDF_MAX_BYTES, buildMenuPdf, type MenuCatalog } from "../_shared/menu-pdf.ts";
@@ -426,7 +426,11 @@ async function processJob(base: Ctx, job: JobRow): Promise<string> {
   // ausente = sem apresentação (comportamento anterior), nunca erro. O nome da assistente jamais entra em prompt.
   const introRes = await call(deps.admin, "whatsapp_ai_auto_intro", { p_job_id: job.id });
   const introData = isObj(introRes.data) ? introRes.data : null;
-  const intro = !introRes.error && introData && introData.first === true && typeof introData.intro === "string" && introData.intro.length > 0 ? introData.intro : null;
+  // SAUDAÇÃO PERSONALIZADA: as peças (período do dia no fuso da empresa, nome cadastrado do cliente VINCULADO, identificação) vêm prontas do banco.
+  // Sem elas (migration antiga) vale a apresentação simples de antes. O nome do cliente nunca passa por prompt.
+  const parts = !introRes.error ? parseGreetingParts(introData) : null;
+  const legacyIntro = !introRes.error && introData && introData.first === true && typeof introData.intro === "string" && introData.intro.length > 0 ? introData.intro : null;
+  const intro = parts ? personalPrefix(parts) : legacyIntro;
   if (intro) c = { deps, intro };
 
   // fora do expediente com mensagem fixa: SEM IA
@@ -441,6 +445,8 @@ async function processJob(base: Ctx, job: JobRow): Promise<string> {
 
   const ctx = p as AutoContext & { latest_message_id: string };
   const fallback = ctx.fallback_to_human === true;
+  // o endereço cadastrado mostrado ao cliente na confirmação final nunca vai a um prompt: o histórico entra com a mensagem mascarada
+  if (Array.isArray(ctx.messages)) ctx.messages = ctx.messages.map((m) => (m.direction === "outbound" && typeof m.text === "string" ? { ...m, text: maskSavedAddress(m.text) } : m));
 
   // 1ª saída E o cliente só cumprimentou ("Oi", "Bom dia"): resposta 100% template, SEM OpenAI e sem gastar cota
   if (intro) {
@@ -452,7 +458,9 @@ async function processJob(base: Ctx, job: JobRow): Promise<string> {
         const mc = await menuContext(c, job.id, false);
         offer = !!mc && mc.productCount > 0 && mc.offerAllowed;
       }
-      return await commitAndDispatch(c, job.id, latest, offer ? `${greetingReply(intro)} ${MENU_OFFER_TEXT}` : greetingReply(intro), {
+      const greetBody = parts ? personalGreetingReply(parts) : greetingReply(intro);
+      // a saudação pura já é a mensagem inteira (sem o prefixo de apresentação por cima)
+      return await commitAndDispatch(parts ? { deps } : c, job.id, latest, offer ? `${greetBody} ${MENU_OFFER_TEXT}` : greetBody, {
         usageId: null,
         okOutcome: "replied",
         okReason: "intro_greeting",

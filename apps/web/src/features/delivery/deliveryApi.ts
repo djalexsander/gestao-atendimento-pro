@@ -88,6 +88,8 @@ export interface DeliverySource {
   createAddress(customerId: string, form: AddressForm): Promise<Result<AddressRow>>;
   updateAddress(addressId: string, form: AddressForm): Promise<Result<AddressRow>>;
   setAddressActive(addressId: string, active: boolean): Promise<Result<null>>;
+  /** Define o endereço principal do cliente (o anterior perde a marca). */
+  setAddressPrimary(addressId: string): Promise<Result<AddressRow>>;
   settings(companyId: string): Promise<Result<DeliverySettings>>;
   updateSettings(companyId: string, s: DeliverySettings): Promise<Result<DeliverySettings>>;
   updateRules(companyId: string, r: { minOrderAmount: number | null; freeDeliveryAbove: number | null; requireCourierForDispatch: boolean }): Promise<Result<DeliverySettings>>;
@@ -122,6 +124,7 @@ const addressArgs = (f: AddressForm) => ({
   p_cep: nz(f.cep),
   p_label: nz(f.label),
   p_reference: nz(f.reference),
+  p_kind: f.kind,
 });
 
 interface RawEvent {
@@ -257,6 +260,12 @@ export const supabaseDeliverySource: DeliverySource = {
   async setAddressActive(addressId, active) {
     const { error } = await supabase.rpc("set_customer_address_active", { p_address_id: addressId, p_active: active });
     return error ? fail(error) : { data: null, error: null };
+  },
+
+  async setAddressPrimary(addressId) {
+    const { data, error } = await supabase.rpc("set_customer_address_primary", { p_address_id: addressId });
+    if (error) return fail(error, "Não foi possível definir o endereço principal agora.");
+    return { data: toAddress(data as RawAddress), error: null };
   },
 
   async settings(companyId) {

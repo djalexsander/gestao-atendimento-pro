@@ -730,9 +730,16 @@ export const toZone = (r: RawZone): ZoneRow => ({
   estimatedMinutes: r.estimated_minutes, isActive: r.is_active,
 });
 
+export type AddressKind = "home" | "work" | "other";
+export const ADDRESS_KINDS: AddressKind[] = ["home", "work", "other"];
+export const ADDRESS_KIND_LABEL: Record<AddressKind, string> = { home: "Casa", work: "Trabalho", other: "Outro" };
+const toKind = (v: unknown): AddressKind => (v === "home" || v === "work" ? v : "other");
+
 export interface AddressRow {
   id: string;
   label: string | null;
+  kind: AddressKind;
+  isPrimary: boolean;
   cep: string | null;
   street: string;
   number: string | null;
@@ -744,19 +751,24 @@ export interface AddressRow {
   isActive: boolean;
 }
 export interface RawAddress {
-  id: string; label: string | null; cep: string | null; street: string; number: string | null; complement: string | null;
+  id: string; label: string | null; kind?: string | null; is_primary?: boolean | null; cep: string | null; street: string; number: string | null; complement: string | null;
   neighborhood: string; city: string; state: string; reference: string | null; is_active: boolean;
 }
 export const toAddress = (r: RawAddress): AddressRow => ({
-  id: r.id, label: r.label, cep: r.cep, street: r.street, number: r.number, complement: r.complement,
+  id: r.id, label: r.label, kind: toKind(r.kind), isPrimary: r.is_primary === true, cep: r.cep, street: r.street, number: r.number, complement: r.complement,
   neighborhood: r.neighborhood, city: r.city, state: r.state, reference: r.reference, isActive: r.is_active,
 });
 
 export interface AddressForm {
-  label: string; cep: string; street: string; number: string; complement: string;
+  kind: AddressKind; label: string; cep: string; street: string; number: string; complement: string;
   neighborhood: string; city: string; state: string; reference: string;
 }
-export const EMPTY_ADDRESS: AddressForm = { label: "", cep: "", street: "", number: "", complement: "", neighborhood: "", city: "", state: "SP", reference: "" };
+export const EMPTY_ADDRESS: AddressForm = { kind: "other", label: "", cep: "", street: "", number: "", complement: "", neighborhood: "", city: "", state: "SP", reference: "" };
+/** Linha do cadastro -> formulário de edição (CEP com máscara). */
+export const addressToForm = (a: AddressRow): AddressForm => ({
+  kind: a.kind, label: a.label ?? "", cep: a.cep ? formatCep(a.cep) : "", street: a.street, number: a.number ?? "", complement: a.complement ?? "",
+  neighborhood: a.neighborhood, city: a.city, state: a.state, reference: a.reference ?? "",
+});
 export function addressFormProblem(f: AddressForm): string | null {
   if (!f.street.trim()) return "Informe a rua.";
   if (!f.neighborhood.trim()) return "Informe o bairro.";

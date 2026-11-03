@@ -31,6 +31,9 @@ import {
   STEP_TITLE,
   TIMING_LABEL,
   addressFormProblem,
+  addressToForm,
+  ADDRESS_KIND_LABEL,
+  ADDRESS_KINDS,
   buildCreateArgs,
   emptyDraft,
   feeWithRules,
@@ -157,6 +160,13 @@ export function DeliveryNewOrder({
     void reloadAddresses();
   }, [reloadAddresses]);
 
+  // entrega + cliente com endereço PRINCIPAL e nenhum endereço escolhido ainda: pré-seleciona o principal (o atendente pode trocar)
+  useEffect(() => {
+    if (draft.fulfillment !== "delivery" || draft.addressId || !addresses) return;
+    const primary = addresses.find((a) => a.isPrimary && a.isActive);
+    if (primary) mutate(setDraft, (d) => (d.addressId ? d : { ...d, addressId: primary.id, manualFee: null }));
+  }, [addresses, draft.fulfillment, draft.addressId, mutate]);
+
   // taxa/previsão: consulta ao servidor quando o endereço/tipo muda (nunca calculada aqui)
   useEffect(() => {
     let live = true;
@@ -248,6 +258,16 @@ export function DeliveryNewOrder({
     setAddressForm(null);
     await reloadAddresses();
     patchDraft((d) => ({ ...d, addressId: r.data.id, manualFee: null }));
+  }
+
+  async function makePrimary(a: AddressRow) {
+    const r = await source.setAddressPrimary(a.id);
+    if (r.error) {
+      setAddressError(r.error);
+      return;
+    }
+    setAddressError(null);
+    await reloadAddresses();
   }
 
   async function deactivateAddress(a: AddressRow) {
@@ -385,14 +405,15 @@ export function DeliveryNewOrder({
                   <label className="dl-addr-main">
                     <input type="radio" name="dl-addr" checked={draft.addressId === a.id} onChange={() => patchDraft((d) => ({ ...d, addressId: a.id, manualFee: null }))} />
                     <span>
-                      <strong>{a.label ?? "Endereço"}</strong>
+                      <strong>{a.label ?? "Endereço"}{a.isPrimary && <span className="rec-badge rec-badge-paid cus-addr-badge">Principal</span>}<span className="rec-badge cus-addr-badge">{ADDRESS_KIND_LABEL[a.kind]}</span></strong>
                       <span className="dl-addr-line">{formatAddressLine({ street: a.street, number: a.number, complement: a.complement, neighborhood: a.neighborhood, city: a.city, state: a.state, cep: a.cep, reference: a.reference })}</span>
                       {a.cep && <span className="muted">CEP {formatCep(a.cep)}</span>}
                       {a.reference && <span className="muted">Ref.: {a.reference}</span>}
                     </span>
                   </label>
                   <span className="dl-addr-actions">
-                    <button type="button" className="btn-secondary btn-small" onClick={() => setAddressForm({ id: a.id, form: { label: a.label ?? "", cep: a.cep ? formatCep(a.cep) : "", street: a.street, number: a.number ?? "", complement: a.complement ?? "", neighborhood: a.neighborhood, city: a.city, state: a.state, reference: a.reference ?? "" } })}>Editar</button>
+                    <button type="button" className="btn-secondary btn-small" onClick={() => { setAddressError(null); setAddressForm({ id: a.id, form: addressToForm(a) }); }}>Editar</button>
+                    {!a.isPrimary && <button type="button" className="btn-secondary btn-small" onClick={() => void makePrimary(a)}>Definir principal</button>}
                     <button type="button" className="btn-secondary btn-small" onClick={() => void deactivateAddress(a)}>Desativar</button>
                   </span>
                 </div>
@@ -400,11 +421,22 @@ export function DeliveryNewOrder({
               {addressError && <div className="form-error" role="alert">{addressError}</div>}
               {addressForm ? (
                 <form className="dl-addr-form" onSubmit={(e) => { e.preventDefault(); void saveAddress(); }}>
+                  <div className="dl-field dl-field-wide">
+                    <span>Tipo</span>
+                    <div className="cus-addr-kinds" role="radiogroup" aria-label="Tipo de endereço">
+                      {ADDRESS_KINDS.map((k) => (
+                        <label key={k} className={`cus-addr-kind${addressForm.form.kind === k ? " cus-addr-kind-on" : ""}`}>
+                          <input type="radio" name="dl-addr-kind" checked={addressForm.form.kind === k} onChange={() => setAddressForm({ ...addressForm, form: { ...addressForm.form, kind: k } })} />
+                          {ADDRESS_KIND_LABEL[k]}
+                        </label>
+                      ))}
+                    </div>
+                  </div>
                   {(
                     [
                       ["label", "Apelido (ex.: Casa)", 30], ["cep", "CEP", 9], ["street", "Rua", 120], ["number", "Número", 20],
                       ["complement", "Complemento", 60], ["neighborhood", "Bairro", 80], ["city", "Cidade", 80], ["state", "UF", 2], ["reference", "Ponto de referência", 120],
-                    ] as Array<[keyof AddressForm, string, number]>
+                    ] as Array<[Exclude<keyof AddressForm, "kind">, string, number]>
                   ).map(([k, l, max]) => (
                     <label key={k} className={`dl-field${k === "street" || k === "reference" ? " dl-field-wide" : ""}`}>
                       <span>{l}</span>

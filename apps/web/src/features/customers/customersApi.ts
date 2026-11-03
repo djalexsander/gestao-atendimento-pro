@@ -23,7 +23,7 @@ export interface CustomersSource {
   list(companyId: string, filters: CustomerFilters, offset: number): Promise<Result<{ rows: CustomerRow[]; total: number }>>;
   summary(companyId: string): Promise<Result<CustomersSummary>>;
   get(id: string): Promise<Result<CustomerDetail>>;
-  create(companyId: string, payload: CustomerPayload): Promise<Result<null>>;
+  create(companyId: string, payload: CustomerPayload): Promise<Result<{ id: string }>>;
   update(id: string, payload: CustomerPayload): Promise<Result<null>>;
   setActive(id: string, active: boolean): Promise<Result<null>>;
   // todos os papéis operacionais (id, nome e final do telefone apenas)
@@ -139,9 +139,10 @@ export const supabaseCustomersSource: CustomersSource = {
   },
 
   async create(companyId, payload) {
-    const { error } = await supabase.rpc("create_customer", { p_company_id: companyId, ...payloadArgs(payload) });
-    if (error) return fail(error, SAVE_ERROR);
-    return { data: null, error: null };
+    const { data, error } = await supabase.rpc("create_customer", { p_company_id: companyId, ...payloadArgs(payload) });
+    const id = (data as { id?: unknown } | null)?.id;
+    if (error || typeof id !== "string") return fail(error ?? { code: null, message: null }, SAVE_ERROR);
+    return { data: { id }, error: null };
   },
 
   async update(id, payload) {

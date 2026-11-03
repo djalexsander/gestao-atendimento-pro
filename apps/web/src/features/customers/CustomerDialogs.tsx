@@ -1,7 +1,10 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { formatCents } from "../../lib/money";
+import { useCommercial } from "../commercial/CommercialProvider";
+import { moduleAccess } from "../commercial/commercialLogic";
 import { Modal } from "../employees/Modal";
 import { formatDateBR, todayInSaoPaulo } from "../reports/reportsLogic";
+import { CustomerAddressesSection, type AddressesSource } from "./CustomerAddressesSection";
 import type { CustomersSource } from "./customersApi";
 import {
   CUSTOMER_TYPE_LABEL,
@@ -27,21 +30,29 @@ export function ActiveBadge({ active }: { active: boolean }) {
 // nascimento). O servidor valida de novo e recusa documento duplicado com mensagem amigável.
 export function CustomerFormDialog({
   source,
+  addressSource,
   companyId,
   customerId,
   onDone,
   onClose,
 }: {
   source: CustomersSource;
+  addressSource?: AddressesSource;
   companyId: string;
   customerId: string | null; // null = novo
   onDone: (message: string) => void;
   onClose: () => void;
 }) {
+  const { entitlements } = useCommercial();
+  const deliveryOn = moduleAccess(entitlements, "delivery") === "allowed";
   const [draft, setDraft] = useState<CustomerDraft>(EMPTY_DRAFT);
   const [loading, setLoading] = useState(customerId !== null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  // cliente NOVO: o endereço só pode ser cadastrado depois de salvar (precisa do ID real); com o módulo Delivery o diálogo fica aberto
+  const [createdId, setCreatedId] = useState<string | null>(null);
+  const [isActive, setIsActive] = useState(true);
+  const effectiveId = customerId ?? createdId;
 
   useEffect(() => {
     if (!customerId) return;
@@ -50,7 +61,10 @@ export function CustomerFormDialog({
       if (!live) return;
       setLoading(false);
       if (result.error || !result.data) setError(result.error);
-      else setDraft(draftFromDetail(result.data));
+      else {
+        setDraft(draftFromDetail(result.data));
+        setIsActive(result.data.isActive);
+      }
     });
     return () => {
       live = false;
@@ -69,20 +83,32 @@ export function CustomerFormDialog({
     }
     setError(null);
     setSubmitting(true);
-    const result = customerId ? await source.update(customerId, checked.payload) : await source.create(companyId, checked.payload);
-    setSubmitting(false);
-    if (result.error) {
-      setError(result.error);
+    if (effectiveId) {
+      const result = await source.update(effectiveId, checked.payload);
+      setSubmitting(false);
+      if (result.error) {
+        setError(result.error);
+        return;
+      }
+      onDone("Cliente atualizado.");
       return;
     }
-    onDone(customerId ? "Cliente atualizado." : "Cliente cadastrado.");
+    const created = await source.create(companyId, checked.payload);
+    setSubmitting(false);
+    if (created.error || !created.data) {
+      setError(created.error);
+      return;
+    }
+    if (deliveryOn) setCreatedId(created.data.id);   // segue aberto para os endereços (opcionais)
+    else onDone("Cliente cadastrado.");
   }
 
   const canSave = !loading && !(customerId && error && draft.name === "");
 
   return (
     <Modal title={customerId ? "Editar cliente" : "Novo cliente"} onClose={onClose}>
-      <form className="rec-form cus-form" onSubmit={handleSubmit}>
+      <form id="cus-form" className="rec-form cus-form" onSubmit={handleSubmit}>
+        {createdId && <div className="rec-notice" role="status">Cliente cadastrado. Se quiser, adicione endereços de entrega abaixo (opcional) e toque em Concluir.</div>}
         {error && <div className="form-error">{error}</div>}
         {loading && <p className="op-state">Carregando…</p>}
         <div className="field">
@@ -157,15 +183,29 @@ export function CustomerFormDialog({
           <label htmlFor="cus-notes">Observações</label>
           <textarea id="cus-notes" rows={3} maxLength={1000} value={draft.notes} onChange={(e) => patch({ notes: e.target.value })} />
         </div>
-        <div className="modal-actions">
-          <button className="btn-secondary" type="button" disabled={submitting} onClick={onClose}>
-            Cancelar
-          </button>
-          <button className="btn-primary btn-auto" type="submit" disabled={submitting || !canSave}>
-            {submitting ? "Salvando…" : "Salvar"}
-          </button>
-        </div>
       </form>
+      <CustomerAddressesSection customerId={effectiveId} customerActive={isActive} source={addressSource} />
+      <div className="modal-actions">
+        {createdId ? (
+          <>
+            <button className="btn-secondary" type="button" disabled={submitting} onClick={() => onDone("Cliente cadastrado.")}>
+              Concluir
+            </button>
+            <button className="btn-primary btn-auto" type="submit" form="cus-form" disabled={submitting || !canSave}>
+              {submitting ? "Salvando…" : "Salvar alterações"}
+            </button>
+          </>
+        ) : (
+          <>
+            <button className="btn-secondary" type="button" disabled={submitting} onClick={onClose}>
+              Cancelar
+            </button>
+            <button className="btn-primary btn-auto" type="submit" form="cus-form" disabled={submitting || !canSave}>
+              {submitting ? "Salvando…" : "Salvar"}
+            </button>
+          </>
+        )}
+      </div>
     </Modal>
   );
 }
@@ -173,12 +213,14 @@ export function CustomerFormDialog({
 // Detalhe: dados cadastrais + resumo de atendimentos (calculado no servidor, sem carregar o histórico inteiro).
 export function CustomerDetailDialog({
   source,
+  addressSource,
   customerId,
   onEdit,
   onToggleActive,
   onClose,
 }: {
   source: CustomersSource;
+  addressSource?: AddressesSource;
   customerId: string;
   onEdit: () => void;
   onToggleActive: (customer: CustomerDetail) => void;
@@ -246,6 +288,7 @@ export function CustomerDetailDialog({
                 <dd>{when(customer.updatedAt)}</dd>
               </div>
             </dl>
+            <CustomerAddressesSection customerId={customerId} customerActive={customer.isActive} readOnly source={addressSource} />
             {customer.notes && (
               <>
                 <h4>Observações</h4>

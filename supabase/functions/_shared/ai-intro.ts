@@ -47,3 +47,30 @@ export function lastInboundText(messages: Array<{ direction?: string; text?: str
   }
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// Saudação PERSONALIZADA da 1ª interação (banco: whatsapp_ai_auto_intro). As peças já chegam prontas e validadas do banco (quem é o cliente,
+// qual nome usar, período do dia no fuso da empresa). Aqui só se compõe o texto. Nada disso entra em prompt de IA.
+// ---------------------------------------------------------------------------
+export interface GreetingParts {
+  greeting: string;   // "Boa tarde, DJ Alex! 😊" | "Boa tarde! 😊"
+  welcome: string;    // "Seja bem-vindo de volta!" | "Seja bem-vindo!"
+  identity: string;   // "Sou a Assistente Virtual da Empresa."
+}
+
+const PART_RE = /^[^\r\n\u2028\u2029]{1,200}$/;
+
+/** Lê as peças do retorno do banco. null = migration antiga / dado inesperado => comportamento anterior (apresentação simples). */
+export function parseGreetingParts(v: unknown): GreetingParts | null {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return null;
+  const o = v as Record<string, unknown>;
+  const ok = (x: unknown): x is string => typeof x === "string" && PART_RE.test(x);
+  if (o.first !== true || !ok(o.greeting) || !ok(o.welcome) || !ok(o.identity)) return null;
+  return { greeting: o.greeting, welcome: o.welcome, identity: o.identity };
+}
+
+/** Saudação pura ("Oi", "Bom dia"): "Boa tarde, DJ Alex! 😊 Seja bem-vindo de volta! Sou a Assistente Virtual da Empresa. Como posso ajudar você hoje?" */
+export const personalGreetingReply = (p: GreetingParts): string => `${p.greeting} ${p.welcome} ${p.identity} Como posso ajudar você hoje?`;
+
+/** 1ª mensagem que JÁ traz pedido/pergunta: cumprimento breve + identificação, e a resposta normal segue no parágrafo seguinte. */
+export const personalPrefix = (p: GreetingParts): string => `${p.greeting} ${p.identity}`;

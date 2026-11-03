@@ -58,6 +58,8 @@ export interface OrderState {
   notes: string | null;
   address: { street: string | null; number: string | null; complement: string | null; neighborhood: string | null; city: string | null; state: string | null; cep: string | null; reference: string | null; city_inferred: boolean };
   zone: { id: string; name: string } | null;
+  /** Sugestão do endereço cadastrado (banco): none | offered | confirming | accepted | rejected. Ausente = migration ainda não aplicada. */
+  address_offer?: "none" | "offered" | "confirming" | "accepted" | "rejected";
   delivery_fee: number | string | null;
   fee_waived?: boolean;
   estimated_minutes: number | null;
@@ -411,7 +413,53 @@ export function matchItem(items: OrderItem[], text: string | null): ItemMatch {
 // ---------------------------------------------------------------------------
 // Templates (nada de texto livre do modelo)
 // ---------------------------------------------------------------------------
-export const MSG_REPROMPT = "Para enviar o pedido, responda CONFIRMAR. Se quiser alterar algo, é só me dizer.";
+// ---------------------------------------------------------------------------
+// Endereço cadastrado do cliente (sugestão). Perguntas FIXAS: a inicial NÃO revela o endereço; ele só aparece depois do "sim".
+// ---------------------------------------------------------------------------
+export const MSG_ADDRESS_OFFER = "Encontrei um endereço cadastrado para este número. Deseja utilizá-lo neste pedido?";
+export const MSG_ADDRESS_ANOTHER = "Sem problemas! Me informe o endereço de entrega para este pedido (rua e número, bairro e cidade).";
+export const MSG_ADDRESS_UNAVAILABLE = "Esse endereço cadastrado não está mais disponível. Me informe o endereço de entrega para este pedido (rua e número, bairro e cidade).";
+export const renderAddressConfirm = (display: string): string => `O endereço cadastrado é:\n${plain(display, 200)}\nPosso usar este endereço na entrega? (sim ou não)`;
+const ADDRESS_CONFIRM_RE = /^O endereço cadastrado é:/;
+/** O endereço cadastrado mostrado ao cliente NÃO volta em nenhum prompt: no histórico enviado ao modelo a mensagem vira um texto sem endereço. */
+export function maskSavedAddress(text: string): string {
+  return ADDRESS_CONFIRM_RE.test(text) ? "O endereço cadastrado é: (omitido). Posso usar este endereço na entrega? (sim ou não)" : text;
+}
+
+const YES_EXACT = new Set([
+  "sim", "s", "ss", "simm", "claro", "claro que sim", "pode", "pode sim", "pode ser", "pode usar", "pode utilizar", "quero", "quero sim", "uhum", "aham", "isso", "isso mesmo",
+  "sim pode", "sim quero", "sim pode usar", "sim por favor", "por favor", "esse mesmo", "esse mesmo endereco", "o mesmo", "o mesmo endereco", "mesmo endereco", "usar", "usar esse", "usar esse endereco",
+  "correto", "esta correto", "esta certo", "certo", "ok", "okay", "blz", "beleza", "confirmo", "confirmar", "confirma", "confirmado", "isso ai", "positivo", "com certeza", "yes",
+]);
+const NO_EXACT = new Set([
+  "nao", "n", "nao quero", "nao pode", "nao obrigado", "nao obrigada", "nao nao", "negativo", "outro", "outro endereco", "quero outro", "quero outro endereco", "em outro endereco", "outro local",
+  "nao e esse", "nao e esse endereco", "esse nao", "esse endereco nao", "errado", "esta errado", "mudou", "mudei", "mudei de endereco", "nao e mais esse", "nao moro mais la", "nao usar", "nao use",
+  "entregar em outro endereco", "entregar em outro lugar", "e outro", "e outro endereco", "mudou de endereco",
+]);
+export type YesNoClass = "yes" | "no" | "none";
+/** Resposta ao endereço sugerido: SÓ frases aprovadas (sem pergunta, sem endereço junto). Qualquer outra coisa => "none" (fluxo normal). */
+export function classifyYesNo(text: string): YesNoClass {
+  const f = flat(text).replace(/\s+(por favor|obrigado|obrigada|pfv|pf)$/, "");
+  if (!f || f.includes("?")) return "none";
+  if (YES_EXACT.has(f)) return "yes";
+  if (NO_EXACT.has(f)) return "no";
+  return "none";
+}
+/** Lote (cauda sem resposta): decide pela ÚLTIMA mensagem, e só se TODAS forem sim/não do mesmo tipo (mistura => none, o fluxo normal processa). */
+export function classifyYesNoBatch(texts: string[]): YesNoClass {
+  if (texts.length === 0) return "none";
+  const cls = texts.map(classifyYesNo);
+  const last = cls[cls.length - 1];
+  return last !== "none" && cls.every((c) => c === last) ? last : "none";
+}
+/** O próximo passo do pedido é o endereço (nenhuma pendência anterior na ordem de nextQuestion). */
+export function addressIsNext(s: OrderState): boolean {
+  const codes = new Set(s.pendings.map((p) => p.code));
+  for (const c of ["item_unavailable", "item_options_invalid", "item_options_required", "no_items", "below_minimum", "delivery_disabled", "pickup_disabled", "fulfillment"]) if (codes.has(c)) return false;
+  return codes.has("address_incomplete");
+}
+
+export const MSG_REPROMPT ="Para enviar o pedido, responda CONFIRMAR. Se quiser alterar algo, é só me dizer.";
 export const MSG_NOT_FOUND = "Não encontrei esse item no cardápio. Pode me dizer o nome de outro item?";
 /** Pergunta ANTIGA (já presente em conversas existentes): "Quer que eu mostre as opções disponíveis?". Um "sim" a ela mostra o cardápio. */
 export const LEGACY_SHOW_OPTIONS_RE = /quer que eu mostre as op[cç][oõ]es/i;

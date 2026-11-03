@@ -15,6 +15,7 @@ import {
   boundedTail, countChoiceAsks, parseChoiceQuestion, parseLetterReply, pickChoice, renderChoice, renderLetterChoice, MSG_CHOICE_EXPIRED, buildOrderSystemPrompt, buildOrderUserBlock, classifyConfirmationBatch, decideQuantity, hasOrderVerb, isCancelIntent, looksLikeItemList, matchItem,
   nextQuestion, parseOrderState, plain, removalIntent, renderAmbiguous, renderAskQuantity, renderCreated, renderPriceChanges, renderSummary,
   renderUnavailable, renderZoneAmbiguous, startsWithQuantity, validateExtraction, brl, PAYMENT_LABELS,
+  MSG_ADDRESS_ANOTHER, MSG_ADDRESS_OFFER, MSG_ADDRESS_UNAVAILABLE, addressIsNext, classifyYesNoBatch, renderAddressConfirm,
   type ExtractedOp, type OrderState,
 } from "./ai-order.ts";
 
@@ -48,7 +49,7 @@ const GENERIC_TYPE_RE = /\b(cervejas?|refrigerantes?|refris?)\b/g;
 // pergunta NOVA (com letras): a que já foi respondida/resolvida NÃO pode voltar pelo caminho de compatibilidade das perguntas antigas
 const LETTER_PROMPT_RE = /Responda [A-E](?: |,|\.)/;
 const EDIT_RE = /(alterar|mudar|trocar|tirar|tira|remover|retirar|adicionar|colocar|coloca) /;
-const OUR_QUESTION_RE = /^(quantos |atendemos mais de um bairro|qual voc[eê] prefere|para .*:|para a entrega|prefere retirada|ser[aá] (entrega|retirada)|como prefere pagar|vai precisar de troco|em nome de quem|o que voc[eê] gostaria|n[aã]o encontrei esse item|n[aã]o encontrei exatamente|n[aã]o consegui identificar|para [^\n]*encontrei est|preciso rever|n[aã]o entregamos|no momento n[aã]o)/;
+const OUR_QUESTION_RE = /^(quantos |atendemos mais de um bairro|qual voc[eê] prefere|para .*:|para a entrega|prefere retirada|ser[aá] (entrega|retirada)|como prefere pagar|vai precisar de troco|em nome de quem|o que voc[eê] gostaria|n[aã]o encontrei esse item|n[aã]o encontrei exatamente|n[aã]o consegui identificar|para [^\n]*encontrei est|preciso rever|n[aã]o entregamos|no momento n[aã]o|encontrei um endere[cç]o cadastrado|o endere[cç]o cadastrado [eé]|sem problemas|esse endere[cç]o cadastrado)/;
 const isOurQuestion = (t: string | null) => !!t && (OUR_QUESTION_RE.test(norm(t).replace(/^anotei[^\n]*\n/, "")) || !!parseChoiceQuestion(t));
 const isMissingFunction = (e: { code?: string; message: string }) => e.code === "42883" || e.code === "PGRST202" || /could not find the function|does not exist/i.test(e.message);
 
@@ -163,6 +164,13 @@ export async function runOrderFlow(io: OrderFlowIo, input: OrderFlowInput): Prom
     // 1c) "sim" à pergunta ANTIGA "Quer que eu mostre as opções disponíveis?" (conversas que ainda a têm no histórico): mostra o cardápio real
     if (texts.length > 0 && lastBot && LEGACY_SHOW_OPTIONS_RE.test(lastBot) && classifyConfirmationBatch(texts) === "ambiguous_ack") {
       return { handled: true, outcome: await io.reply(await menuText(io, input), { outcome: "replied", reason: "order_question" }) };
+    }
+
+    // 1d) ENDEREÇO CADASTRADO (sugestão decidida no banco): "sim"/"não" à pergunta aberta é interpretado por REGRA (nunca pelo modelo). Qualquer outra
+    //     mensagem (ex.: o cliente digitou outro endereço) segue o fluxo normal, e o banco derruba a sugestão sozinho.
+    if (!pendingChoiceBlock && state && texts.length > 0 && (state.address_offer === "offered" || state.address_offer === "confirming")) {
+      const yn = classifyYesNoBatch(texts);
+      if (yn !== "none") return { handled: true, outcome: await handleAddressAnswer(io, input, state, yn) };
     }
 
     // 2a) "confirmar" SEM resumo pendente (repetido depois do pedido, ou antes de o resumo existir): o banco decide
@@ -324,7 +332,7 @@ const clampBody = (b: string) => (b.length > 3900 ? b.slice(0, 3890) + "…" : b
 async function respondFromState(io: OrderFlowIo, input: OrderFlowInput, st: OrderState): Promise<string> {
   if (st.status === "awaiting_confirmation") return io.reply(MSG_REPROMPT, { outcome: "replied", reason: "order_reprompt" });
   if (st.ready) return sendSummaryText(io, input, st, renderSummary(st));
-  return io.reply(nextQuestion(st) ?? "Posso ajudar com mais alguma coisa no pedido?", { outcome: "replied", reason: "order_question" });
+  return io.reply((await addressStep(io, input, st)) ?? nextQuestion(st) ?? "Posso ajudar com mais alguma coisa no pedido?", { outcome: "replied", reason: "order_question" });
 }
 
 // ---------------------------------------------------------------------------
@@ -711,11 +719,91 @@ async function sendComposed(io: OrderFlowIo, input: OrderFlowInput, ex: Extract<
     return sendSummaryText(io, input, st, body);
   }
   if (st) {
-    const q = nextQuestion(st);
+    const q = (await addressStep(io, input, st)) ?? nextQuestion(st);
     return io.reply(clampBody([...head, q ?? "Posso ajudar com mais alguma coisa no pedido?"].join("\n")), { outcome: "replied", reason: "order_question" });
   }
   if (head.length === 0) head.push(MSG_NOT_FOUND);
   return io.reply(clampBody(head.join("\n")), { outcome: "replied", reason: "order_question" });
+}
+
+// ---------------------------------------------------------------------------
+// Endereço cadastrado do cliente (RPCs whatsapp_order_saved_address_offer / whatsapp_order_use_saved_address). O LLM nunca decide quem é o
+// cliente nem qual endereço: o banco escolhe; aqui só se pergunta e se interpreta sim/não por regra. Nada é logado (só códigos).
+// ---------------------------------------------------------------------------
+type AddrCall = { ok: true; d: Record<string, unknown> } | { ok: false };
+/** Chama a RPC do endereço salvo. Função ausente (migration não aplicada) ou erro de leitura => ok:false (o fluxo segue como sempre). */
+async function addressRpc(io: OrderFlowIo, fn: string, args: Record<string, unknown>): Promise<AddrCall> {
+  const r = await io.rpc(fn, args);
+  if (r.error) {
+    if (!isMissingFunction(r.error)) console.error("whatsapp-order: rpc de endereço falhou", { fn, code: r.error.code ?? null });
+    return { ok: false };
+  }
+  if (!isObj(r.data)) return { ok: false };
+  const d = r.data;
+  if (d.result === "blocked") {
+    const reason = String(d.reason ?? "");
+    if (reason === "stale_context") throw new StaleContext();
+    if (reason === "human_control") throw new FlowAbort("aborted_human", "ai_paused");
+    if (reason === "conversation_closed" || reason === "conversation_missing") throw new FlowAbort("aborted_closed", reason);
+    if (reason === "not_active") throw new FlowAbort("not_active", "not_active");
+    return { ok: false };   // módulo/flag desligados no meio do caminho: o endereço é perguntado como sempre
+  }
+  return { ok: true, d };
+}
+
+/** Pergunta a dar ao cliente quando o PRÓXIMO passo do pedido é o endereço de entrega e há endereço cadastrado; null = fluxo normal. */
+async function addressStep(io: OrderFlowIo, input: OrderFlowInput, st: OrderState): Promise<string | null> {
+  if (st.fulfillment !== "delivery" || !st.address_offer || !addressIsNext(st)) return null;
+  const base = { p_job_id: input.jobId, p_expected_latest: input.latest };
+  if (st.address_offer === "none") {
+    if (st.address.street || st.address.neighborhood) return null;   // o cliente já começou a informar o endereço
+    const r = await addressRpc(io, "whatsapp_order_saved_address_offer", { ...base, p_action: "offer" });
+    return r.ok && (r.d.result === "offered" || r.d.result === "already_offered") ? MSG_ADDRESS_OFFER : null;
+  }
+  if (st.address_offer === "offered") return MSG_ADDRESS_OFFER;
+  if (st.address_offer === "confirming") {
+    const r = await addressRpc(io, "whatsapp_order_saved_address_offer", { ...base, p_action: "accept" });
+    return r.ok && r.d.result === "confirm_address" && typeof r.d.display === "string" ? renderAddressConfirm(r.d.display) : null;
+  }
+  return null;
+}
+
+async function handleAddressAnswer(io: OrderFlowIo, input: OrderFlowInput, st: OrderState, yn: "yes" | "no"): Promise<string> {
+  const base = { p_job_id: input.jobId, p_expected_latest: input.latest };
+  const resume = async (cur: OrderState | null, lead: string | null) => {
+    const s = cur ?? st;
+    if (s.ready) return sendSummaryText(io, input, s, `${lead ? lead + "\n\n" : ""}${renderSummary(s)}`);
+    return io.reply(clampBody([lead, nextQuestion(s) ?? MSG_ADDRESS_ANOTHER].filter(Boolean).join("\n")), { outcome: "replied", reason: "order_question" });
+  };
+  if (yn === "no") {
+    const r = await addressRpc(io, "whatsapp_order_saved_address_offer", { ...base, p_action: "decline" });
+    if (r.ok && (r.d.result === "declined" || r.d.result === "not_offered")) return io.reply(MSG_ADDRESS_ANOTHER, { outcome: "replied", reason: "order_question" });
+    return resume(r.ok ? parseOrderState(r.d.state) : null, null);
+  }
+  if (st.address_offer === "offered") {
+    const r = await addressRpc(io, "whatsapp_order_saved_address_offer", { ...base, p_action: "accept" });
+    if (r.ok && r.d.result === "confirm_address" && typeof r.d.display === "string") return io.reply(renderAddressConfirm(r.d.display), { outcome: "replied", reason: "order_question" });
+    if (r.ok && r.d.result === "already_used") return resume(parseOrderState(r.d.state), null);
+    return io.reply(MSG_ADDRESS_ANOTHER, { outcome: "replied", reason: "order_question" });   // sem endereço disponível: pede o endereço normalmente
+  }
+  // confirming + sim: confirmação final => usa o endereço cadastrado (zona, taxa e total são recalculados pelo banco)
+  const r = await addressRpc(io, "whatsapp_order_use_saved_address", base);
+  if (!r.ok) return io.reply(MSG_ADDRESS_ANOTHER, { outcome: "replied", reason: "order_question" });
+  const d = r.d;
+  const cur = parseOrderState(d.state);
+  switch (String(d.result ?? "")) {
+    case "used": {
+      if (d.address_status === "ambiguous_zone" && Array.isArray(d.zone_candidates)) {
+        const q = renderZoneAmbiguous((d.zone_candidates as Array<{ neighborhood?: unknown }>).map((c) => String(c.neighborhood ?? "")).filter(Boolean));
+        return io.reply(clampBody(`Endereço anotado.\n${q}`), { outcome: "replied", reason: "order_question" });
+      }
+      return resume(cur, "Endereço anotado.");   // fora da zona: nextQuestion pede outro endereço ou retirada
+    }
+    case "already_used": return resume(cur, null);
+    case "address_unavailable":
+    case "address_rejected": return io.reply(MSG_ADDRESS_UNAVAILABLE, { outcome: "replied", reason: "order_question" });
+    default: return io.reply(MSG_ADDRESS_ANOTHER, { outcome: "replied", reason: "order_question" });   // not_confirming / no_customer / invalid
+  }
 }
 
 export const __test = { isOurQuestion, MSG_TOO_BIG };

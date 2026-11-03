@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useAuth } from "../../app/useAuth";
 import { formatCents } from "../../lib/money";
+import type { AddressesSource } from "./CustomerAddressesSection";
 import { ActiveBadge, CustomerDetailDialog, CustomerFormDialog } from "./CustomerDialogs";
 import { CUSTOMERS_PAGE, supabaseCustomersSource, type CustomersSource } from "./customersApi";
 import {
@@ -38,7 +39,7 @@ function SummaryCard({ label, value, hint }: { label: string; value: number; hin
 
 // Cadastros → Clientes (owner/admin, rota /app). Cadastro por empresa; cliente nunca é apagado, só inativado.
 // Toda regra é do servidor; a tela atualiza pelo botão, por ação local e ao voltar para a aba (sem Realtime).
-export function CustomersPage({ source = supabaseCustomersSource }: { source?: CustomersSource }) {
+export function CustomersPage({ source = supabaseCustomersSource, addressSource }: { source?: CustomersSource; addressSource?: AddressesSource }) {
   const { activeMembership } = useAuth();
   const companyId = activeMembership?.companyId ?? null;
 
@@ -295,14 +296,15 @@ export function CustomersPage({ source = supabaseCustomersSource }: { source?: C
         </>
       )}
 
-      {dialog?.kind === "new" && companyId && <CustomerFormDialog source={source} companyId={companyId} customerId={null} onDone={done} onClose={() => setDialog(null)} />}
+      {dialog?.kind === "new" && companyId && <CustomerFormDialog source={source} addressSource={addressSource} companyId={companyId} customerId={null} onDone={done} onClose={() => setDialog(null)} />}
       {dialog?.kind === "edit" && companyId && (
-        <CustomerFormDialog key={dialog.id} source={source} companyId={companyId} customerId={dialog.id} onDone={done} onClose={() => setDialog(null)} />
+        <CustomerFormDialog key={dialog.id} source={source} addressSource={addressSource} companyId={companyId} customerId={dialog.id} onDone={done} onClose={() => setDialog(null)} />
       )}
       {dialog?.kind === "detail" && (
         <CustomerDetailDialog
           key={dialog.id}
           source={source}
+          addressSource={addressSource}
           customerId={dialog.id}
           onEdit={() => setDialog({ kind: "edit", id: dialog.id })}
           onToggleActive={(c) => void toggleActive(c.id, c.name, !c.isActive)}
