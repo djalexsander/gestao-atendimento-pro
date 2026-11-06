@@ -7,6 +7,8 @@ import path from "node:path";
 // suítes novas que precisam das migrations POSTERIORES à 095000 (as antigas ainda filtram por `<`).
 // Uso:  const { pg, ck, as, su, errHas, summary } = await loadAll();
 export async function loadAll(dir = process.env.MIG_DIR ?? "D:/orça facil/supabase/migrations", { skipActivation = false, legacyIaMirror = true } = {}) {
+  // Etapa 6: HOMOLOG_REAL=1 roda a MESMA suíte contra o PostgreSQL 17 local e descartável (container courtesy-homolog-pg, só 127.0.0.1) em vez do PGlite.
+  if (process.env.HOMOLOG_REAL === "1") return (await import("../../scripts/courtesies/homolog/real-db.mjs")).loadAllReal(dir, { skipActivation, legacyIaMirror });
   const pg = new PGlite();
   await pg.exec(`
     create role anon nologin; create role authenticated nologin; create role service_role nologin bypassrls;

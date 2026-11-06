@@ -23,6 +23,9 @@ export interface AccessInfo {
   trial_ends_at: string | null; // só no trial
   grace_until: string | null; // AAAA-MM-DD, último dia com escrita normal
   restriction_from: string | null; // AAAA-MM-DD, primeiro dia somente leitura
+  // 5C-3 (migration 20261122010000). OPCIONAIS: ambientes sem a migration não os enviam e o front cai no texto genérico.
+  courtesy_preserved?: boolean; // F1: cortesia original preservada enquanto outro plano aguarda pagamento (sem prazo)
+  bridge_until?: string | null; // ponte 2C ativa: instante real em que o acesso temporário termina
 }
 
 export const READ_ONLY_MESSAGE = "Esta empresa está em modo somente leitura por causa da assinatura.";
@@ -117,6 +120,41 @@ export function trialDaysLeft(endsAt: string | null, now: Date): number | null {
   return Math.max(0, Math.ceil(ms / 86_400_000));
 }
 
+/** pending_payment com a operação liberada pelo banco e SEM dado explícito (ambiente antigo): não diz que está bloqueado e não promete prazo. */
+export const PENDING_PAYMENT_OPEN_TEXT = "Pagamento pendente: sua empresa está operando com acesso temporário. Pague a cobrança inicial para regularizar a assinatura.";
+
+/** F1: sem prazo, sem prometer acesso depois do encerramento manual da cortesia nem depois da ativação do plano novo. */
+export const COURTESY_PRESERVED_TEXT =
+  "Sua empresa mantém o acesso da cortesia enquanto o pagamento do novo plano está pendente. O novo plano só vale após a confirmação do pagamento; se a cortesia for encerrada antes disso, a operação será bloqueada.";
+
+const validDate = (v: string | null | undefined): Date | null => {
+  if (!v) return null;
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? null : d;
+};
+
+/** "07/10/2026, 09:00" em America/Sao_Paulo (sem depender de bibliotecas: este arquivo é puro e testável à parte). */
+export function fmtInstantSP(d: Date): string {
+  return d.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo", day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+/** Ponte 2C: data/hora REAL do fim (America/Sao_Paulo) e o aviso de bloqueio se o pagamento não for confirmado até lá. */
+export function bridgeText(until: Date, now: Date): string {
+  if (until.getTime() <= now.getTime()) return "O prazo do acesso temporário terminou. Confirme o pagamento para evitar o bloqueio da operação.";
+  return `Acesso temporário até ${fmtInstantSP(until)}. Se o pagamento não for confirmado até esse prazo, a operação será bloqueada.`;
+}
+
+/**
+ * Texto de pending_payment com a operação LIBERADA pelo banco, só com campos REAIS de tenant_get_access_state:
+ * bridge_until -> prazo real da ponte; courtesy_preserved -> mensagem da F1 (sem prazo); nenhum dos dois (ambiente sem a migration) -> texto genérico.
+ */
+export function temporaryAccessText(info: AccessInfo, now: Date): string {
+  const until = validDate(info.bridge_until);
+  if (until) return bridgeText(until, now);
+  if (info.courtesy_preserved === true) return COURTESY_PRESERVED_TEXT;
+  return PENDING_PAYMENT_OPEN_TEXT;
+}
+
 export function bannerFor(info: AccessInfo | null, now: Date): Banner | null {
   if (!info) return null;
   const action = info.is_owner;
@@ -128,7 +166,9 @@ export function bannerFor(info: AccessInfo | null, now: Date): Banner | null {
       return { tone: "info", text, action };
     }
     case "pending_payment":
-      return { tone: "warn", text: "Pagamento necessário para liberar a operação.", action };
+      // write_blocked=false em pending_payment = acesso temporário liberado pelo banco (ponte de acesso ou cortesia preservada). O banco NÃO envia o prazo
+      // da ponte ao app (tenant_get_access_state só traz estado e datas de teste/carência), então nenhum prazo é exibido nem inventado aqui.
+      return { tone: "warn", text: info.write_blocked === false ? temporaryAccessText(info, now) : "Pagamento necessário para liberar a operação.", action };
     case "grace":
     case "past_due": {
       const until = fmtDayMonth(info.grace_until);
@@ -299,7 +339,7 @@ export function pageAlertFor(info: AccessInfo | null, now: Date): PageAlert | nu
       return { tone: "info", text: `Teste gratuito — ${left}.`, emphasizePay: false };
     }
     case "pending_payment":
-      return { tone: "warn", text: "Pagamento necessário para liberar a operação.", emphasizePay: true };
+      return { tone: "warn", text: info.write_blocked === false ? temporaryAccessText(info, now) : "Pagamento necessário para liberar a operação.", emphasizePay: true };
     case "grace":
     case "past_due": {
       const until = fmtDayMonth(info.grace_until);

@@ -106,4 +106,5 @@ export const ACCESS_STATE_TEXT: Record<string, string> = {
   trial_canceled: "Grátis cancelado (somente leitura)",
   canceled: "Cancelada (somente leitura)",
   unmanaged: "Sem registro comercial (liberada)",
+  courtesy: "Cortesia (acesso operacional liberado)",
 };

@@ -10,6 +10,8 @@ import {
   subscribeCompany,
 } from "../features/master/subscriptionApi";
 import { CompanyInvoices } from "../features/master/CompanyInvoices";
+import { CompanyCourtesies } from "../features/master/CompanyCourtesies";
+import { subInfoFrom } from "../features/master/courtesyActionLogic";
 import { BillingStatus } from "../features/master/BillingStatus";
 import { PendingModuleChangeCard } from "../features/master/PendingModuleChangeCard";
 import { SubscriptionTimeline } from "../features/master/SubscriptionTimeline";
@@ -42,6 +44,8 @@ export function MasterCompanyDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
+  // cortesia de plano autorizada: leva o Master ao formulário EXISTENTE "Contratar plano", já com o plano da cortesia (sem contratação paralela)
+  const [suggestedPlanId, setSuggestedPlanId] = useState<string | null>(null);
   // Contador de dados carregados: as chaves dos painéis usam ele (e não reloadKey)
   // para remontar só quando o detalhe novo chegou, evitando estado inicial obsoleto.
   const [loadedVersion, setLoadedVersion] = useState(0);
@@ -63,6 +67,11 @@ export function MasterCompanyDetailPage() {
       cancelled = true;
     };
   }, [id, reloadKey]);
+
+  function startContract(planId: string) {
+    setSuggestedPlanId(planId);
+    window.setTimeout(() => document.getElementById("mst-subscribe-anchor")?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+  }
 
   if (loading) return <p>Carregando empresa…</p>;
   if (error || !detail) return <div className="form-error">{error ?? "Empresa não encontrada."}</div>;
@@ -103,7 +112,9 @@ export function MasterCompanyDetailPage() {
         onChanged={() => setReloadKey((k) => k + 1)}
       />
 
-      <h3 style={{ fontSize: 18 }}>Assinatura</h3>
+      <h3 style={{ fontSize: 18 }} id="mst-subscribe-anchor">
+        Assinatura
+      </h3>
       {error && <div className="form-error">{error}</div>}
       {detail.subscription ? (
         <SubscriptionPanel
@@ -116,7 +127,8 @@ export function MasterCompanyDetailPage() {
         />
       ) : (
         <SubscribeForm
-          key={`form-${loadedVersion}`}
+          key={`form-${loadedVersion}-${suggestedPlanId ?? ""}`}
+          suggestedPlanId={suggestedPlanId}
           companyId={detail.company.id}
           trial={detail.trial}
           plans={plans}
@@ -134,6 +146,8 @@ export function MasterCompanyDetailPage() {
       {detail.subscription && (
         <SubscriptionTimeline key={`timeline-${loadedVersion}`} subscriptionId={detail.subscription.id} />
       )}
+
+      <CompanyCourtesies key={`courtesies-${loadedVersion}`} companyId={detail.company.id} companyName={detail.company.name} plans={plans} modules={modules} reservedPlanCode={detail.trial.reserved_plan_code} subscription={subInfoFrom(detail.subscription)} onStartContract={detail.subscription ? undefined : startContract} />
 
       <CompanyInvoices
         key={`invoices-${loadedVersion}`}
@@ -164,17 +178,19 @@ function SubscribeForm({
   plans,
   modules,
   onChanged,
+  suggestedPlanId,
 }: {
   companyId: string;
   trial: CompanyTrial;
   plans: CatalogPlan[];
   modules: CatalogModule[];
   onChanged: () => void;
+  suggestedPlanId?: string | null;
 }) {
   // O registro de catálogo reservado (code do backend) é só apresentação do período grátis: o backend
   // recusa contratá-lo, então nem aparece aqui. O período grátis em si nem depende dele.
   const activePlans = plans.filter((p) => p.isActive && p.code !== trial.reserved_plan_code);
-  const [planId, setPlanId] = useState(activePlans[0]?.id ?? "");
+  const [planId, setPlanId] = useState(activePlans.find((p) => p.id === suggestedPlanId)?.id ?? activePlans[0]?.id ?? "");
   const [extraIds, setExtraIds] = useState<string[]>([]);
   const selectedPlan = activePlans.find((p) => p.id === planId);
   const extraCandidates = modules.filter((m) => m.isActive && !selectedPlan?.moduleIds.includes(m.id));
@@ -205,6 +221,11 @@ function SubscribeForm({
           Há um <strong>período grátis em andamento</strong>: contratar um plano pago o encerra agora (convertido; os
           dias restantes não continuam valendo) e gera a cobrança inicial hoje. A assinatura fica aguardando o
           pagamento inicial.
+        </p>
+      )}
+      {suggestedPlanId && activePlans.some((p) => p.id === suggestedPlanId) && (
+        <p className="court-notice" role="note">
+          Plano da cortesia autorizada já selecionado. Ao contratar, a cortesia é convertida na mesma operação e a ponte de acesso (prazo definido na autorização) mantém a empresa operando até o Pix ser pago. Módulos adicionais que estejam em cortesia aberta serão recusados pelo banco.
         </p>
       )}
       {error && <div className="form-error">{error}</div>}

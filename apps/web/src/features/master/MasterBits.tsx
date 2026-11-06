@@ -17,8 +17,9 @@ const SUB_TONE: Record<SubscriptionStatus, Tone> = {
 };
 const INV_TONE: Record<InvoiceStatus, Tone> = { paid: "ok", open: "warn", overdue: "bad", void: "muted" };
 
-export function Badge({ tone, children }: { tone: Tone; children: ReactNode }) {
-  return <span className={`mst-badge mst-badge-${tone}`}>{children}</span>;
+/** `wrap`: rótulos longos (ex.: estado de acesso com prazo da ponte) quebram em linhas em vez de alargar a tabela. */
+export function Badge({ tone, children, wrap = false }: { tone: Tone; children: ReactNode; wrap?: boolean }) {
+  return <span className={`mst-badge mst-badge-${tone}${wrap ? " mst-badge-wrap" : ""}`}>{children}</span>;
 }
 
 // Assinatura vigente manda; sem ela, mostra o período grátis quando ele é a situação atual.
