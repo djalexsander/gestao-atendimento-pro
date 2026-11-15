@@ -10,6 +10,11 @@ export const FACEBOOK_SDK_URL = "https://connect.facebook.net/en_US/sdk.js";
 export const FACEBOOK_SDK_VERSION = "v26.0";
 /** Depois que o authorization code chega, o evento FINISH (waba/número) precisa chegar em até este tempo. O code vale ~30 s. */
 export const SIGNUP_FINISH_WAIT_MS = 15_000;
+/** Evento de conclusão da Coexistence (documentação da Meta). Só uma DICA: o backend confirma o modo pelo Graph API. */
+export const COEXISTENCE_FINISH_EVENT = "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING";
+/** extras do FB.login para o onboarding de quem já usa o app WhatsApp Business (Coexistence). */
+export const COEXISTENCE_FEATURE_TYPE = "whatsapp_business_app_onboarding";
+export const COEXISTENCE_SESSION_INFO_VERSION = "3";
 /** Limite de envios de PIN numa mesma tela (cada envio é uma ação do usuário; nunca há tentativa automática). */
 export const MAX_PIN_SUBMISSIONS = 3;
 
@@ -92,7 +97,7 @@ export function isMetaOrigin(origin: unknown): boolean {
 }
 
 export type SignupMessage =
-  | { kind: "finish"; wabaId: string; phoneNumberId: string }
+  | { kind: "finish"; wabaId: string; phoneNumberId: string | null; coexistence: boolean }
   | { kind: "cancel" }
   | { kind: "error" }
   | { kind: "unsupported" };
@@ -121,9 +126,17 @@ export function parseSignupMessage(origin: unknown, data: unknown): SignupMessag
     const waba = payload.waba_id;
     const phone = payload.phone_number_id;
     if (typeof waba !== "string" || !ID_RE.test(waba) || typeof phone !== "string" || !ID_RE.test(phone)) return { kind: "error" };
-    return { kind: "finish", wabaId: waba, phoneNumberId: phone };
+    return { kind: "finish", wabaId: waba, phoneNumberId: phone, coexistence: false };
   }
-  if (event.startsWith("FINISH_")) return { kind: "unsupported" }; // Coexistence/apenas WABA etc.: fora desta etapa
+  if (event === COEXISTENCE_FINISH_EVENT) {
+    // Coexistence (app WhatsApp Business + Cloud API): a Meta documenta só waba_id; phone_number_id é opcional e, se vier, é só dica.
+    const waba = payload.waba_id;
+    const phone = payload.phone_number_id;
+    if (typeof waba !== "string" || !ID_RE.test(waba)) return { kind: "error" };
+    if (phone !== undefined && phone !== null && (typeof phone !== "string" || !ID_RE.test(phone))) return { kind: "error" };
+    return { kind: "finish", wabaId: waba, phoneNumberId: typeof phone === "string" ? phone : null, coexistence: true };
+  }
+  if (event.startsWith("FINISH_")) return { kind: "unsupported" }; // apenas WABA, só acesso à API etc.: fora do escopo
   if (event === "ERROR") return { kind: "error" };
   if (event === "CANCEL") return typeof payload.error_message === "string" ? { kind: "error" } : { kind: "cancel" };
   return null;

@@ -95,7 +95,7 @@ const after = new Set((await pg.query(inv)).rows.map((r) => r.k));
 const missing = [...baseline].filter((k) => !after.has(k) && !/^fn:(create|update)_customer_address\(/.test(k));
 ck("1.1 todo objeto pré-existente (colunas, índices, constraints, políticas, funções, triggers) continua", missing.length === 0, missing.join(", "));
 const added = [...after].filter((k) => !baseline.has(k));
-ck("1.2 o que foi criado é só da migration nova (nada inesperado)", added.every((k) => /delete_customer|courtes|customer_address|feature_events|customer_recognition|recognition_on|customer_link_source|link_source|address_offer|offer_guard|draft_offer|offer_address|offer_shown|offer_status|auto_link_customer|saved_address|customer_context|greeting|customer_match|customer_synced|draft_events_type_check|conversation_events_type_check|signup|registration|pin_reveal|pilot|token_alert|token_health|token_effective|report_token|report_send|master_whatsapp|connection_alert|connection_set_health|connections|connection_(source|type)|meta_business|token_|registered_at|webhook_subscribed|last_error/.test(k)), added.join(", "));
+ck("1.2 o que foi criado é só da migration nova (nada inesperado)", added.every((k) => /delete_customer|courtes|customer_address|feature_events|customer_recognition|recognition_on|customer_link_source|link_source|address_offer|offer_guard|draft_offer|offer_address|offer_shown|offer_status|auto_link_customer|saved_address|customer_context|greeting|customer_match|customer_synced|draft_events_type_check|conversation_events_type_check|signup|registration|pin_reveal|pilot|token_alert|token_health|token_effective|report_token|report_send|master_whatsapp|coexistence|sync_seed|sync_enabled|lifecycle|sent_via|ingest_echo|connection_alert|connection_set_health|connections|connection_(source|type)|meta_business|token_|registered_at|webhook_subscribed|last_error/.test(k)), added.join(", "));
 
 console.log("\n== 2. conexões antigas: defaults seguros ==");
 const old = await mkConn(A, { mode: "live" });
@@ -221,7 +221,7 @@ const G = await mkCo("G");
 const gr = await ready(G);
 ck("7.1 ids da Meta inválidos: PT400", errHas(await complete(gr.sid, { waba: "abc" }), /inválidos/, "PT400") && errHas(await complete(gr.sid, { pnid: "12" }), /inválidos/, "PT400")
   && errHas(await complete(gr.sid, { biz: "xx" }), /inválidos/, "PT400"));
-ck("7.2 coexistence ainda não suportado: PT400", errHas(await complete(gr.sid, { type: "coexistence" }), /não suportado/, "PT400"));
+ck("7.2 tipo de conexão desconhecido: PT400 (coexistence agora é aceito, mas só sem registered_at)", errHas(await complete(gr.sid, { type: "on_premise" }), /não suportado/, "PT400") && errHas(await complete(gr.sid, { type: "coexistence" }), /registrado/, "PT400"));
 ck("7.3 sem registro do número ou sem assinatura do webhook: PT400", errHas(await complete(gr.sid, { registered_at: null }), /registrado/, "PT400") && errHas(await complete(gr.sid, { subscribed_at: null }), /registrado/, "PT400"));
 ck("7.4 após erros de validação a sessão segue reservada e nenhuma conexão foi criada", (await sess(gr.sid)).status === "reserved"
   && Number((await su("select count(*) n from company_whatsapp_connections where company_id=$1", [G.c])).rows[0].n) === 0);
@@ -396,6 +396,9 @@ const snap = async () => JSON.stringify((await su(`select c.id, c.company_id, c.
   from company_whatsapp_connections c order by c.id`)).rows);
 const msgs = async () => Number((await su("select (select count(*) from whatsapp_messages) + (select count(*) from whatsapp_conversations) n")).rows[0].n);
 const snapBefore = await snap(), msgsBefore = await msgs();
+await pg.exec(fs.readFileSync("D:/orça facil/supabase/rollbacks/whatsapp-coexistence/20261125010000_rollback.sql", "utf8")); // desfaz 1125 (Coexistence: controle da sincronização inicial)
+await pg.exec(fs.readFileSync("D:/orça facil/supabase/rollbacks/whatsapp-coexistence/20261124010000_rollback.sql", "utf8")); // desfaz 1124 (Coexistence: webhooks e proteção da IA)
+await pg.exec(fs.readFileSync("D:/orça facil/supabase/rollbacks/whatsapp-coexistence/20261123010000_rollback.sql", "utf8")); // desfaz 1123 (Coexistence: connection_type na conclusão)
 await pg.exec(fs.readFileSync("D:/orça facil/supabase/rollbacks/courtesies/20261122010000_courtesy_alerts_tenant_access.rollback.sql", "utf8")); // desfaz 1122 (alertas F1 + acesso temporário no tenant)
 await pg.exec(fs.readFileSync("D:/orça facil/supabase/rollbacks/courtesies/20261121010000_courtesy_preserved_access.rollback.sql", "utf8")); // desfaz 1121 (F1 - preservação em pending_payment)
 await pg.exec(fs.readFileSync("D:/orça facil/supabase/rollbacks/courtesies/20261120010000_courtesy_expiry_cycle.rollback.sql", "utf8")); // desfaz 1120 (vencimentos de cortesias)

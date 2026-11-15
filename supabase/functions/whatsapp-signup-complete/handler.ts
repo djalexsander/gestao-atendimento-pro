@@ -14,9 +14,13 @@
 // PIN: aleatório por número (CSPRNG), guardado no Vault ANTES de falar com a Meta; número que já tem PIN exige o PIN do cliente
 // (campo opcional "pin" do corpo), que nunca sobrescreve nada. Registro duvidoso (timeout/rede/5xx) vira "uncertain" e NÃO é
 // repetido sozinho; limite próprio de 3 tentativas/72 h por número; registro concluído nunca é repetido (a reconexão pula o passo).
+// COEXISTENCE (número em uso no app WhatsApp Business e na Cloud API): o modo é decidido AQUI, pelo Graph API (is_on_biz_app +
+// platform_type), nunca pelo navegador (signup_event é só uma dica; se contradiz o Graph, a conexão é recusada). Na Coexistence o número
+// JÁ está registrado: NÃO se gera PIN nem se chama /register (a Meta manda pular esse passo). O phone_number_id pode faltar no evento da Meta:
+// então o número é descoberto pela WABA (exatamente um número em Coexistence; senão recusa). Modo indeterminado = falha fechada.
 // Só o estágio 8 cria/atualiza a conexão, e só depois de 5–7 terem dado certo: nunca fica uma conexão "pronta" pela metade.
 // Nenhuma chamada externa roda dentro de transação do banco. Nada de code, token, secrets, URLs ou corpo da Meta é logado ou devolvido.
-import { classifyRegisterFailure, generatePin, PIN_RE, type SignupMeta } from "../_shared/whatsapp-signup-graph.ts";
+import { classifyRegisterFailure, decideConnectionMode, generatePin, PIN_RE, type ConnectionMode, type SignupMeta } from "../_shared/whatsapp-signup-graph.ts";
 import { isValidGraphVersion } from "../_shared/whatsapp-graph.ts";
 
 export interface RpcError {
@@ -57,6 +61,8 @@ const CORS_HEADERS = {
 const MAX_BODY_BYTES = 16 * 1024;
 const ID_RE = /^[0-9]{5,40}$/;
 const STATE_RE = /^[A-Za-z0-9]{32,128}$/;
+const COEXISTENCE_EVENT = "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING";
+const MAX_DISCOVERY_PHONES = 5;
 const GENERIC = "Não foi possível concluir a conexão do WhatsApp. Tente novamente.";
 
 function json(body: unknown, status = 200): Response {
@@ -108,11 +114,15 @@ export async function handleWhatsappSignupComplete(req: Request, deps: SignupDep
   const state = body.state;
   const code = body.code;
   const wabaId = body.waba_id;
-  const phoneNumberId = body.phone_number_id;
+  const phoneHint = body.phone_number_id; // só dica (opcional na Coexistence)
+  const signupEvent = body.signup_event; // só dica; o modo real vem do Graph API
   // PIN de verificação em duas etapas JÁ existente no número (opcional). Só circula no corpo HTTPS; nunca é logado nem devolvido.
   const customerPin = body.pin;
   if (typeof state !== "string" || !STATE_RE.test(state) || typeof code !== "string" || code.length < 1 || code.length > 2000
-      || typeof wabaId !== "string" || !ID_RE.test(wabaId) || typeof phoneNumberId !== "string" || !ID_RE.test(phoneNumberId)
+      || typeof wabaId !== "string" || !ID_RE.test(wabaId) || (phoneHint !== undefined && phoneHint !== null && (typeof phoneHint !== "string" || !ID_RE.test(phoneHint)))
+      || (signupEvent !== undefined && signupEvent !== null && signupEvent !== "FINISH" && signupEvent !== COEXISTENCE_EVENT)
+      // sem phone_number_id só é aceitável no evento de Coexistence (o número é descoberto pela WABA)
+      || ((phoneHint === undefined || phoneHint === null) && signupEvent !== COEXISTENCE_EVENT)
       || (customerPin !== undefined && customerPin !== null && (typeof customerPin !== "string" || !PIN_RE.test(customerPin)))) {
     return json({ error: "Requisição inválida." }, 400);
   }
@@ -182,8 +192,44 @@ export async function handleWhatsappSignupComplete(req: Request, deps: SignupDep
     return abort("waba_lookup", "meta_waba_lookup", denied ? 400 : metaStatus(phones),
       denied ? "Não foi possível validar a conta do WhatsApp Business informada." : "A Meta não respondeu. Tente novamente.", metaDetail(phones));
   }
-  const phone = phones.phones.find((p) => p.id === phoneNumberId);
-  if (!phone) return abort("phone_validation", "phone_not_in_waba", 400, "O número informado não pertence à conta do WhatsApp Business conectada.");
+  // 3b) número e MODO, ambos decididos pela Meta (token do cliente), nunca pelo navegador
+  const modeFail = (r: { kind: string; status?: number; code?: string }) =>
+    abort("mode_check", "mode_check_failed", metaStatus(r), "Não foi possível confirmar o tipo de conexão do número na Meta. Tente novamente.", metaDetail(r));
+  let phone: (typeof phones.phones)[number];
+  let mode: ConnectionMode;
+  if (typeof phoneHint === "string") {
+    const found = phones.phones.find((p) => p.id === phoneHint);
+    if (!found) return abort("phone_validation", "phone_not_in_waba", 400, "O número informado não pertence à conta do WhatsApp Business conectada.");
+    phone = found;
+    const st = await deps.meta.getPhoneStatus({ version, phoneNumberId: phone.id, token });
+    if (!st.ok) return modeFail(st);
+    // SÓ resposta EXPLÍCITA da Meta decide (is_on_biz_app true/false). Campo ausente/ambíguo NUNCA é interpretado como Cloud API:
+    // registrar um número do app WhatsApp Business pode interferir no app do cliente. Sem evidência, a conexão é interrompida.
+    const decided = decideConnectionMode(st);
+    if (!decided) return abort("mode_check", "connection_mode_unknown", 409, "Não foi possível confirmar o tipo de conexão deste número (conexão padrão da API ou aplicativo WhatsApp Business). Por segurança a conexão foi interrompida e nada foi alterado no seu número. Contate o suporte.", { is_on_biz_app: st.isOnBizApp, platform_type: st.platformType });
+    mode = decided;
+  } else {
+    // evento de Coexistence sem phone_number_id: procura na WABA o ÚNICO número em uso no app Business + Cloud API
+    if (phones.phones.length === 0 || phones.phones.length > MAX_DISCOVERY_PHONES) {
+      return abort("phone_discovery", "phone_not_resolved", 400, "Não foi possível identificar o número conectado. Contate o suporte.", { count: phones.phones.length });
+    }
+    const matches: (typeof phones.phones) = [];
+    for (const cand of phones.phones) {
+      const st = await deps.meta.getPhoneStatus({ version, phoneNumberId: cand.id, token });
+      if (!st.ok) return modeFail(st);
+      if (decideConnectionMode(st) === "coexistence") matches.push(cand);
+    }
+    if (matches.length !== 1) {
+      return abort("phone_discovery", "phone_not_resolved", 400, "Não foi possível identificar o número conectado. Contate o suporte.", { matches: matches.length });
+    }
+    phone = matches[0];
+    mode = "coexistence";
+  }
+  const phoneNumberId = phone.id;
+  // a dica do navegador diz Coexistence, mas a Meta diz que não é: recusa (nada é registrado nem gravado)
+  if (signupEvent === COEXISTENCE_EVENT && mode !== "coexistence") {
+    return abort("mode_check", "mode_mismatch", 409, "O número não está em uso no aplicativo WhatsApp Business. Conecte novamente escolhendo a opção correta.");
+  }
 
   // 4) conflitos locais ANTES de qualquer efeito na Meta (o banco decide de novo, de forma atômica, no estágio 8)
   const owner = await deps.findPhoneOwner(phoneNumberId).catch(() => undefined);
@@ -197,6 +243,12 @@ export async function handleWhatsappSignupComplete(req: Request, deps: SignupDep
   }
 
   // 4b) estado do registro do número na Meta (decide: pular, registrar ou exigir o PIN do cliente). Não devolve PIN.
+  // (Coexistence: sem registro, sem PIN, sem linha de registro; o número já está registrado no app)
+  let registrationId: string | null = null;
+  let action = "";
+  let prepData: Record<string, unknown> = {};
+  const hasCustomerPin = typeof customerPin === "string" && mode === "cloud_api";
+  if (mode === "cloud_api") {
   const prep = await rpc(deps, "whatsapp_registration_prepare", { p_session_id: sessionId, p_phone_number_id: phoneNumberId, p_waba_id: wabaId });
   if (prep.error || !isObj(prep.data)) return abort("registration_prepare", "registration_prepare_failed", 500, GENERIC, { rpc_code: prep.error?.code ?? null });
   if (prep.data.ok !== true) {
@@ -207,11 +259,12 @@ export async function handleWhatsappSignupComplete(req: Request, deps: SignupDep
     if (e === "registration_uncertain") return abort("registration_prepare", "registration_uncertain", 409, "O registro anterior deste número não foi confirmado. Não tente novamente; contate o suporte.");
     return abort("registration_prepare", "registration_prepare_failed", 500, GENERIC, { result: e.slice(0, 40) });
   }
-  const registrationId = String(prep.data.registration_id);
-  const action = String(prep.data.action);
-  const hasCustomerPin = typeof customerPin === "string";
+  prepData = prep.data;
+  registrationId = String(prep.data.registration_id);
+  action = String(prep.data.action);
   if (action === "need_customer_pin" && !hasCustomerPin) {
     return abort("registration_prepare", "pin_required", 409, "Este número já tem verificação em duas etapas. Informe o PIN atual de 6 dígitos e conecte novamente.");
+  }
   }
 
   // 5) token no Vault (antes de registrar/assinar: se o Vault falhar nada foi alterado na Meta)
@@ -222,10 +275,13 @@ export async function handleWhatsappSignupComplete(req: Request, deps: SignupDep
   }
 
   // 6) registrar o número na Cloud API com o PIN DESTE número (nunca derivado de secret mestre)
-  let registeredAt: string;
-  if (action === "skip") {
+  let registeredAt: string | null;
+  if (mode === "coexistence") {
+    // número já registrado no app Business: NÃO gera PIN, NÃO chama /register. registered_at fica nulo (não registramos nada).
+    registeredAt = null;
+  } else if (action === "skip") {
     // já registrado por nós: não gasta a cota da Meta (10 registros/72 h por número) e ignora qualquer PIN enviado
-    registeredAt = typeof prep.data.registered_at === "string" ? prep.data.registered_at : (deps.now?.() ?? new Date()).toISOString();
+    registeredAt = typeof prepData.registered_at === "string" ? prepData.registered_at : (deps.now?.() ?? new Date()).toISOString();
   } else {
     // 6a) garantir que existe um PIN no Vault ANTES de falar com a Meta (uma queda não pode perder um PIN que a Meta aceitou).
     //      PIN do cliente: substitui o candidato ainda não registrado. Sem PIN guardado: gera um aleatório (CSPRNG). Se outra sessão
@@ -233,7 +289,7 @@ export async function handleWhatsappSignupComplete(req: Request, deps: SignupDep
     if (hasCustomerPin) {
       const sp = await rpc(deps, "whatsapp_registration_store_pin", { p_session_id: sessionId, p_registration_id: registrationId, p_pin: customerPin as string, p_source: "customer" });
       if (sp.error || !isObj(sp.data) || sp.data.ok !== true) return abort("pin_store", "pin_store_failed", 500, GENERIC, { rpc_code: sp.error?.code ?? null });
-    } else if (prep.data.has_stored_pin !== true) {
+    } else if (prepData.has_stored_pin !== true) {
       const sp = await rpc(deps, "whatsapp_registration_store_pin", { p_session_id: sessionId, p_registration_id: registrationId, p_pin: (deps.randomPin ?? generatePin)(), p_source: "generated" });
       const already = !sp.error && isObj(sp.data) && sp.data.error === "pin_already_stored";
       if (!already && (sp.error || !isObj(sp.data) || sp.data.ok !== true)) return abort("pin_store", "pin_store_failed", 500, GENERIC, { rpc_code: sp.error?.code ?? null });
@@ -242,6 +298,17 @@ export async function handleWhatsappSignupComplete(req: Request, deps: SignupDep
     // revogação no meio do caminho: confere a allowlist de novo antes do único efeito irreversível na Meta (registrar o número)
     if ((await deps.pilotAuthorized(companyId).catch(() => null)) !== true) {
       return abort("pilot_gate", "company_not_authorized", 403, SESSION_ERRORS.company_not_authorized[1]);
+    }
+
+    // 6a'') EVIDÊNCIA FRESCA imediatamente antes do único efeito irreversível na Meta: o número só é registrado se a Meta AINDA disser,
+    //      de forma explícita, is_on_biz_app = false (conexão Cloud API convencional). Qualquer outra resposta (ou falha) interrompe
+    //      ANTES de gastar tentativa de registro (nada é registrado, nenhuma tentativa é contada).
+    const guard = await deps.meta.getPhoneStatus({ version, phoneNumberId, token });
+    if (!guard.ok) {
+      return abort("register_guard", "register_guard_unavailable", metaStatus(guard), "Não foi possível confirmar o tipo de conexão do número na Meta antes de registrá-lo. Nada foi registrado. Tente novamente.", metaDetail(guard));
+    }
+    if (guard.isOnBizApp !== false) {
+      return abort("register_guard", "register_blocked_not_cloud_api", 409, "Não foi possível confirmar que este número usa a conexão padrão da API; por segurança ele NÃO foi registrado e nada foi alterado no seu número. Contate o suporte.", { is_on_biz_app: guard.isOnBizApp, platform_type: guard.platformType });
     }
 
     // 6b) UMA tentativa auditada e limitada (3 por número em 72 h); devolve o PIN do Vault para ESTA chamada. Nada é repetido sozinho.
@@ -308,7 +375,7 @@ export async function handleWhatsappSignupComplete(req: Request, deps: SignupDep
     p_meta_business_id: null, // não verificável sem debug_token (pendência documentada)
     p_registered_at: registeredAt,
     p_webhook_subscribed_at: subscribedAt,
-    p_connection_type: "cloud_api",
+    p_connection_type: mode, // decidido pelo Graph API, nunca pelo navegador
   };
   let done = await rpc(deps, "whatsapp_signup_complete", args);
   if (done.error) done = await rpc(deps, "whatsapp_signup_complete", args);
@@ -327,13 +394,16 @@ export async function handleWhatsappSignupComplete(req: Request, deps: SignupDep
   }
 
   // associa o registro (PIN) à conexão criada; se falhar, a associação continua localizável por (empresa, número)
-  const linked = await rpc(deps, "whatsapp_registration_link", { p_session_id: sessionId, p_registration_id: registrationId });
-  if (linked.error) console.error("whatsapp-signup-complete: associação do registro pendente");
+  if (registrationId) {
+    const linked = await rpc(deps, "whatsapp_registration_link", { p_session_id: sessionId, p_registration_id: registrationId });
+    if (linked.error) console.error("whatsapp-signup-complete: associação do registro pendente");
+  }
 
   return json({
     ok: true,
     status: String(done.data.status ?? "active"),
     mode: String(done.data.mode ?? "test"),
+    connection_type: mode,
     idempotent: done.data.idempotent === true,
     display_phone_number: phone.displayPhoneNumber,
     business_name: phone.verifiedName,

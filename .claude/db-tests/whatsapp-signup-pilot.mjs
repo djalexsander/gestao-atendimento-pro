@@ -81,6 +81,7 @@ function mkMeta(co, o = {}) {
     async listWabaPhones(a) { rec("list", { waba: a.wabaId, token: a.token }); return o.list ? o.list(a) : { ok: true, phones }; },
     async registerPhone(a) { rec("register", { pin: a.pin, pnid: a.phoneNumberId }); PINS.add(a.pin); return o.register ? o.register(a) : { ok: true }; },
     async subscribeApp(a) { rec("subscribe", { waba: a.wabaId }); return o.subscribe ? o.subscribe(a) : { ok: true }; },
+    async getPhoneStatus() { return { ok: true, isOnBizApp: false, platformType: "NOT_APPLICABLE" }; },
     async listSubscribedAppIds(a) { rec("listSub"); return o.listSub ? o.listSub(a) : { ok: true, appIds: ["111", APP_ID] }; },
   };
 }

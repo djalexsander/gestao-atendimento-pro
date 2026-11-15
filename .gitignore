@@ -38,6 +38,16 @@ dist-ssr/
 !.claude/db-tests/mutate-whatsapp-token-sweep.mjs
 !.claude/db-tests/_acl-audit-token-sweep.mjs
 !.claude/db-tests/gen-token-sweep-rollback.mjs
+# Coexistence (etapas 2-4 + A1): suítes, mutantes e auditoria pré-publicação
+!.claude/db-tests/whatsapp-coexistence-webhook.mjs
+!.claude/db-tests/whatsapp-coexistence-sync.mjs
+!.claude/db-tests/whatsapp-coexistence-a1.mjs
+!.claude/db-tests/mutate-whatsapp-coexistence-webhook.mjs
+!.claude/db-tests/mutate-whatsapp-coexistence-sync.mjs
+!.claude/db-tests/mutate-whatsapp-coexistence-a1.mjs
+!.claude/db-tests/coexistence-e2e.mjs
+!.claude/db-tests/coexistence-compat.mjs
+!.claude/db-tests/coexistence-publication-audit.mjs
 !.claude/db-tests/whatsapp-token-sweep.rollback.sql
 !.claude/db-tests/whatsapp-master-history.mjs
 !.claude/db-tests/mutate-whatsapp-master-history.mjs

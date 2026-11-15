@@ -104,6 +104,7 @@ globalThis.fetch = async (input, init = {}) => {
   if (metaMode === "code_invalid" && u.pathname.endsWith("/oauth/access_token")) return J(400, { error: { message: "code inválido", code: 100 } });
   if (u.pathname.endsWith("/oauth/access_token")) return J(200, { access_token: TOKEN });
   if (u.pathname.endsWith("/phone_numbers")) return J(200, { data: [{ id: PNID, display_phone_number: "+55 11 90000-2222", verified_name: "Loja Runtime" }] });
+  if (u.searchParams.get("fields") === "is_on_biz_app,platform_type") return J(200, { is_on_biz_app: false, platform_type: "NOT_APPLICABLE", id: "x" });
   if (u.pathname.endsWith("/register")) return J(200, { success: true });
   if (u.pathname.endsWith("/subscribed_apps") && (init.method ?? "GET") === "POST") return J(200, { success: true });
   if (u.pathname.endsWith("/subscribed_apps")) return J(200, { data: [{ whatsapp_business_api_data: { id: "1234567890", name: "App" } }] });
@@ -172,16 +173,17 @@ ck("2.7 conexão criada na empresa da sessão (RPCs e leituras via PostgREST com
   && (await su("select secret from vault.secrets where id=$1", [conn.token_secret_id])).rows[0].secret === TOKEN);
 ck("2.8 RPCs chamadas, na ordem do fluxo, e leituras só nas tabelas esperadas (inclui a allowlist, três vezes: antes da Meta, antes do registro e antes de assinar o webhook)", seen.rpc.join(",") === "whatsapp_signup_reserve,whatsapp_registration_prepare,whatsapp_signup_store_token,whatsapp_registration_store_pin,whatsapp_registration_begin_attempt,whatsapp_registration_finish_attempt,whatsapp_signup_complete,whatsapp_registration_link" && seen.rest.every((t) => ["whatsapp_platform_settings", "company_whatsapp_connections", "whatsapp_signup_pilot_companies"].includes(t)) && seen.rest.includes("whatsapp_platform_settings") && seen.rest.filter((t) => t === "whatsapp_signup_pilot_companies").length === 3, seen.rpc.join(",") + " | " + seen.rest.join(","));
 const paths = metaCalls.map((c) => `${c.method} ${c.path.replace(/\/[0-9]{5,}\//, "/{id}/")}`);
-ck("2.9 Meta simulada recebeu, em ordem: troca, números da WABA, registro, assinatura, conferência — todas em /v99.0", metaCalls.length === 5 && metaCalls.every((c) => c.path.startsWith("/v99.0/"))
-  && /oauth\/access_token$/.test(metaCalls[0].path) && /phone_numbers$/.test(metaCalls[1].path) && /register$/.test(metaCalls[2].path) && metaCalls[3].method === "POST" && /subscribed_apps$/.test(metaCalls[3].path) && metaCalls[4].method === "GET", paths.join(" | "));
+ck("2.9 Meta simulada recebeu, em ordem: troca, números da WABA, MODO do número (is_on_biz_app), GUARDA fresca antes do registro, registro, assinatura, conferência — todas em /v99.0", metaCalls.length === 7 && metaCalls.every((c) => c.path.startsWith("/v99.0/"))
+  && /oauth\/access_token$/.test(metaCalls[0].path) && /phone_numbers$/.test(metaCalls[1].path) && metaCalls[2].method === "GET" && metaCalls[2].query.fields === "is_on_biz_app,platform_type" && metaCalls[3].query.fields === "is_on_biz_app,platform_type" && /register$/.test(metaCalls[4].path)
+  && metaCalls[5].method === "POST" && /subscribed_apps$/.test(metaCalls[5].path) && metaCalls[6].method === "GET", paths.join(" | "));
 ck("2.10 troca: client_id do banco + client_secret do ambiente + code; demais chamadas com Bearer do token do cliente (nunca em query)", metaCalls[0].query.client_id === "1234567890" && metaCalls[0].query.client_secret === ENV.WHATSAPP_APP_SECRET && metaCalls[0].query.code === body.code && metaCalls[0].auth === null
-  && metaCalls.slice(1).every((c) => c.auth === `Bearer ${TOKEN}` && !JSON.stringify(c.query).includes(TOKEN)) && /^\d{6}$/.test(metaCalls[2].body.pin) && metaCalls[2].body.messaging_product === "whatsapp");
+  && metaCalls.slice(1).every((c) => c.auth === `Bearer ${TOKEN}` && !JSON.stringify(c.query).includes(TOKEN)) && /^\d{6}$/.test(metaCalls[4].body.pin) && metaCalls[4].body.messaging_product === "whatsapp");
 const regRow = (await su("select r.pin_secret_id, r.state, r.connection_id from whatsapp_number_registrations r where r.phone_number_id=$1", [PNID])).rows[0];
-ck("2.11b PIN individual: registro 'registered', PIN no Vault igual ao enviado à Meta, registro ligado à conexão, PIN fora da resposta", regRow?.state === "registered" && (await su("select secret from vault.secrets where id=$1", [regRow.pin_secret_id])).rows[0].secret === metaCalls[2].body.pin && regRow.connection_id === conn.id && !ok.text.includes(metaCalls[2].body.pin));
+ck("2.11b PIN individual: registro 'registered', PIN no Vault igual ao enviado à Meta, registro ligado à conexão, PIN fora da resposta", regRow?.state === "registered" && (await su("select secret from vault.secrets where id=$1", [regRow.pin_secret_id])).rows[0].secret === metaCalls[4].body.pin && regRow.connection_id === conn.id && !ok.text.includes(metaCalls[4].body.pin));
 ck("2.11 resposta ao navegador sem token, code, secrets, ids de Vault", !ok.text.includes(TOKEN) && !ok.text.includes(body.code) && !ok.text.includes(ENV.WHATSAPP_APP_SECRET) && !ok.text.includes(conn.token_secret_id));
 
 const replay = await call(`jwt-${A.ids.owner}`, body);
-ck("2.12 repetir o mesmo state: 409 e a Meta não é chamada de novo", replay.status === 409 && metaCalls.length === 5);
+ck("2.12 repetir o mesmo state: 409 e a Meta não é chamada de novo", replay.status === 409 && metaCalls.length === 7);
 
 const B = await mkCo("B");
 metaMode = "code_invalid";

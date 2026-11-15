@@ -27,7 +27,24 @@ export interface SignupMeta {
   registerPhone(a: { version: string; phoneNumberId: string; token: string; pin: string }): Promise<{ ok: true } | SignupGraphFailure>;
   subscribeApp(a: { version: string; wabaId: string; token: string }): Promise<{ ok: true } | SignupGraphFailure>;
   listSubscribedAppIds(a: { version: string; wabaId: string; token: string }): Promise<{ ok: true; appIds: string[] } | SignupGraphFailure>;
+  /** GET /{phone_number_id}?fields=is_on_biz_app,platform_type — fonte da verdade do modo (Coexistence x Cloud API). */
+  getPhoneStatus(a: { version: string; phoneNumberId: string; token: string }): Promise<{ ok: true; isOnBizApp: boolean | null; platformType: string | null } | SignupGraphFailure>;
 }
+
+export type ConnectionMode = "cloud_api" | "coexistence";
+/**
+ * Decide o modo SÓ pelo que o Graph API devolveu (nunca pelo navegador).
+ *   is_on_biz_app = true  e platform_type = CLOUD_API -> coexistence (número em uso no app Business E na Cloud API)
+ *   is_on_biz_app = false                             -> cloud_api
+ *   qualquer outra combinação (campo ausente, true com outra plataforma) -> null = INDETERMINADO: o chamador deve falhar fechado
+ *   (registrar um número do app Business pode interferir no app do cliente).
+ */
+export function decideConnectionMode(s: { isOnBizApp: boolean | null; platformType: string | null }): ConnectionMode | null {
+  if (s.isOnBizApp === true) return s.platformType === "CLOUD_API" ? "coexistence" : null;
+  if (s.isOnBizApp === false) return "cloud_api";
+  return null;
+}
+
 
 const isObj = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 const str = (v: unknown): string | null => (typeof v === "string" && v !== "" ? v : null);
@@ -136,6 +153,14 @@ export function createSignupMeta(fetchFn: FetchFn): SignupMeta {
       return isObj(body) && body.success === true ? { ok: true } : { ok: false, kind: "invalid_response" };
     },
 
+    async getPhoneStatus({ version, phoneNumberId, token }) {
+      const r = await request(fetchFn, `${GRAPH_BASE_URL}/${version}/${seg(phoneNumberId)}?fields=is_on_biz_app,platform_type`, { method: "GET", headers: bearer(token) });
+      if (!r.ok) return r;
+      const body = parseJson(r.text);
+      if (!isObj(body)) return { ok: false, kind: "invalid_response" };
+      return { ok: true, isOnBizApp: typeof body.is_on_biz_app === "boolean" ? body.is_on_biz_app : null, platformType: str(body.platform_type) };
+    },
+
     async listSubscribedAppIds({ version, wabaId, token }) {
       const r = await request(fetchFn, `${GRAPH_BASE_URL}/${version}/${seg(wabaId)}/subscribed_apps`, { method: "GET", headers: bearer(token) });
       if (!r.ok) return r;
@@ -182,5 +207,46 @@ export function classifyRegisterFailure(f: { kind: string; status?: number; code
     if (f.code === "133008" || f.code === "133009") return "too_many_guesses";
     return "failed";
   }
+  return "uncertain";
+}
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Sincronização inicial da Coexistence: POST /{version}/{phone_number_id}/smb_app_data  { messaging_product, sync_type }
+// Contrato oficial: sync_type "smb_app_state_sync" (contatos) e "history" (histórico); resposta de sucesso { messaging_product, request_id }
+// (só confirma que o pedido foi ACEITO, não que o cliente compartilhou histórico). Cada tipo só pode ser pedido UMA vez.
+// ---------------------------------------------------------------------------------------------------------------------
+export type SmbSyncType = "contacts" | "history";
+export const SMB_SYNC_TYPE_VALUE: Record<SmbSyncType, string> = { contacts: "smb_app_state_sync", history: "history" };
+
+export interface SmbSyncMeta {
+  requestSync(a: { version: string; phoneNumberId: string; token: string; type: SmbSyncType }): Promise<{ ok: true; requestId: string | null } | SignupGraphFailure>;
+}
+
+export function createSmbSyncMeta(fetchFn: FetchFn): SmbSyncMeta {
+  return {
+    async requestSync({ version, phoneNumberId, token, type }) {
+      const r = await request(fetchFn, `${GRAPH_BASE_URL}/${version}/${seg(phoneNumberId)}/smb_app_data`, {
+        method: "POST",
+        headers: { ...bearer(token), "Content-Type": "application/json" },
+        body: JSON.stringify({ messaging_product: "whatsapp", sync_type: SMB_SYNC_TYPE_VALUE[type] }),
+      });
+      if (!r.ok) return r;
+      const body = parseJson(r.text);
+      if (!isObj(body)) return { ok: false, kind: "invalid_response" };
+      const rid = str(body.request_id);
+      return { ok: true, requestId: rid && /^[A-Za-z0-9_.:-]{1,100}$/.test(rid) ? rid : null };
+    },
+  };
+}
+
+/**
+ * Classifica o resultado do pedido para o banco:
+ *   accepted  = HTTP 2xx (a Meta aceitou; request_id é só para suporte)
+ *   rejected  = a Meta RECUSOU de forma definitiva (HTTP 4xx): nada foi aceito, uma nova tentativa é possível (limitada)
+ *   uncertain = timeout, rede, 5xx ou corpo inesperado: a Meta PODE ter aceito e o pedido só vale uma vez => NUNCA repetir sozinho
+ */
+export function classifySyncResult(r: { ok: true } | { ok: false; kind: string; status?: number }): "accepted" | "rejected" | "uncertain" {
+  if (r.ok) return "accepted";
+  if (r.kind === "http" && r.status !== undefined && r.status >= 400 && r.status < 500) return "rejected";
   return "uncertain";
 }

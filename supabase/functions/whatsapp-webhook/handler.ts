@@ -26,7 +26,8 @@ export interface WebhookDeps {
   db: { rpc(fn: string, args: Record<string, unknown>): Promise<RpcResult> };
 }
 
-const MAX_BODY_BYTES = 1024 * 1024;
+// 8 MiB: pedaços de histórico da Coexistence podem ter milhares de mensagens (a assinatura cobre o corpo inteiro)
+const MAX_BODY_BYTES = 8 * 1024 * 1024;
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
 function json(body: unknown, status = 200): Response {
@@ -123,6 +124,179 @@ export function parseMessage(raw: unknown, contacts: unknown[]): ParsedMessage |
   return { id, from, name, type, body, timestamp: isoFromUnix(raw.timestamp) };
 }
 
+// ---------------------------------------------------------------------------------------------------------------------
+// Coexistence (app WhatsApp Business + Cloud API): smb_message_echoes, smb_app_state_sync, history, account_update.
+// O banco decide tudo (RPCs service_role): eco só vale em conexão 'coexistence'; sincronização e account_update guardam SÓ contagens e
+// nomes de evento (nunca texto, telefone, nome ou payload). Nenhum histórico é importado.
+// ---------------------------------------------------------------------------------------------------------------------
+const COEXISTENCE_FIELDS = new Set(["smb_message_echoes", "smb_app_state_sync", "history", "account_update"]);
+
+async function sha256Hex(text: string): Promise<string> {
+  const d = new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)));
+  return Array.from(d, (b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+interface Counts { stored: number; duplicate: number; ignored: number }
+function tally(counts: Counts, result: unknown): void {
+  if (result === "stored" || result === "recorded") counts.stored += 1;
+  else if (result === "duplicate") counts.duplicate += 1;
+  else counts.ignored += 1;
+}
+const num = (v: unknown): number | null => (typeof v === "number" && Number.isFinite(v) && v >= 0 && v < 1e9 ? Math.floor(v) : null);
+
+/** Texto/legenda de uma mensagem de eco (mesmas regras das mensagens recebidas; mídia vira só tipo + legenda). */
+export function parseEchoBody(raw: Obj): { type: string; body: string | null } {
+  const kind = str(raw.type) ?? "unknown";
+  if (kind === "text" && isObj(raw.text)) return { type: "text", body: str(raw.text.body) };
+  if (kind === "image" && isObj(raw.image)) return { type: "image", body: str(raw.image.caption) };
+  if ((kind === "audio" || kind === "voice") && isObj(raw.audio)) return { type: "audio", body: null };
+  if (kind === "document" && isObj(raw.document)) return { type: "document", body: str(raw.document.caption) };
+  if (kind === "location") return { type: "location", body: null };
+  if (kind === "interactive") return { type: "interactive", body: null };
+  return { type: "unknown", body: null };
+}
+
+async function handleCoexistenceChange(
+  deps: WebhookDeps,
+  entry: Obj,
+  change: Obj,
+  field: string,
+  counts: Counts,
+): Promise<"ok" | "transient"> {
+  const value = change.value as Obj;
+  const pnid = isObj(value.metadata) ? str(value.metadata.phone_number_id) : null;
+  const call = async (fn: string, args: Record<string, unknown>): Promise<unknown | "transient"> => {
+    const res = await deps.db.rpc(fn, args);
+    if (res.error) {
+      console.error("whatsapp-webhook: falha transitória (coexistence)", fn, res.error.code ?? "");
+      return "transient";
+    }
+    return isObj(res.data) ? str(res.data.result) : null;
+  };
+
+  if (field === "account_update") {
+    const waba = str(entry.id);
+    const event = str(value.event);
+    if (!waba || !event) {
+      counts.ignored += 1;
+      return "ok";
+    }
+    const di = isObj(value.disconnection_info) ? value.disconnection_info : null;
+    const reason = str(di?.reason);
+    const key = `acct:${waba}:${await sha256Hex(JSON.stringify({ t: entry.time ?? null, e: event, r: reason }))}`;
+    // entry.time (segundos Unix) ordena eventos atrasados/fora de ordem no banco; sem ele o evento só é registrado
+    const evTime = typeof entry.time === "number" && Number.isFinite(entry.time) ? Math.floor(entry.time) : (typeof entry.time === "string" && /^[0-9]{9,12}$/.test(entry.time) ? Number(entry.time) : null);
+    const r = await call("whatsapp_coexistence_account_update", { p_waba_id: waba, p_event: event, p_reason: reason, p_event_key: key, p_event_time: evTime });
+    if (r === "transient") return "transient";
+    tally(counts, r);
+    return "ok";
+  }
+
+  if (!pnid) {
+    counts.ignored += 1;
+    return "ok";
+  }
+
+  if (field === "smb_message_echoes") {
+    const contacts = arr(value.contacts);
+    for (const rawEcho of arr(value.message_echoes)) {
+      if (!isObj(rawEcho)) {
+        counts.ignored += 1;
+        continue;
+      }
+      const id = str(rawEcho.id);
+      const kind = str(rawEcho.type) ?? "unknown";
+      if (!id || kind === "reaction") {
+        counts.ignored += 1;
+        continue;
+      }
+      if (kind === "revoke" || kind === "edit") {
+        // só registra (sem conteúdo); nada é apagado nem alterado nesta etapa
+        const r = await call("whatsapp_coexistence_record", {
+          p_phone_number_id: pnid,
+          p_kind: kind === "revoke" ? "echo_revoke" : "echo_edit",
+          p_event_name: kind,
+          p_event_key: `echoev:${pnid}:${id}:${kind}:${str(rawEcho.timestamp) ?? ""}`,
+          p_detail: {},
+        });
+        if (r === "transient") return "transient";
+        tally(counts, r);
+        continue;
+      }
+      const firstContact = contacts.find(isObj) as Obj | undefined;
+      const to = str(rawEcho.to) ?? str(firstContact?.wa_id);
+      const { type, body } = parseEchoBody(rawEcho);
+      const r = await call("whatsapp_ingest_echo", {
+        p_phone_number_id: pnid,
+        p_provider_message_id: id,
+        p_to: to,
+        p_type: type,
+        p_body: body,
+        p_provider_timestamp: isoFromUnix(rawEcho.timestamp),
+        p_event_key: `echo:${pnid}:${id}`,
+      });
+      if (r === "transient") return "transient";
+      tally(counts, r);
+    }
+    return "ok";
+  }
+
+  if (field === "smb_app_state_sync") {
+    const items = arr(value.state_sync);
+    let added = 0;
+    let removed = 0;
+    for (const it of items) {
+      if (!isObj(it)) continue;
+      if (it.action === "add") added += 1;
+      else if (it.action === "remove") removed += 1;
+    }
+    const key = `sync:${pnid}:${await sha256Hex(JSON.stringify(items))}`;
+    const r = await call("whatsapp_coexistence_record", { p_phone_number_id: pnid, p_kind: "contact_sync", p_event_name: "smb_app_state_sync", p_event_key: key, p_detail: { added, removed } });
+    if (r === "transient") return "transient";
+    tally(counts, r);
+    return "ok";
+  }
+
+  // history: só metadados (fase, ordem do pedaço, progresso, contagens) ou a recusa do cliente; o conteúdo NUNCA é lido nem guardado
+  if (Array.isArray(value.messages) && value.messages.length > 0) counts.ignored += 1; // webhook de mídia do histórico: fora desta etapa
+  for (const item of arr(value.history)) {
+    if (!isObj(item)) {
+      counts.ignored += 1;
+      continue;
+    }
+    const errors = arr(item.errors);
+    if (errors.length > 0) {
+      const first = isObj(errors[0]) ? errors[0] : null;
+      const code = num(first?.code) ?? 0;
+      const r = await call("whatsapp_coexistence_record", { p_phone_number_id: pnid, p_kind: "history_declined", p_event_name: "history", p_event_key: `histdecl:${pnid}:${code}`, p_detail: { error_code: code } });
+      if (r === "transient") return "transient";
+      tally(counts, r);
+      continue;
+    }
+    const md = isObj(item.metadata) ? item.metadata : {};
+    const phase = num(md.phase);
+    const chunk = num(md.chunk_order);
+    const progress = num(md.progress);
+    if (phase === null || chunk === null || progress === null) {
+      counts.ignored += 1;
+      continue;
+    }
+    const threads = arr(item.threads);
+    let messages = 0;
+    for (const t of threads) if (isObj(t)) messages += arr(t.messages).length;
+    const r = await call("whatsapp_coexistence_record", {
+      p_phone_number_id: pnid,
+      p_kind: "history_chunk",
+      p_event_name: "history",
+      p_event_key: `hist:${pnid}:${phase}:${chunk}:${progress}`,
+      p_detail: { phase, chunk_order: chunk, progress, threads: threads.length, messages },
+    });
+    if (r === "transient") return "transient";
+    tally(counts, r);
+  }
+  return "ok";
+}
+
 export async function handleWhatsappWebhook(req: Request, deps: WebhookDeps): Promise<Response> {
   if (req.method === "GET") {
     if (!deps.verifyToken) {
@@ -174,7 +348,13 @@ export async function handleWhatsappWebhook(req: Request, deps: WebhookDeps): Pr
   for (const entry of arr(payload.entry)) {
     if (!isObj(entry)) continue;
     for (const change of arr(entry.changes)) {
-      if (!isObj(change) || change.field !== "messages" || !isObj(change.value)) continue;
+      if (!isObj(change) || !isObj(change.value)) continue;
+      if (typeof change.field === "string" && COEXISTENCE_FIELDS.has(change.field)) {
+        const r = await handleCoexistenceChange(deps, entry, change, change.field, counts);
+        if (r === "transient") return json({ error: "Falha ao processar o evento." }, 500);
+        continue;
+      }
+      if (change.field !== "messages") continue;
       const value = change.value;
       const phoneNumberId = isObj(value.metadata) ? str(value.metadata.phone_number_id) : null;
       if (!phoneNumberId) {

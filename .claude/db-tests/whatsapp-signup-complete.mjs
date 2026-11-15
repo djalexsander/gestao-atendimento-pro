@@ -80,6 +80,8 @@ function mkMeta(co, o = {}) {
     async listWabaPhones(a) { rec("list", { waba: a.wabaId, token: a.token }); return o.list ? o.list(a) : { ok: true, phones }; },
     async registerPhone(a) { rec("register", { pin: a.pin, pnid: a.phoneNumberId }); PINS.add(a.pin); return o.register ? o.register(a) : { ok: true }; },
     async subscribeApp(a) { rec("subscribe", { waba: a.wabaId }); return o.subscribe ? o.subscribe(a) : { ok: true }; },
+    // getPhoneStatus fica FORA de "calls" (as asserções antigas comparam a sequência exata); statusCalls registra à parte.
+    async getPhoneStatus(a) { (this.statusCalls ??= []).push({ pnid: a.phoneNumberId, token: a.token }); return o.status ? o.status(a) : { ok: true, isOnBizApp: false, platformType: "NOT_APPLICABLE" }; },
     async listSubscribedAppIds(a) { rec("listSub"); return o.listSub ? o.listSub(a) : { ok: true, appIds: ["111", APP_ID] }; },
   };
 }
@@ -216,7 +218,7 @@ const D = await mkCo("D");
 const sD = await begin(D);
 const r4 = await run(D, { state: sD, pnid: D.pnid, extra: { company_id: A.c } });
 ck("4.1 200 {ok,status:active,mode:test} com dados NÃO sensíveis", r4.status === 200 && r4.j.ok === true && r4.j.status === "active" && r4.j.mode === "test" && r4.j.idempotent === false
-  && r4.j.display_phone_number === "+55 11 90000-1111" && r4.j.business_name === "Loja Teste" && Object.keys(r4.j).sort().join() === "business_name,display_phone_number,idempotent,mode,ok,status");
+  && r4.j.display_phone_number === "+55 11 90000-1111" && r4.j.business_name === "Loja Teste" && Object.keys(r4.j).sort().join() === "business_name,connection_type,display_phone_number,idempotent,mode,ok,status" && r4.j.connection_type === "cloud_api");
 ck("4.2 ordem das chamadas à Meta: troca → lista da WABA → registro → assinatura → conferência", names(r4.meta) === "exchange,list,register,subscribe,listSub", names(r4.meta));
 const cD = await conns(D);
 ck("4.3 conexão ÚNICA da empresa da sessão (company_id do corpo ignorado), active, test, embedded_signup, token valid", cD.length === 1 && cD[0].status === "active" && cD[0].mode === "test" && cD[0].connection_source === "embedded_signup"
@@ -604,6 +606,216 @@ ck("10.32 cliente nunca recebe o PIN: nenhuma resposta da suíte contém um PIN 
     && SG.classifyRegisterFailure({ kind: "http", status: 500 }) === "uncertain" && SG.classifyRegisterFailure({ kind: "timeout" }) === "uncertain" && SG.classifyRegisterFailure({ kind: "network" }) === "uncertain" && SG.classifyRegisterFailure({ kind: "invalid_response" }) === "uncertain");
 }
 
+
+
+console.log("\n== 11. Coexistence (app WhatsApp Business + Cloud API) — Etapa 2 ==");
+const COEX = "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING";
+const coexStatus = { status: async () => ({ ok: true, isOnBizApp: true, platformType: "CLOUD_API" }) };
+const regRows = async (co) => Number((await su("select count(*) n from whatsapp_number_registrations where company_id=$1", [co.c])).rows[0].n);
+const pinSecrets = async () => Number((await su("select count(*) n from vault.secrets where starts_with(name, 'wa_pin_')")).rows[0].n);
+{
+  const K1 = await mkCo("K1");
+  const pins0 = await pinSecrets();
+  const r = await run(K1, { extra: { signup_event: COEX }, metaOpts: coexStatus });
+  const c = await conns(K1);
+  ck("11.1 Coexistence (id presente): 200, connection_type=coexistence, registered_at nulo, webhook assinado, token válido no Vault", r.status === 200 && r.j.ok === true && r.j.connection_type === "coexistence" && c.length === 1
+    && c[0].connection_type === "coexistence" && c[0].registered_at === null && !!c[0].webhook_subscribed_at && c[0].token_status === "valid" && c[0].connection_source === "embedded_signup" && c[0].mode === "test" && c[0].status === "active", r.text);
+  ck("11.2 NÃO chama /register nem gera PIN, nem cria registro de número (sequência: troca, lista, assinatura, conferência)", names(r.meta) === "exchange,list,subscribe,listSub" && (await regRows(K1)) === 0 && (await pinSecrets()) === pins0, names(r.meta));
+  ck("11.3 o modo vem do Graph com o token do CLIENTE (getPhoneStatus chamado com o token trocado)", r.meta.statusCalls?.length === 1 && r.meta.statusCalls[0].token === TOKEN_OF(r.code) && r.meta.statusCalls[0].pnid === K1.pnid);
+  ck("11.4 resposta sem PIN/token", !/pin/i.test(r.text) && !r.text.includes("EAAB-BIZ-TOKEN"));
+}
+{
+  const K2 = await mkCo("K2");
+  const r = await run(K2, { extra: { signup_event: COEX, phone_number_id: undefined }, metaOpts: coexStatus });
+  const c = await conns(K2);
+  ck("11.5 sem phone_number_id no evento: o número é descoberto pela WABA e conectado como coexistence", r.status === 200 && c.length === 1 && c[0].phone_number_id === K2.pnid && c[0].connection_type === "coexistence" && !names(r.meta).includes("register"), r.text);
+}
+{
+  const K3 = await mkCo("K3");
+  const other = String(++pn);
+  const r = await run(K3, { extra: { signup_event: COEX, phone_number_id: undefined }, metaOpts: {
+    phones: [{ id: other, displayPhoneNumber: "+55 11 91111-0000", verifiedName: "Outro" }, { id: K3.pnid, displayPhoneNumber: "+55 11 90000-1111", verifiedName: "Loja Teste" }],
+    status: async (a) => ({ ok: true, isOnBizApp: a.phoneNumberId === K3.pnid, platformType: a.phoneNumberId === K3.pnid ? "CLOUD_API" : "NOT_APPLICABLE" }) } });
+  const c = await conns(K3);
+  ck("11.6 WABA com 2 números: escolhe o ÚNICO em Coexistence (o outro, só Cloud API, é ignorado)", r.status === 200 && c.length === 1 && c[0].phone_number_id === K3.pnid && c[0].connection_type === "coexistence", r.text);
+}
+{
+  const K4 = await mkCo("K4");
+  const o2 = String(++pn);
+  const both = { phones: [{ id: K4.pnid, displayPhoneNumber: "1", verifiedName: "A" }, { id: o2, displayPhoneNumber: "2", verifiedName: "B" }], ...coexStatus };
+  const s4 = await begin(K4);
+  const r = await run(K4, { state: s4, extra: { signup_event: COEX, phone_number_id: undefined }, metaOpts: both });
+  ck("11.7 dois números em Coexistence na WABA (ambíguo): 400 phone_not_resolved, nada gravado, sessão failed, sem assinatura", r.status === 400 && r.j.code === "phone_not_resolved" && (await conns(K4)).length === 0 && (await sessByState(s4)).status === "failed" && !names(r.meta).includes("subscribe"));
+  const K5 = await mkCo("K5");
+  const r5 = await run(K5, { extra: { signup_event: COEX, phone_number_id: undefined }, metaOpts: { status: async () => ({ ok: true, isOnBizApp: false, platformType: "NOT_APPLICABLE" }) } });
+  ck("11.8 nenhum número em Coexistence na WABA: 400 phone_not_resolved e nada gravado", r5.status === 400 && r5.j.code === "phone_not_resolved" && (await conns(K5)).length === 0 && !names(r5.meta).includes("register"));
+  const K6 = await mkCo("K6");
+  const r6 = await run(K6, { extra: { signup_event: COEX, phone_number_id: undefined }, metaOpts: { phones: [], ...coexStatus } });
+  ck("11.9 WABA sem números: 400 phone_not_resolved", r6.status === 400 && r6.j.code === "phone_not_resolved");
+}
+{
+  const K7 = await mkCo("K7");
+  const r = await run(K7, { extra: { phone_number_id: undefined } });
+  ck("11.10 sem phone_number_id e SEM o evento de Coexistence: 400 (a sessão não é consumida)", r.status === 400 && (await sessByState(r.state)).status === "pending" && r.meta.calls.length === 0);
+  const r2 = await run(K7, { state: r.state, extra: { signup_event: "FINISH_ONLY_WABA" } });
+  ck("11.11 signup_event desconhecido: 400 e sessão intacta", r2.status === 400 && (await sessByState(r.state)).status === "pending");
+}
+{
+  const K8 = await mkCo("K8");
+  const s8 = await begin(K8);
+  const r = await run(K8, { state: s8, extra: { signup_event: COEX }, metaOpts: { status: async () => ({ ok: true, isOnBizApp: false, platformType: "NOT_APPLICABLE" }) } });
+  ck("11.12 navegador diz Coexistence mas o Graph diz que NÃO é: 409 mode_mismatch, sem /register, nada gravado, sessão failed", r.status === 409 && r.j.code === "mode_mismatch" && !names(r.meta).includes("register") && !names(r.meta).includes("subscribe") && (await conns(K8)).length === 0 && (await sessByState(s8)).status === "failed");
+}
+{
+  const K9 = await mkCo("K9");
+  const pins0 = await pinSecrets();
+  const r = await run(K9, { extra: { signup_event: "FINISH" }, metaOpts: coexStatus });
+  const c = await conns(K9);
+  ck("11.13 navegador diz FINISH normal mas o Graph diz Coexistence: o Graph vence — sem /register, sem PIN, connection_type=coexistence", r.status === 200 && c[0].connection_type === "coexistence" && !names(r.meta).includes("register") && (await pinSecrets()) === pins0 && (await regRows(K9)) === 0, r.text);
+  const K10 = await mkCo("K10");
+  const r10 = await run(K10, { extra: { pin: "482917", signup_event: COEX }, metaOpts: coexStatus });
+  ck("11.14 PIN enviado pelo cliente numa Coexistence é IGNORADO (nunca vai à Meta nem ao Vault)", r10.status === 200 && !names(r10.meta).includes("register") && (await pinSecrets()) === pins0 && !JSON.stringify(r10.meta.calls).includes("482917"));
+}
+{
+  const bad = [
+    ["11.15 Graph não responde (timeout) ao consultar o modo: 504 mode_check_failed, falha fechada (sem /register, nada gravado)", { status: async () => ({ ok: false, kind: "timeout" }) }, 504, "mode_check_failed"],
+    ["11.16 Graph 4xx ao consultar o modo: 502 mode_check_failed", { status: async () => ({ ok: false, kind: "http", status: 400, code: "100" }) }, 502, "mode_check_failed"],
+    ["11.17 campo is_on_biz_app ausente: modo indeterminado => 409 connection_mode_unknown (não registra por palpite)", { status: async () => ({ ok: true, isOnBizApp: null, platformType: "CLOUD_API" }) }, 409, "connection_mode_unknown"],
+    ["11.18 is_on_biz_app=true com platform_type diferente de CLOUD_API: 409 connection_mode_unknown", { status: async () => ({ ok: true, isOnBizApp: true, platformType: "ON_PREMISE" }) }, 409, "connection_mode_unknown"],
+  ];
+  for (const [label, mo, st, code] of bad) {
+    const K = await mkCo("KB"); const sb = await begin(K);
+    const r = await run(K, { state: sb, metaOpts: mo });
+    ck(label, r.status === st && r.j.code === code && !names(r.meta).includes("register") && !names(r.meta).includes("subscribe") && (await conns(K)).length === 0 && (await sessByState(sb)).status === "failed" && (await regRows(K)) === 0, r.text);
+  }
+}
+{
+  // isolamento e allowlist no ramo Coexistence
+  const KA = await mkCo("KA"), KB2 = await mkCo("KB2");
+  const rA = await run(KA, { extra: { signup_event: COEX }, metaOpts: coexStatus });
+  const rB = await run(KB2, { pnid: KA.pnid, extra: { signup_event: COEX }, metaOpts: { phones: [{ id: KA.pnid, displayPhoneNumber: "x", verifiedName: "y" }], ...coexStatus } });
+  ck("11.19 número em Coexistence já conectado à empresa A: empresa B recebe 409 phone_in_use e a conexão de A fica intacta", rA.status === 200 && rB.status === 409 && rB.j.code === "phone_in_use" && (await conns(KB2)).length === 0 && (await conns(KA))[0].connection_type === "coexistence");
+  const KP = await mkCo("KP"); const sp = await begin(KP);
+  await su("update whatsapp_signup_pilot_companies set authorized=false where company_id=$1", [KP.c]);
+  const rp = await run(KP, { state: sp, extra: { signup_event: COEX }, metaOpts: coexStatus });
+  ck("11.20 empresa fora da allowlist: 403 antes de qualquer chamada à Meta (inclui o Graph de modo)", rp.status === 403 && rp.meta.calls.length === 0 && !(rp.meta.statusCalls?.length) && (await conns(KP)).length === 0);
+  const KR = await mkCo("KR"); const sr = await begin(KR);
+  const rr = await run(KR, { state: sr, extra: { signup_event: COEX }, metaOpts: { ...coexStatus, subscribe: async () => { await su("update whatsapp_signup_pilot_companies set authorized=false where company_id=$1", [KR.c]); return { ok: true }; } } });
+  ck("11.21 allowlist revogada no meio do caminho (Coexistence): a conexão NÃO é ativada", (await conns(KR)).every((x) => x.status !== "active"), rr.text);
+}
+{
+  // idempotência / reconexão
+  const KI = await mkCo("KI");
+  const r1 = await run(KI, { extra: { signup_event: COEX }, metaOpts: coexStatus });
+  const c1 = (await conns(KI))[0];
+  const r2 = await run(KI, { extra: { signup_event: COEX }, metaOpts: coexStatus });
+  const c2 = await conns(KI);
+  ck("11.22 reconexão do mesmo número (Coexistence): mesma linha, token rotacionado, registered_at segue nulo, token antigo apagado do Vault", r1.status === 200 && r2.status === 200 && c2.length === 1 && c2[0].id === c1.id && c2[0].connection_type === "coexistence" && c2[0].registered_at === null
+    && c2[0].token_secret_id !== c1.token_secret_id && Number((await su("select count(*) n from vault.secrets where id=$1", [c1.token_secret_id])).rows[0].n) === 0, r2.text);
+  const r3 = await run(KI, { state: r1.state, extra: { signup_event: COEX }, metaOpts: coexStatus });
+  ck("11.23 reutilizar o state já consumido: recusado (anti-replay) e nenhuma chamada à Meta", r3.status === 409 && r3.meta.calls.length === 0);
+}
+{
+  // fluxo tradicional preservado
+  const KT = await mkCo("KT");
+  const r = await run(KT, { extra: { signup_event: "FINISH" } });
+  const c = await conns(KT);
+  ck("11.24 fluxo Cloud API tradicional preservado: connection_type=cloud_api, registered_at preenchido, /register chamado com PIN do Vault", r.status === 200 && r.j.connection_type === "cloud_api" && c[0].connection_type === "cloud_api" && !!c[0].registered_at && names(r.meta) === "exchange,list,register,subscribe,listSub" && (await regRows(KT)) === 1, r.text);
+  const KT2 = await mkCo("KT2");
+  const r2 = await run(KT2);
+  ck("11.25 sem signup_event (cliente antigo) segue o fluxo Cloud API tradicional", r2.status === 200 && r2.j.connection_type === "cloud_api");
+}
+{
+  // banco: regras da RPC (chamada direta do service_role)
+  const KD = await mkCo("KD"); const sdb = await begin(KD);
+  const base = { p_session_id: null, p_waba_id: "555000111222", p_phone_number_id: KD.pnid, p_display_phone_number: "x", p_business_name: "y", p_meta_business_id: null, p_registered_at: null, p_webhook_subscribed_at: new Date().toISOString() };
+  const call = (o) => realRpc("whatsapp_signup_complete", { ...base, ...o });
+  const sess = (await sessByState(sdb)).id;
+  const bad1 = await call({ p_session_id: sess, p_connection_type: "coexistence", p_registered_at: new Date().toISOString() });
+  const bad2 = await call({ p_session_id: sess, p_connection_type: "cloud_api", p_registered_at: null });
+  const bad3 = await call({ p_session_id: sess, p_connection_type: "on_premise" });
+  const bad4 = await call({ p_session_id: sess, p_connection_type: null });
+  ck("11.26 RPC: coexistence com registered_at, cloud_api sem registered_at, tipo desconhecido ou nulo => erro PT400", [bad1, bad2, bad3, bad4].every((x) => x.error && x.error.code === "PT400"), JSON.stringify([bad1, bad2, bad3, bad4].map((x) => x.error)));
+  const sig = "public.whatsapp_signup_complete(uuid,text,text,text,text,text,timestamptz,timestamptz,text)";
+  const acl = (await su(`select has_function_privilege('authenticated','${sig}','execute') a, has_function_privilege('anon','${sig}','execute') b, has_function_privilege('service_role','${sig}','execute') c`)).rows[0];
+  ck("11.27 ACL da RPC preservada: só service_role executa", acl.a === false && acl.b === false && acl.c === true);
+  const cc = (await su("select pg_get_constraintdef(oid) d from pg_constraint where conname='company_whatsapp_connections_type_check'")).rows[0].d;
+  ck("11.28 CHECK do banco aceita exatamente cloud_api e coexistence", /cloud_api/.test(cc) && /coexistence/.test(cc));
+}
+{
+  // Graph client: URL, método, header e parsing de getPhoneStatus
+  const seen = [];
+  const meta = SG.createSignupMeta(async (url, init) => { seen.push({ url, init }); return { ok: true, status: 200, text: async () => JSON.stringify({ is_on_biz_app: true, platform_type: "CLOUD_API", id: "1" }) }; });
+  const g = await meta.getPhoneStatus({ version: "v99.0", phoneNumberId: "123456789", token: "TOKEN-DE-TESTE-ABCDEFGHIJKL" });
+  ck("11.29 getPhoneStatus: GET /{versão}/{phone}?fields=is_on_biz_app,platform_type com Bearer; parse correto", seen.length === 1 && seen[0].url === "https://graph.facebook.com/v99.0/123456789?fields=is_on_biz_app,platform_type" && seen[0].init.method === "GET"
+    && seen[0].init.headers.Authorization === "Bearer TOKEN-DE-TESTE-ABCDEFGHIJKL" && g.ok && g.isOnBizApp === true && g.platformType === "CLOUD_API", JSON.stringify(seen[0]?.url));
+  const odd = SG.createSignupMeta(async () => ({ ok: true, status: 200, text: async () => "não é json" }));
+  const g2 = await odd.getPhoneStatus({ version: "v99.0", phoneNumberId: "123456789", token: "T" });
+  const odd2 = SG.createSignupMeta(async () => ({ ok: true, status: 200, text: async () => JSON.stringify({ is_on_biz_app: "true" }) }));
+  const g3 = await odd2.getPhoneStatus({ version: "v99.0", phoneNumberId: "123456789", token: "T" });
+  ck("11.30 getPhoneStatus: corpo inválido => invalid_response; is_on_biz_app não booleano => null (indeterminado)", g2.ok === false && g2.kind === "invalid_response" && g3.ok === true && g3.isOnBizApp === null);
+  ck("11.31 decideConnectionMode: true+CLOUD_API=coexistence; false=cloud_api; ausente/true+outra plataforma=null", SG.decideConnectionMode({ isOnBizApp: true, platformType: "CLOUD_API" }) === "coexistence" && SG.decideConnectionMode({ isOnBizApp: false, platformType: null }) === "cloud_api"
+    && SG.decideConnectionMode({ isOnBizApp: null, platformType: "CLOUD_API" }) === null && SG.decideConnectionMode({ isOnBizApp: true, platformType: "ON_PREMISE" }) === null && SG.decideConnectionMode({ isOnBizApp: true, platformType: null }) === null);
+}
+
+
+console.log("\n== 12. Etapa 4: /register só com evidência EXPLÍCITA de Cloud API convencional ==");
+{
+  const absent = (pt) => ({ status: async () => ({ ok: true, isOnBizApp: null, platformType: pt }) });
+  const attemptsCount = async (co) => Number((await su("select count(*) n from whatsapp_registration_attempts a join whatsapp_number_registrations r on r.id=a.registration_id where r.company_id=$1", [co.c])).rows[0].n);
+  const noReg = (r, K) => !names(r.meta).includes("register") && !names(r.meta).includes("subscribe");
+  // 12.1-12.4: campo ausente NUNCA vira Cloud API (nem com a dica FINISH): interrompe com erro claro e nada é registrado
+  for (const [label, extra, pt] of [
+    ["12.1 campo ausente + dica FINISH + NOT_APPLICABLE", { signup_event: "FINISH" }, "NOT_APPLICABLE"],
+    ["12.2 campo ausente + dica de Coexistence", { signup_event: COEX }, "CLOUD_API"],
+    ["12.3 campo ausente + FINISH + ON_PREMISE", { signup_event: "FINISH" }, "ON_PREMISE"],
+    ["12.4 campo ausente SEM dica (cliente antigo)", {}, "NOT_APPLICABLE"],
+  ]) {
+    const K = await mkCo("I9"); const sx = await begin(K);
+    const r = await run(K, { state: sx, extra, metaOpts: absent(pt) });
+    ck(label + ": falha fechada 409 connection_mode_unknown, SEM /register, sem PIN, sem tentativa, nada gravado e mensagem clara", r.status === 409 && r.j.code === "connection_mode_unknown" && /interrompida/.test(r.j.error) && noReg(r, K)
+      && (await conns(K)).length === 0 && (await regRows(K)) === 0 && (await attemptsCount(K)) === 0 && (await sessByState(sx)).status === "failed", r.text);
+  }
+  {
+    const K = await mkCo("I9e");
+    const r = await run(K, { extra: { signup_event: "FINISH" }, metaOpts: { status: async () => ({ ok: true, isOnBizApp: true, platformType: "CLOUD_API" }) } });
+    ck("12.5 resposta EXPLÍCITA true+CLOUD_API com dica FINISH => coexistence, sem /register (a Meta decide, não o navegador)", r.status === 200 && (await conns(K))[0].connection_type === "coexistence" && !names(r.meta).includes("register"));
+  }
+  {
+    // rechecagem imediatamente antes do /register: 1ª consulta (modo) = false, 2ª (guarda) = true => NÃO registra
+    let calls = 0;
+    const K = await mkCo("G1"); const sx = await begin(K);
+    const r = await run(K, { state: sx, extra: { signup_event: "FINISH" }, metaOpts: { status: async () => ({ ok: true, isOnBizApp: ++calls === 1 ? false : true, platformType: "CLOUD_API" }) } });
+    ck("12.6 o número virou Coexistence entre a decisão e o registro (rechecagem): 409 register_blocked_not_cloud_api, SEM /register e SEM gastar tentativa", r.status === 409 && r.j.code === "register_blocked_not_cloud_api" && !names(r.meta).includes("register") && !names(r.meta).includes("subscribe")
+      && calls === 2 && (await attemptsCount(K)) === 0 && (await conns(K)).length === 0 && (await sessByState(sx)).status === "failed", r.text);
+    let c2 = 0;
+    const K2 = await mkCo("G2"); const s2 = await begin(K2);
+    const r2 = await run(K2, { state: s2, extra: { signup_event: "FINISH" }, metaOpts: { status: async () => (++c2 === 1 ? { ok: true, isOnBizApp: false, platformType: "NOT_APPLICABLE" } : { ok: true, isOnBizApp: null, platformType: null }) } });
+    ck("12.7 rechecagem sem o campo (ambígua): bloqueia o registro", r2.status === 409 && r2.j.code === "register_blocked_not_cloud_api" && !names(r2.meta).includes("register") && (await attemptsCount(K2)) === 0);
+    let c3 = 0;
+    const K3 = await mkCo("G3"); const s3 = await begin(K3);
+    const r3 = await run(K3, { state: s3, extra: { signup_event: "FINISH" }, metaOpts: { status: async () => (++c3 === 1 ? { ok: true, isOnBizApp: false, platformType: "NOT_APPLICABLE" } : { ok: false, kind: "timeout" }) } });
+    ck("12.8 rechecagem indisponível (timeout): bloqueia (504 register_guard_unavailable), nada registrado, nenhuma tentativa contada", r3.status === 504 && r3.j.code === "register_guard_unavailable" && !names(r3.meta).includes("register") && (await attemptsCount(K3)) === 0);
+  }
+  {
+    // caminho feliz do fluxo convencional: 2 consultas explícitas (false), registra UMA vez com PIN do Vault
+    const K = await mkCo("G4");
+    const r = await run(K, { extra: { signup_event: "FINISH" } });
+    ck("12.9 Cloud API convencional (false explícito nas duas consultas): registra normalmente (regressão do fluxo existente)", r.status === 200 && r.j.connection_type === "cloud_api" && names(r.meta) === "exchange,list,register,subscribe,listSub" && r.meta.statusCalls.length === 2 && (await regRows(K)) === 1);
+    const K2 = await mkCo("G5"); const s5 = await begin(K2);
+    const r1 = await run(K2, { state: s5, extra: { signup_event: "FINISH" } });
+    const sx2 = await begin(K2);
+    const r2 = await run(K2, { state: sx2, extra: { signup_event: "FINISH" } });
+    ck("12.10 reconexão de número JÁ registrado por nós: não registra de novo (action skip) e, sem /register, não precisa da rechecagem", r1.status === 200 && r2.status === 200 && !names(r2.meta).includes("register") && r2.meta.statusCalls.length === 1);
+  }
+  {
+    // Coexistence nunca passa pela guarda (não há /register)
+    const K = await mkCo("G6");
+    const r = await run(K, { extra: { signup_event: COEX }, metaOpts: coexStatus });
+    ck("12.11 Coexistence: sem /register e sem rechecagem de registro (uma só consulta de modo)", r.status === 200 && !names(r.meta).includes("register") && r.meta.statusCalls.length === 1);
+  }
+  ck("12.12 o código não infere mais Cloud API por campo ausente (a função de inferência foi REMOVIDA)", typeof SG.decideConnectionModeWithHint === "undefined" && SG.decideConnectionMode({ isOnBizApp: null, platformType: "NOT_APPLICABLE" }) === null);
+}
 
 console.log("\n== 9. vazamento e estado final ==");
 {

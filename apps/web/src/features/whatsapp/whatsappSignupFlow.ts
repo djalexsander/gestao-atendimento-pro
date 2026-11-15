@@ -8,6 +8,9 @@
 // ou log). Uma nova tentativa SEMPRE cria uma nova sessão e abre um novo cadastro — não há como reaproveitar code nem sessão.
 import type { FbLike, FbLoginResponse } from "./facebookSdk";
 import {
+  COEXISTENCE_FEATURE_TYPE,
+  COEXISTENCE_FINISH_EVENT,
+  COEXISTENCE_SESSION_INFO_VERSION,
   SIGNUP_FINISH_WAIT_MS,
   isValidPin,
   parseSignupMessage,
@@ -20,7 +23,10 @@ export interface CompletePayload {
   state: string;
   code: string;
   waba_id: string;
-  phone_number_id: string;
+  /** Ausente na Coexistence quando a Meta não o informa: o backend descobre o número pela WABA. */
+  phone_number_id?: string;
+  /** Só uma dica do evento que a Meta enviou. O backend NÃO confia nela: o modo é confirmado no Graph API. */
+  signup_event?: "FINISH" | typeof COEXISTENCE_FINISH_EVENT;
   pin?: string;
 }
 
@@ -75,7 +81,7 @@ export function launchSignup(
 
   const outcome = new Promise<SignupOutcome>((resolve) => {
     let code: string | null = null;
-    let ids: { wabaId: string; phoneNumberId: string } | null = null;
+    let ids: { wabaId: string; phoneNumberId: string | null; coexistence: boolean } | null = null;
     let completing = false;
     let settled = false;
     let stopListening: () => void = () => undefined;
@@ -103,7 +109,8 @@ export function launchSignup(
         state: prepared.session.state,
         code,
         waba_id: ids.wabaId,
-        phone_number_id: ids.phoneNumberId,
+        ...(ids.phoneNumberId ? { phone_number_id: ids.phoneNumberId } : {}),
+        signup_event: ids.coexistence ? COEXISTENCE_FINISH_EVENT : "FINISH",
         ...(pin ? { pin } : {}),
       };
       code = null;
@@ -120,10 +127,10 @@ export function launchSignup(
       if (msg.kind === "finish") {
         if (ids) {
           // FINISH repetido: o mesmo é ignorado; um que contradiz o primeiro é suspeito e encerra a tentativa (nada é enviado).
-          if (ids.wabaId !== msg.wabaId || ids.phoneNumberId !== msg.phoneNumberId) settle({ status: "failed", failure: signupFailure("meta_error") });
+          if (ids.wabaId !== msg.wabaId || ids.phoneNumberId !== msg.phoneNumberId || ids.coexistence !== msg.coexistence) settle({ status: "failed", failure: signupFailure("meta_error") });
           return;
         }
-        ids = { wabaId: msg.wabaId, phoneNumberId: msg.phoneNumberId };
+        ids = { wabaId: msg.wabaId, phoneNumberId: msg.phoneNumberId, coexistence: msg.coexistence };
         maybeComplete();
       } else if (msg.kind === "cancel") {
         settle({ status: "cancelled" });
@@ -158,7 +165,8 @@ export function launchSignup(
         config_id: prepared.session.configId,
         response_type: "code",
         override_default_response_type: true,
-        extras: { setup: {} },
+        // Coexistence: featureType + sessionInfoVersion "3" (página oficial de onboarding de usuários do app Business); setup fica vazio.
+        extras: { setup: {}, featureType: COEXISTENCE_FEATURE_TYPE, sessionInfoVersion: COEXISTENCE_SESSION_INFO_VERSION },
       });
     } catch {
       settle({ status: "failed", failure: signupFailure("sdk_unavailable") });

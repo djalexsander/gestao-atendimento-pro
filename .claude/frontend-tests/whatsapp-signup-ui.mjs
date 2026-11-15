@@ -70,7 +70,17 @@ ck("2.4 mensagem de origem estranha é ignorada MESMO com conteúdo perfeito", L
 ck("2.5 outro type, JSON inválido, vazio e evento desconhecido: ignorados", [msg("FINISH", {}, "OUTRA_COISA"), "{ruim", "", 5, null, msg("ALGO")].every((d) => L.parseSignupMessage("https://www.facebook.com", d) === null));
 ck("2.6 FINISH com IDs ausentes/ inválidos vira erro (nunca finish)", ["{}", { waba_id: "abc", phone_number_id: "12345" }, { waba_id: "12345" }, { waba_id: "12345", phone_number_id: "1; drop" }].every((d) => L.parseSignupMessage("https://www.facebook.com", msg("FINISH", typeof d === "string" ? JSON.parse(d) : d))?.kind === "error"));
 ck("2.7 CANCEL, ERROR e CANCEL com error_message", L.parseSignupMessage("https://www.facebook.com", msg("CANCEL", { current_step: "PHONE_NUMBER_SETUP" })).kind === "cancel" && L.parseSignupMessage("https://www.facebook.com", msg("ERROR", { error_message: "x", error_code: 1 })).kind === "error" && L.parseSignupMessage("https://www.facebook.com", msg("CANCEL", { error_message: "x" })).kind === "error");
-ck("2.8 FINISH_* de outros fluxos (Coexistence etc.) é 'unsupported'", L.parseSignupMessage("https://www.facebook.com", msg("FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", { waba_id: "12345", phone_number_id: "67890" })).kind === "unsupported");
+ck("2.8 FINISH_* de outros fluxos (só WABA, só acesso à API) continua 'unsupported'", ["FINISH_ONLY_WABA", "FINISH_GRANT_ONLY_API_ACCESS", "FINISH_QUALQUER"].every((ev) => L.parseSignupMessage("https://www.facebook.com", msg(ev, { waba_id: "12345", phone_number_id: "67890" })).kind === "unsupported"));
+{
+  const C = "https://www.facebook.com";
+  const co = L.parseSignupMessage(C, msg("FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", { waba_id: "12345" }));
+  const co2 = L.parseSignupMessage(C, msg("FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", { waba_id: "12345", phone_number_id: "67890" }));
+  const fin = L.parseSignupMessage(C, msg("FINISH", { waba_id: "12345", phone_number_id: "67890" }));
+  ck("2.8a Coexistence: só waba_id é obrigatório (phone_number_id opcional) e o resultado marca coexistence", co.kind === "finish" && co.coexistence === true && co.wabaId === "12345" && co.phoneNumberId === null && co2.kind === "finish" && co2.coexistence === true && co2.phoneNumberId === "67890");
+  ck("2.8b FINISH normal inalterado: coexistence=false e phone_number_id obrigatório", fin.kind === "finish" && fin.coexistence === false && fin.phoneNumberId === "67890" && L.parseSignupMessage(C, msg("FINISH", { waba_id: "12345" })).kind === "error");
+  ck("2.8c Coexistence com IDs inválidos vira erro; origem falsa é ignorada", L.parseSignupMessage(C, msg("FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", {})).kind === "error" && L.parseSignupMessage(C, msg("FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", { waba_id: "abc" })).kind === "error"
+    && L.parseSignupMessage(C, msg("FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", { waba_id: "12345", phone_number_id: "1; drop" })).kind === "error" && L.parseSignupMessage("https://evilfacebook.com", msg("FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", { waba_id: "12345" })) === null);
+}
 ck("2.9 mensagens de erro/códigos da Meta não são repassados ao resultado", !JSON.stringify(L.parseSignupMessage("https://www.facebook.com", msg("ERROR", { error_message: "SEGREDO-DA-META", error_code: 9 }))).includes("SEGREDO"));
 
 console.log("\n== 3. sessão, PIN e mapeamento de erros ==");
@@ -121,7 +131,7 @@ const go = async (env, opts) => { const r = await FL.prepareSignup(env.deps); if
   const { out } = await go(env);
   ck("4.1 sucesso: FINISH + code → uma única conclusão, payload {state, code, waba_id, phone_number_id}", out.status === "success" && env.completes.length === 1 && env.completes[0].code === CODE && env.completes[0].waba_id === "123456789012" && env.completes[0].phone_number_id === "109876543210" && /^[0-9a-f]{64}$/.test(env.completes[0].state) && !("pin" in env.completes[0]) && !("company_id" in env.completes[0]));
   ck("4.2 resultado mostra número e nome; ouvinte removido ao final", out.displayPhoneNumber === "+55 44 90000-0000" && out.businessName === "Loja" && env.listeners.size === 0);
-  ck("4.3 FB.login com os parâmetros oficiais do v4 e o Config ID DA SESSÃO", JSON.stringify(env.loginCalls[0]) === JSON.stringify({ config_id: "9876543210", response_type: "code", override_default_response_type: true, extras: { setup: {} } }));
+  ck("4.3 FB.login com os parâmetros oficiais (v4 + Coexistence: setup vazio, featureType, sessionInfoVersion 3) e o Config ID DA SESSÃO", JSON.stringify(env.loginCalls[0]) === JSON.stringify({ config_id: "9876543210", response_type: "code", override_default_response_type: true, extras: { setup: {}, featureType: "whatsapp_business_app_onboarding", sessionInfoVersion: "3" } }));
   ck("4.4 FB.login é chamado SINCRONAMENTE dentro do launch (dentro do gesto do clique)", env.loginInsideLaunch === true);
   ck("4.5 o SDK é carregado com o App ID da sessão (não de constante)", env.loads[0] === "1234567890");
 }
@@ -146,7 +156,10 @@ const go = async (env, opts) => { const r = await FL.prepareSignup(env.deps); if
   ck("4.7c vale o primeiro FINISH recebido: o contraditório posterior também aborta (nunca troca IDs)", out.status === "failed" && env.completes.length === 0);
 }
 ck("2.9 estruturas oficiais: FINISH com business_id extra, ERROR com session_id/timestamp, CANCEL só com current_step", L.parseSignupMessage("https://www.facebook.com", msg("FINISH", { waba_id: "12345", phone_number_id: "67890", business_id: "555555" })).kind === "finish" && L.parseSignupMessage("https://web.facebook.com", msg("ERROR", { error_message: "m", error_code: "100", session_id: "s", timestamp: "1700000000000" })).kind === "error" && L.parseSignupMessage("https://www.facebook.com", msg("CANCEL", { current_step: "PHONE_NUMBER_SETUP" })).kind === "cancel");
-ck("2.10 FB.login usa exatamente os parâmetros da página oficial de implementação (extras.setup vazio, sem version/featureType/sessionInfoVersion)", /extras: \{ setup: \{\} \}/.test(fs.readFileSync(path.join(root, "apps/web/src/features/whatsapp/whatsappSignupFlow.ts"), "utf8")) && !/sessionInfoVersion|featureType|extras: \{[^}]*version/.test(fs.readFileSync(path.join(root, "apps/web/src/features/whatsapp/whatsappSignupFlow.ts"), "utf8").replace(/\/\/.*$/gm, "")));
+ck("2.10 extras do FB.login: setup vazio + featureType whatsapp_business_app_onboarding + sessionInfoVersion \"3\" (constantes), sem extras.version", (() => {
+  const flow = fs.readFileSync(path.join(root, "apps/web/src/features/whatsapp/whatsappSignupFlow.ts"), "utf8").replace(/\/\/.*$/gm, "");
+  return /extras: \{ setup: \{\}, featureType: COEXISTENCE_FEATURE_TYPE, sessionInfoVersion: COEXISTENCE_SESSION_INFO_VERSION \}/.test(flow) && L.COEXISTENCE_FEATURE_TYPE === "whatsapp_business_app_onboarding" && L.COEXISTENCE_SESSION_INFO_VERSION === "3" && !/extras: \{[^}]*\bversion:/.test(flow);
+})());
 {
   const env = mkEnv({ onLogin: (cb, e) => { e.emit("https://evil.example", FIN()); cb({ authResponse: { code: CODE } }); } });
   const h = await FL.prepareSignup(env.deps); const handle = FL.launchSignup(h.prepared, env.deps);
@@ -166,7 +179,25 @@ ck("2.10 FB.login usa exatamente os parâmetros da página oficial de implementa
   const o3 = (await go(env3)).out;
   ck("4.12 ERROR da Meta: falha 'meta_error' sem o texto da Meta", o3.status === "failed" && o3.failure.kind === "meta_error" && !JSON.stringify(o3).includes("boom"));
   const env4 = mkEnv({ onLogin: (cb, e) => e.emit(META, msg("FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", { waba_id: "12345", phone_number_id: "67890" })) });
-  ck("4.13 fluxo de Coexistence não suportado", (await go(env4)).out.failure.kind === "unsupported");
+  ck("4.13 FINISH_* de outro fluxo (só WABA) segue 'unsupported'", (await go(mkEnv({ onLogin: (cb, e) => e.emit(META, msg("FINISH_ONLY_WABA", { waba_id: "12345" })) }))).out.failure.kind === "unsupported");
+  {
+    // Coexistence: evento só com waba_id + code => payload sem phone_number_id e com a dica signup_event
+    const envC = mkEnv({ onLogin: (cb, e) => { e.emit(META, msg("FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", { waba_id: "123456789012" })); cb({ authResponse: { code: CODE } }); } });
+    const { out } = await go(envC);
+    ck("4.13a Coexistence (só waba_id): conclusão enviada UMA vez, sem phone_number_id, com signup_event e o code", out.status === "success" && envC.completes.length === 1 && envC.completes[0].waba_id === "123456789012" && !("phone_number_id" in envC.completes[0])
+      && envC.completes[0].signup_event === "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING" && envC.completes[0].code === CODE && !("company_id" in envC.completes[0]));
+    const envC2 = mkEnv({ onLogin: (cb, e) => { cb({ authResponse: { code: CODE } }); e.emit(META, msg("FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", { waba_id: "123456789012", phone_number_id: "109876543210" })); } });
+    const o2 = (await go(envC2)).out;
+    ck("4.13b Coexistence (code antes do evento, com phone_number_id): conclui; o id vai como dica", o2.status === "success" && envC2.completes.length === 1 && envC2.completes[0].phone_number_id === "109876543210" && envC2.completes[0].signup_event === "FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING");
+    const envN = mkEnv({ onLogin: (cb, e) => { e.emit(META, FIN()); cb({ authResponse: { code: CODE } }); } });
+    await go(envN);
+    ck("4.13c FINISH normal: payload mantém phone_number_id e marca signup_event=FINISH", envN.completes.length === 1 && envN.completes[0].phone_number_id === "109876543210" && envN.completes[0].signup_event === "FINISH");
+    const envX = mkEnv({ onLogin: (cb, e) => { e.emit(META, msg("FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", { waba_id: "123456789012" })); e.emit(META, FIN("123456789012", "109876543210")); cb({ authResponse: { code: CODE } }); } });
+    const oX = (await go(envX)).out;
+    ck("4.13d eventos contraditórios (Coexistence e depois FINISH normal): encerra a tentativa e NADA é enviado", oX.status === "failed" && envX.completes.length === 0);
+    const envD = mkEnv({ onLogin: (cb, e) => { e.emit(META, msg("FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", { waba_id: "123456789012" })); e.emit(META, msg("FINISH_WHATSAPP_BUSINESS_APP_ONBOARDING", { waba_id: "123456789012" })); cb({ authResponse: { code: CODE } }); } });
+    ck("4.13e evento de Coexistence repetido e igual é ignorado: uma só conclusão", (await go(envD)).out.status === "success" && envD.completes.length === 1);
+  }
   const env5 = mkEnv({ loginThrows: true });
   const o5 = (await go(env5)).out;
   ck("4.14 FB.login lançando exceção: falha tratada, sem travar", o5.status === "failed" && o5.failure.kind === "sdk_unavailable" && env5.listeners.size === 0);
@@ -304,7 +335,13 @@ console.log("\n== 8. garantias estáticas ==");
 ck("8.9 tela de conexão usa o painel novo e não tem mais o botão antigo desabilitado", /WhatsappSignupPanel/.test(conn) && !/Conectar WhatsApp</.test(conn) && /connectCard\(state, isTauri\(\)\)/.test(conn));
   const api = files.find(([f]) => f === "whatsappSignupApi.ts")[1];
   ck("8.10 API real: RPC whatsapp_signup_begin e Edge whatsapp-signup-complete; company_id NÃO vai no corpo da Edge", /rpc\("whatsapp_signup_begin"/.test(api) && /invoke\("whatsapp-signup-complete"/.test(api) && !/company_id/.test(api.slice(api.indexOf("async function complete"))));
-  ck("8.11 CompletePayload só tem state, code, waba_id, phone_number_id e pin opcional", /state: string;\s*code: string;\s*waba_id: string;\s*phone_number_id: string;\s*pin\?: string;/.test(read(W + "whatsappSignupFlow.ts")));
+  ck("8.11 CompletePayload só tem state, code, waba_id, phone_number_id (opcional), signup_event (dica) e pin opcional; nada de company_id/modo", (() => {
+    const src = read(W + "whatsappSignupFlow.ts");
+    const a = src.indexOf("export interface CompletePayload {");
+    const blk = src.slice(a, src.indexOf("\n}", a));
+    const keys = [...blk.matchAll(/^ {2}(\w+)(\?)?:/gm)].map((m) => m[1] + (m[2] ?? "")).join(",");
+    return keys === "state,code,waba_id,phone_number_id?,signup_event?,pin?";
+  })());
   const sdk = files.find(([f]) => f === "facebookSdk.ts")[1];
   ck("8.12 SDK só do domínio oficial e nenhum segundo script/domínio no código", (["WhatsappSignupPanel.tsx", "whatsappSignupFlow.ts", "whatsappSignupApi.ts", "whatsappSignupLogic.ts", "facebookSdk.ts"].map((f) => read(W + f)).join("\n").match(/https?:\/\/[a-z0-9.-]+/gi) ?? []).every((u) => /^https?:\/\/(connect\.facebook\.net|www\.facebook\.com|web\.facebook\.com|facebook\.com)$/i.test(u)));
   ck("8.13 vercel.json não foi alterado: continua sem CSP global (nada enfraquecido)", !/Content-Security-Policy/i.test(read("vercel.json")) && !/Content-Security-Policy/i.test(read("apps/web/index.html")));

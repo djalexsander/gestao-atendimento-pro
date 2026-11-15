@@ -97,3 +97,8 @@ verify_jwt = false
 # compartilhado no header x-internal-secret (>= 32 caracteres, tempo constante); não há JWT de usuário. Só age com
 # WHATSAPP_ORDER_NOTIFY_ENABLED="true" (kill switch global em Edge Secret). Sem OpenAI. Envio pelo fluxo OFICIAL.
 verify_jwt = false
+
+[functions.whatsapp-coexistence-sync]
+# Pedido da sincronização INICIAL de contatos/histórico da Coexistence (smb_app_data). JWT obrigatório; owner/admin da empresa. Todas as
+# travas (trava mestra do operador, piloto, janela de 24 h, ordem, um pedido por tipo) são decididas no banco. Não importa conversas.
+verify_jwt = true
