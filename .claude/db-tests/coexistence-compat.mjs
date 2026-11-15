@@ -15,7 +15,9 @@ const ts = require("typescript");
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coexcompat-"));
 const tsOut = (code) => ts.transpileModule(code, { compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2022 } }).outputText;
 const srcNow = (rel) => fs.readFileSync(path.join(root, rel), "utf8");
-const srcHead = (rel) => execFileSync("git", ["show", `HEAD:${rel}`], { cwd: root, encoding: "utf8", maxBuffer: 20 * 1024 * 1024 });
+// "versão antiga" = último commit ANTES da Coexistence (dc54164). Não usar HEAD: depois do commit da Coexistence, HEAD já é o código novo.
+const OLD_REF = process.env.OLD_REF ?? "dc54164";
+const srcHead = (rel) => execFileSync("git", ["show", `${OLD_REF}:${rel}`], { cwd: root, encoding: "utf8", maxBuffer: 20 * 1024 * 1024 });
 const load = async (variant, rel, name, get, rewrites) => {
   let code = tsOut(get(rel));
   for (const [a, b] of rewrites) code = code.split(a).join(b);
