@@ -16,9 +16,11 @@ export const SOURCE_LABEL: Record<ContactRow["source"], string> = {
   conversation: "Conversa",
   customer: "Cliente cadastrado",
   both: "Conversa + cliente",
+  manual: "Contato manual",
 };
 
 export const NAME_SOURCE_LABEL: Record<ContactRow["nameSource"], string> = {
+  manual: "Nome cadastrado manualmente",
   customer: "Nome do cadastro do cliente",
   profile: "Nome do perfil do WhatsApp",
   phone: "Sem nome: só o telefone",
@@ -33,6 +35,16 @@ export const SEARCH_EXAMPLES: ReadonlyArray<{ label: string; example: string }> 
 
 export const EMPTY_LIST_TEXT =
   "Ainda não há contatos. Eles aparecem quando alguém conversa com a empresa pelo WhatsApp ou quando um cliente é cadastrado com telefone.";
+export const EMPTY_ARCHIVED_TEXT = "Nenhum contato arquivado. Contatos arquivados ficam aqui e podem ser restaurados por donos e administradores.";
+export type ContactsFilter = "active" | "archived";
+export const FILTER_LABEL: Record<ContactsFilter, string> = { active: "Ativos", archived: "Arquivados" };
+const archivedFmt = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeZone: "America/Sao_Paulo" });
+/** "Arquivado em 14/11/2026" (ou null sem data válida). */
+export function archivedOnText(archivedAt: string | null): string | null {
+  if (!archivedAt) return null;
+  const d = new Date(archivedAt);
+  return Number.isNaN(d.getTime()) ? null : `Arquivado em ${archivedFmt.format(d)}`;
+}
 export const NO_RESULTS_TEXT = "Nenhum contato encontrado para esta busca.";
 
 /** Horário curto da última interação ("14:32" hoje, "05/11" antes), ou null quando não há mensagem. */
@@ -40,6 +52,18 @@ export function lastInteraction(c: Pick<ContactRow, "lastMessageAt" | "lastInbou
   const when = c.lastMessageAt ?? c.lastInboundAt;
   const t = when ? listTime(when, now) : "";
   return t === "" ? null : t;
+}
+
+/** Rótulo de cada fonte presente na linha (a ordem é a de ContactRow.sources). */
+export const SOURCE_KIND_LABEL: Record<ContactRow["sources"][number], string> = {
+  manual: "Contato manual",
+  customer: "Cliente cadastrado",
+  conversation: "Conversa",
+};
+
+/** Selos do cartão: um por fonte presente (um contato manual com conversa mostra os dois). */
+export function sourceBadges(c: Pick<ContactRow, "sources">): string[] {
+  return c.sources.map((k) => SOURCE_KIND_LABEL[k]);
 }
 
 /** Texto do vínculo com cliente mostrado no cartão (null = nada a mostrar). */

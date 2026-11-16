@@ -5685,3 +5685,45 @@ button {
   .wc-no-conv { align-self: flex-start; }
   .wc-more .btn-secondary { width: 100%; }
 }
+
+/* Contatos manuais (Etapa 7.10F) */
+.wc-header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wc-header-actions .btn-small { min-height: 40px; display: inline-flex; align-items: center; text-decoration: none; white-space: nowrap; }
+.wc-notice { margin: 0; padding: 8px 12px; border-radius: 8px; background: var(--success-bg); color: var(--success); font-size: 14px; overflow-wrap: anywhere; }
+.wc-card-selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.wc-filter { display: flex; gap: 6px; }
+.wc-filter-btn { flex: 1 1 0; min-height: 44px; border: 1px solid var(--border); border-radius: 10px; background: var(--surface); color: var(--text); font-size: 15px; cursor: pointer; }
+.wc-filter-btn-on { border-color: var(--accent); color: var(--accent); font-weight: 600; box-shadow: 0 0 0 1px var(--accent); }
+@media (min-width: 521px) { .wc-filter { max-width: 320px; } }
+.wc-badge-archived { color: var(--warning); border-color: var(--warning); }
+.wc-badge-manual { color: var(--accent); border-color: var(--accent); }
+.wc-actions { gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.modal:has(.mc-form), .modal:has(.mc-detail), .modal:has(.mc-link) { max-width: 520px; }
+.mc-form, .mc-detail, .mc-link { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.mc-form .field, .mc-link .field { margin-bottom: 0; }
+.mc-form input, .mc-form textarea, .mc-link input { width: 100%; box-sizing: border-box; font-size: 16px; min-height: 44px; }
+.mc-form textarea { min-height: 96px; resize: vertical; font-family: inherit; }
+.mc-field-error { margin: 4px 0 0; font-size: 13px; color: var(--danger); overflow-wrap: anywhere; }
+.mc-error { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.mc-head { display: flex; align-items: center; gap: 6px 8px; flex-wrap: wrap; }
+.mc-name { font-size: 18px; color: var(--text-h); overflow-wrap: anywhere; }
+.mc-badge-archived { color: var(--warning); border-color: var(--warning); }
+.mc-fields { margin: 0; display: flex; flex-direction: column; gap: 10px; }
+.mc-fields > div { min-width: 0; }
+.mc-fields dt { font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.03em; }
+.mc-fields dd { margin: 2px 0 0; overflow-wrap: anywhere; }
+.mc-notes { white-space: pre-wrap; }
+.mc-actions-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.mc-actions-row button { min-height: 44px; }
+.mc-danger { color: var(--danger); }
+.mc-confirm { display: flex; flex-direction: column; gap: 8px; }
+.mc-actions button { min-height: 44px; }
+@media (max-width: 520px) {
+  .wc-header-actions { width: 100%; }
+  .wc-header-actions > * { flex: 1 1 auto; justify-content: center; }
+  .modal:has(.mc-form), .modal:has(.mc-detail), .modal:has(.mc-link) { width: calc(100% - 16px); padding: 16px; max-height: calc(100svh - 24px); }
+  .mc-actions { flex-direction: column-reverse; }
+  .mc-actions-row { flex-direction: column; }
+  .mc-actions button, .mc-actions-row button { width: 100%; }
+  .mc-error button { width: 100%; }
+}

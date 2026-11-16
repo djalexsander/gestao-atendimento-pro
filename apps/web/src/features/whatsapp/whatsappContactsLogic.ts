@@ -8,8 +8,11 @@
 // A normalização de telefone/nome abaixo é a MESMA de whatsapp_contact_key / whatsapp_contact_fold (a paridade com o banco é
 // testada em .claude/db-tests/whatsapp-contacts-integration.mjs). Qualquer mudança aqui exige mudar a migration, e vice-versa.
 
-export type ContactSource = "conversation" | "customer" | "both";
-export type ContactNameSource = "customer" | "profile" | "phone";
+/** 'manual' só quando existe contato manual SEM conversa (com conversa o servidor mantém 'conversation'/'both'; use isManual). */
+export type ContactSource = "conversation" | "customer" | "both" | "manual";
+export type ContactNameSource = "manual" | "customer" | "profile" | "phone";
+/** Fontes presentes na linha (Etapa 7.10D): o contato pode ter mais de uma ao mesmo tempo. */
+export type ContactSourceKind = "manual" | "customer" | "conversation";
 
 export interface ContactsCursor {
   sort: string;
@@ -35,6 +38,14 @@ export interface ContactRow {
   lastInboundAt: string | null;
   source: ContactSource;
   sortName: string;
+  /** Existe um contato MANUAL ativo com este telefone (Etapa 7.10D). */
+  isManual: boolean;
+  /** Id do contato manual (para editar/arquivar/vincular). Nulo quando não há contato manual. */
+  manualContactId: string | null;
+  /** Todas as fontes desta linha, na ordem manual, customer, conversation. */
+  sources: ContactSourceKind[];
+  /** Data de arquivamento (só na aba Arquivados; nulo nos contatos ativos). */
+  archivedAt: string | null;
 }
 
 export interface ContactsPage {
@@ -162,24 +173,86 @@ export function toContact(raw: unknown): ContactRow | null {
   const phone = str(raw.phone);
   const displayName = str(raw.display_name) ?? phone;
   if (!contactKeyValue || !displayName) return null;
-  const nameSource: ContactNameSource = raw.name_source === "customer" || raw.name_source === "profile" ? raw.name_source : "phone";
-  const source: ContactSource = raw.source === "customer" || raw.source === "both" ? raw.source : "conversation";
+  const nameSource: ContactNameSource =
+    raw.name_source === "manual" || raw.name_source === "customer" || raw.name_source === "profile" ? raw.name_source : "phone";
+  const source: ContactSource = raw.source === "customer" || raw.source === "both" || raw.source === "manual" ? raw.source : "conversation";
+  const manualContactId = str(raw.manual_contact_id);
+  // 'is_manual' só vale com o id do contato manual (sem id não há o que editar)
+  const isManual = raw.is_manual === true && manualContactId !== null;
+  const conversationId = str(raw.conversation_id);
+  const customerId = str(raw.customer_id);
+  const sources: ContactSourceKind[] = Array.isArray(raw.sources)
+    ? (["manual", "customer", "conversation"] as const).filter((k) => (raw.sources as unknown[]).includes(k))
+    : [...(isManual ? (["manual"] as const) : []), ...(customerId ? (["customer"] as const) : []), ...(conversationId ? (["conversation"] as const) : [])];
   return {
     contactKey: contactKeyValue,
     displayName,
     nameSource,
     phone: phone ?? contactKeyValue,
-    customerId: str(raw.customer_id),
+    customerId,
     customerMatches: nonNegInt(raw.customer_matches),
     profileName: str(raw.profile_name),
-    conversationId: str(raw.conversation_id),
+    conversationId,
     connectionId: str(raw.connection_id),
     conversationCount: nonNegInt(raw.conversation_count),
     lastMessageAt: str(raw.last_message_at),
     lastInboundAt: str(raw.last_inbound_at),
     source,
     sortName: str(raw.sort_name) ?? "",
+    isManual,
+    manualContactId: isManual ? manualContactId : null,
+    sources,
+    archivedAt: null,
   };
+}
+
+/**
+ * Linha da aba ARQUIVADOS (RPC list_archived_whatsapp_contacts) no mesmo formato da lista: só contatos manuais, sem conversa. A chave da linha
+ * é o ID do contato (vários arquivados podem ter o mesmo telefone e nenhum pode sumir por "chave repetida"). Observações não vêm na lista.
+ */
+export function toArchivedContact(raw: unknown): ContactRow | null {
+  if (!isObj(raw)) return null;
+  const id = str(raw.manual_contact_id);
+  const name = str(raw.name);
+  const phone = str(raw.phone);
+  if (!id || !name || !phone) return null;
+  const customerId = str(raw.customer_id);
+  return {
+    contactKey: id,
+    displayName: name,
+    nameSource: "manual",
+    phone,
+    customerId,
+    customerMatches: customerId ? 1 : 0,
+    profileName: null,
+    conversationId: null,
+    connectionId: null,
+    conversationCount: 0,
+    lastMessageAt: null,
+    lastInboundAt: null,
+    source: "manual",
+    sortName: str(raw.sort_name) ?? "",
+    isManual: true,
+    manualContactId: id,
+    sources: customerId ? ["manual", "customer"] : ["manual"],
+    archivedAt: str(raw.archived_at),
+  };
+}
+
+export function toArchivedContactsPage(raw: unknown): ContactsPage {
+  if (!isObj(raw)) return { contacts: [], hasMore: false, nextCursor: null };
+  const list = Array.isArray(raw.contacts) ? raw.contacts : [];
+  const seen = new Set<string>();
+  const contacts: ContactRow[] = [];
+  for (const item of list) {
+    const c = toArchivedContact(item);
+    if (c && !seen.has(c.contactKey)) {
+      seen.add(c.contactKey);
+      contacts.push(c);
+    }
+  }
+  const nextCursor = toCursor(raw.next_cursor);
+  return { contacts, hasMore: raw.has_more === true && nextCursor !== null, nextCursor };
 }
 
 export function toCursor(raw: unknown): ContactsCursor | null {
@@ -299,6 +372,32 @@ export function applyError(state: ContactsState, requestId: number, error: Conta
 }
 
 /** Tentar de novo depois de uma falha: refaz a busca do zero (primeira página) ou a página que falhou (tinha cursor). */
+/**
+ * Atualiza a lista DEPOIS de uma operação bem-sucedida, sem perder a busca nem a lista já na tela (ela só é trocada quando a resposta chega).
+ * Pedido de "mais contatos" em andamento é descartado (ficaria desatualizado); busca ainda carregando é reiniciada; nada carregado = nada a atualizar.
+ */
+export function beginRefresh(state: ContactsState): ContactsState {
+  if (state.query.skipRequest) return state;
+  if (state.status === "loading") return beginSearch(state, state.query.text);
+  if (!state.loaded) return state;
+  return { ...state, status: "idle", error: null, requestId: state.requestId + 1 };
+}
+
+/** Quantos contatos pedir ao atualizar: o que já está na tela (arredondado para a página), no máximo 100 (limite do servidor). */
+export function refreshLimit(loadedCount: number, pageSize?: number): number {
+  return clampContactsLimit(Math.max(clampContactsLimit(pageSize), loadedCount));
+}
+
+/**
+ * Seleção depois de uma operação: mantém a MESMA linha (acompanhando a nova chave quando o telefone mudou) ou nenhuma. Nunca escolhe outro
+ * contato nem abre conversa por conta própria.
+ */
+export function reconcileSelection(selectedKey: string | null, contacts: ReadonlyArray<Pick<ContactRow, "contactKey">>, moved?: { from: string; to: string } | null): string | null {
+  if (selectedKey === null) return null;
+  const target = moved && moved.from === selectedKey ? moved.to : selectedKey;
+  return contacts.some((c) => c.contactKey === target) ? target : null;
+}
+
 export function canRetry(state: ContactsState): boolean {
   return state.status === "error" && state.error?.kind !== "forbidden" && state.error?.kind !== "invalid";
 }

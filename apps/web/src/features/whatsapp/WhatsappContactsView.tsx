@@ -3,7 +3,11 @@ import { Link } from "react-router-dom";
 import { ambiguityNotice, canOpenConversation, canRetry, describeContactQuery, classifyContactQuery, type ContactRow, type ContactsState } from "./whatsappContactsLogic";
 import {
   CONTACTS_BASE_PATH,
+  EMPTY_ARCHIVED_TEXT,
   EMPTY_LIST_TEXT,
+  FILTER_LABEL,
+  archivedOnText,
+  type ContactsFilter,
   NAME_SOURCE_LABEL,
   NO_RESULTS_TEXT,
   SEARCH_EXAMPLES,
@@ -12,21 +16,54 @@ import {
   customerLinkText,
   formatContactPhone,
   lastInteraction,
+  sourceBadges,
 } from "./whatsappContactsPresentation";
 
-function ContactCard({ contact }: { contact: ContactRow }) {
+function ArchivedCard({ contact, selected, onOpenContact }: { contact: ContactRow; selected: boolean; onOpenContact?: (c: ContactRow) => void }) {
+  const on = archivedOnText(contact.archivedAt);
+  return (
+    <li className={selected ? "wc-card wc-card-selected" : "wc-card"} data-testid="wc-contact" aria-current={selected ? "true" : undefined}>
+      <div className="wc-main">
+        <div className="wc-top">
+          <strong className="wc-name">{contact.displayName}</strong>
+          <span className="wc-badge wc-badge-archived">Arquivado</span>
+        </div>
+        <div className="wc-phone">{formatContactPhone(contact)}</div>
+        <div className="wc-meta">{on && <span className="wc-chip wc-chip-time">{on}</span>}</div>
+      </div>
+      <div className="wc-actions">
+        {onOpenContact && (
+          <button type="button" className="btn-secondary btn-small" onClick={() => onOpenContact(contact)}>
+            Detalhes
+          </button>
+        )}
+      </div>
+    </li>
+  );
+}
+
+function ContactCard({ contact, selected, onOpenContact }: { contact: ContactRow; selected: boolean; onOpenContact?: (c: ContactRow) => void }) {
   const notice = ambiguityNotice(contact);
   const last = lastInteraction(contact);
   const link = customerLinkText(contact);
   const showProfile = contact.profileName !== null && contact.profileName !== contact.displayName;
   return (
-    <li className="wc-card" data-testid="wc-contact">
+    <li className={selected ? "wc-card wc-card-selected" : "wc-card"} data-testid="wc-contact" aria-current={selected ? "true" : undefined}>
       <div className="wc-main">
         <div className="wc-top">
           <strong className="wc-name">{contact.displayName}</strong>
-          <span className="wc-badge" title={NAME_SOURCE_LABEL[contact.nameSource]}>
-            {SOURCE_LABEL[contact.source]}
-          </span>
+          {contact.isManual ? (
+            // contato manual: um selo por fonte presente (manual + conversa + cliente), na ordem do servidor
+            sourceBadges(contact).map((label, i) => (
+              <span key={label} className={i === 0 ? "wc-badge wc-badge-manual" : "wc-badge"} title={NAME_SOURCE_LABEL[contact.nameSource]}>
+                {label}
+              </span>
+            ))
+          ) : (
+            <span className="wc-badge" title={NAME_SOURCE_LABEL[contact.nameSource]}>
+              {SOURCE_LABEL[contact.source]}
+            </span>
+          )}
         </div>
         {contact.nameSource !== "phone" && <div className="wc-phone">{formatContactPhone(contact)}</div>}
         <div className="wc-meta">
@@ -43,6 +80,11 @@ function ContactCard({ contact }: { contact: ContactRow }) {
         )}
       </div>
       <div className="wc-actions">
+        {contact.isManual && contact.manualContactId !== null && onOpenContact && (
+          <button type="button" className="btn-secondary btn-small" onClick={() => onOpenContact(contact)}>
+            Detalhes
+          </button>
+        )}
         {canOpenConversation(contact) && contact.conversationId !== null ? (
           <Link className="btn-primary btn-small" to={conversationPath(contact.conversationId)}>
             Abrir conversa
@@ -67,6 +109,13 @@ export function ContactsView({
   onSubmit,
   onRetry,
   onLoadMore,
+  canCreate = false,
+  onNewContact,
+  onOpenContact,
+  selectedKey = null,
+  notice = null,
+  filter = "active",
+  onFilterChange,
 }: {
   text: string;
   state: ContactsState;
@@ -74,6 +123,17 @@ export function ContactsView({
   onSubmit: (e: FormEvent) => void;
   onRetry: () => void;
   onLoadMore: () => void;
+  /** Mostra o botão "Novo contato" (owner, admin e atendente). */
+  canCreate?: boolean;
+  onNewContact?: () => void;
+  onOpenContact?: (c: ContactRow) => void;
+  /** Contato destacado (a linha aberta no painel). Não abre conversa. */
+  selectedKey?: string | null;
+  /** Aviso de sucesso da última operação. */
+  notice?: string | null;
+  /** Aba atual (Ativos/Arquivados). Sem onFilterChange as abas não aparecem. */
+  filter?: ContactsFilter;
+  onFilterChange?: (f: ContactsFilter) => void;
 }) {
   const live = classifyContactQuery(text);
   const loading = state.status === "loading";
@@ -87,10 +147,33 @@ export function ContactsView({
       <div className="wc-header">
         {/* o título da página vem do cabeçalho operacional (OperationalShell): aqui só a descrição */}
         <p className="muted wc-sub">Pessoas que já conversaram com a empresa e clientes cadastrados com telefone.</p>
-        <Link className="btn-secondary btn-small" to={CONTACTS_BASE_PATH}>
-          ← Conversas
-        </Link>
+        <div className="wc-header-actions">
+          {canCreate && onNewContact && (
+            <button type="button" className="btn-primary btn-small" onClick={onNewContact}>
+              Novo contato
+            </button>
+          )}
+          <Link className="btn-secondary btn-small" to={CONTACTS_BASE_PATH}>
+            ← Conversas
+          </Link>
+        </div>
       </div>
+
+      {notice && (
+        <p className="wc-notice" role="status">
+          {notice}
+        </p>
+      )}
+
+      {onFilterChange && (
+        <div className="wc-filter" role="group" aria-label="Mostrar contatos">
+          {(["active", "archived"] as const).map((f) => (
+            <button key={f} type="button" className={filter === f ? "wc-filter-btn wc-filter-btn-on" : "wc-filter-btn"} aria-pressed={filter === f} onClick={() => filter !== f && onFilterChange(f)}>
+              {FILTER_LABEL[f]}
+            </button>
+          ))}
+        </div>
+      )}
 
       <form className="wc-search" role="search" onSubmit={onSubmit}>
         <input
@@ -139,7 +222,7 @@ export function ContactsView({
 
       {noResults && (
         <p className="op-state" role="status">
-          {state.query.kind === "empty" ? EMPTY_LIST_TEXT : state.query.skipRequest ? describeContactQuery(state.query) : NO_RESULTS_TEXT}
+          {state.query.kind === "empty" ? (filter === "archived" ? EMPTY_ARCHIVED_TEXT : EMPTY_LIST_TEXT) : state.query.skipRequest ? describeContactQuery(state.query) : NO_RESULTS_TEXT}
         </p>
       )}
 
@@ -150,9 +233,13 @@ export function ContactsView({
             {state.hasMore ? " · há mais" : ""}
           </p>
           <ul className="wc-list" aria-label="Contatos">
-            {state.contacts.map((c) => (
-              <ContactCard key={c.contactKey} contact={c} />
-            ))}
+            {state.contacts.map((c) =>
+              c.archivedAt !== null ? (
+                <ArchivedCard key={c.contactKey} contact={c} selected={c.contactKey === selectedKey} onOpenContact={onOpenContact} />
+              ) : (
+                <ContactCard key={c.contactKey} contact={c} selected={c.contactKey === selectedKey} onOpenContact={onOpenContact} />
+              ),
+            )}
           </ul>
         </>
       )}

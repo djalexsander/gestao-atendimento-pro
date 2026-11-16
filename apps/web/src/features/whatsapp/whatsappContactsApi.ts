@@ -3,11 +3,14 @@ import {
   applyError,
   applyPage,
   beginLoadMore,
+  beginRefresh,
   beginRetry,
   beginSearch,
   clampContactsLimit,
   initialContactsState,
+  refreshLimit,
   mapContactsError,
+  toArchivedContactsPage,
   toContactsPage,
   type ContactsCursor,
   type ContactsError,
@@ -58,6 +61,24 @@ export const supabaseContactsSource: ContactsSource = {
   },
 };
 
+/** Aba Arquivados (Etapa 7.10F.1): mesma interface da lista, pela RPC list_archived_whatsapp_contacts (só leitura; owner, admin, attendant e cashier). */
+export const supabaseArchivedContactsSource: ContactsSource = {
+  async list(companyId, cursor, limit) {
+    return supabaseArchivedContactsSource.search(companyId, "", cursor, limit);
+  },
+  async search(companyId, query, cursor, limit) {
+    const { data, error } = await supabase.rpc("list_archived_whatsapp_contacts", {
+      p_company_id: companyId,
+      p_query: query === "" ? null : query,
+      p_limit: clampContactsLimit(limit),
+      p_after_sort: cursor?.sort ?? null,
+      p_after_key: cursor?.key ?? null,
+    });
+    if (error) return fail(error);
+    return { data: toArchivedContactsPage(data), error: null };
+  },
+};
+
 const NO_COMPANY: ContactsError = { kind: "forbidden", message: "Selecione uma empresa para ver os contatos." };
 const GENERIC: ContactsError = { kind: "generic", message: "Não foi possível carregar os contatos agora. Tente novamente." };
 
@@ -95,6 +116,8 @@ export interface ContactsLoader {
   loadMore(): Promise<void>;
   /** Depois de uma falha: repete a página que falhou. Erros de permissão/texto inválido não repetem. */
   retry(): Promise<void>;
+  /** Atualiza a lista depois de uma operação (ex.: contato criado/editado), mantendo busca e lista até a resposta chegar. */
+  refresh(): Promise<void>;
   /** Troca a empresa ativa: zera tudo e descarta respostas pendentes da empresa anterior. */
   setCompany(companyId: string | null): void;
 }
@@ -112,10 +135,10 @@ export function createContactsLoader(options: { source: ContactsSource; companyI
   };
 
   // Executa o pedido do estado atual; a resposta só vale se o requestId ainda for o do pedido (descarta atrasadas e troca de empresa).
-  async function run(cursor: ContactsCursor | null): Promise<void> {
+  async function run(cursor: ContactsCursor | null, size: number | undefined = pageSize): Promise<void> {
     const requestId = state.requestId;
     const companyAtStart = companyId;
-    const res = await fetchContactsPage(source, companyAtStart, state.query.text, cursor, pageSize);
+    const res = await fetchContactsPage(source, companyAtStart, state.query.text, cursor, size);
     if (companyAtStart !== companyId) return;
     set(res.error ? applyError(state, requestId, res.error) : applyPage(state, requestId, res.data));
   }
@@ -144,6 +167,13 @@ export function createContactsLoader(options: { source: ContactsSource; companyI
       set(beginRetry(state));
       if (state === before) return;
       await run(state.status === "loading_more" ? cursor : null);
+    },
+    async refresh() {
+      const loaded = state.contacts.length;
+      const before = state;
+      set(beginRefresh(state));
+      if (state === before) return;
+      await run(null, state.status === "loading" ? pageSize : refreshLimit(loaded, pageSize));
     },
     setCompany(next) {
       if (next === companyId) return;
