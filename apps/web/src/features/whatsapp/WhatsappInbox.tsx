@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
+import { Link, useInRouterContext } from "react-router-dom";
 import { useAuth } from "../../app/useAuth";
 import { createCoalescedRunner } from "../orders/coalesce";
 import { supabaseWhatsappSource, type WhatsappSource } from "./whatsappApi";
@@ -58,6 +59,8 @@ import {
   type SendErrorState,
   type Suggestions,
 } from "./whatsappLogic";
+import { useOpenRequestStore } from "./useOpenRequestStore";
+import { OPEN_REQUEST_NOT_FOUND_TEXT, decideOpenOutcome, openRequestKey, resolveOpenRequest, revealConversation, withPinned } from "./whatsappOpenRequest";
 
 const newRequestId = (): string =>
   typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -66,8 +69,20 @@ const newRequestId = (): string =>
 
 // Inbox do WhatsApp (Fase 2A-2). Desktop: conversas | histórico + composer | cliente. Celular: uma tela por vez
 // (lista -> conversa -> voltar). Texto livre só dentro da janela de 24 h (o servidor confere de novo).
-export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: WhatsappSource }) {
+export function WhatsappInbox({
+  source = supabaseWhatsappSource,
+  requestedConversationId = null,
+  onRequestHandled,
+}: {
+  source?: WhatsappSource;
+  /** Conversa pedida de fora (Contatos → ?conversation=<id>). A página lê o parâmetro; a caixa valida e abre. Sem pedido, nada muda. */
+  requestedConversationId?: string | null;
+  /** Avisa que o pedido foi tratado (aberto ou recusado): a página tira o parâmetro da URL. */
+  onRequestHandled?: () => void;
+}) {
   const { activeMembership, user } = useAuth();
+  // o atalho "Contatos" só existe dentro do roteador do app (testes/prévias sem roteador renderizam a caixa de entrada sem ele)
+  const inRouter = useInRouterContext();
   const companyId = activeMembership?.companyId ?? null;
   const role = activeMembership?.role ?? null;
   const userId = user?.id ?? null;
@@ -110,16 +125,38 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
   // Mesmo texto reenviado depois de falha de REDE (sem resposta) reutiliza o mesmo pedido: nunca duplica a mensagem.
   const pendingRequest = useRef<{ text: string; id: string } | null>(null);
 
+  // Estado do pedido externo (?conversation=): conversa fixada, empresa da lista e pedido já tratado (ver useOpenRequestStore)
+  const open = useOpenRequestStore();
+
   const loadConversations = useCallback(async () => {
     if (!companyId) return;
     const r = await source.conversations(companyId);
     if (r.data) {
-      setConversations(r.data);
+      let list = r.data;
+      const pinned = open.getPinned();
+      if (pinned) {
+        if (list.some((c) => c.id === pinned.id)) {
+          open.setPinned(null); // já está na lista normal
+        } else {
+          // continua além do limite da lista: confirma no servidor (se foi excluída ou perdeu o acesso, solta)
+          const again = await source.conversationById?.(companyId, pinned.id);
+          if (again?.data) {
+            open.setPinned(again.data);
+            list = withPinned(list, again.data);
+          } else if (again && !again.error) {
+            open.setPinned(null);
+          } else {
+            list = withPinned(list, pinned); // falha momentânea: mantém o que já estava aberto
+          }
+        }
+      }
+      open.setListCompany(companyId);
+      setConversations(list);
       setError(null);
     } else {
       setError(r.error);
     }
-  }, [companyId, source]);
+  }, [companyId, source, open]);
 
   const loadMessages = useCallback(async () => {
     const id = selectedRef.current;
@@ -200,6 +237,60 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
   useEffect(() => {
     if (selectedId && conversations !== null && !conversations.some((c) => c.id === selectedId)) setSelectedId(null);
   }, [conversations, selectedId]);
+
+  // A conversa "fixada" (pedida de fora e além do limite da lista) só vale enquanto estiver selecionada
+  useEffect(() => {
+    const pinnedNow = open.getPinned();
+    if (pinnedNow && pinnedNow.id !== selectedId) open.setPinned(null);
+  }, [selectedId, open]);
+
+  // Trocou de empresa: o pedido e a conversa fixada da empresa anterior não valem mais
+  const companyIdRef = useRef(companyId);
+  useEffect(() => {
+    companyIdRef.current = companyId;
+    open.setPinned(null);
+    open.setHandled(null);
+  }, [companyId, open]);
+
+  // Pedido externo (Contatos → ?conversation=<id>). Tratado UMA vez por (empresa, id); sem o parâmetro, nada acontece e o pedido
+  // anterior é esquecido (um novo pedido do mesmo id volta a abrir). Só abre conversa que o servidor entregou para a empresa ativa.
+  useEffect(() => {
+    if (!requestedConversationId) open.setHandled(null);
+  }, [requestedConversationId, open]);
+  useEffect(() => {
+    const id = requestedConversationId;
+    if (!id || !companyId || !canUseWhatsapp(role) || conversations === null) return;
+    const key = openRequestKey(companyId, id);
+    if (open.getHandled() === key) return;
+    open.setHandled(key);
+    const selectionAtStart = selectedRef.current;
+    const companyAtStart = companyId;
+    void (async () => {
+      const row = await resolveOpenRequest({
+        requestedId: id,
+        companyId: companyAtStart,
+        listCompanyId: open.getListCompany(),
+        conversations,
+        fetchById: source.conversationById ? source.conversationById.bind(source) : undefined,
+      });
+      if (companyIdRef.current !== companyAtStart) return; // trocou de empresa no meio: descarta
+      const inList = row !== null && open.getListCompany() === companyAtStart && conversations.some((c) => c.id === row.id);
+      const outcome = decideOpenOutcome({ row, selectionAtStart, selectionNow: selectedRef.current, inList });
+      if (outcome.action === "notice") {
+        setNotice(OPEN_REQUEST_NOT_FOUND_TEXT); // inválido, inexistente, excluída ou sem acesso: nada é selecionado
+      } else if (outcome.action === "open" && row) {
+        if (outcome.pin) {
+          open.setPinned(row);
+          setConversations((list) => withPinned(list ?? [], row));
+        }
+        const reveal = revealConversation(row, filter, search, userId);
+        setFilter(reveal.filter);
+        setSearch(reveal.search);
+        setSelectedId(row.id);
+      } // "skip": a pessoa já escolheu outra conversa enquanto isso, a escolha dela vence
+      onRequestHandled?.();
+    })();
+  }, [requestedConversationId, companyId, role, conversations, filter, search, userId, source, onRequestHandled, open]);
 
   const visible = useMemo(() => applyFilter(conversations ?? [], filter, search, userId), [conversations, filter, search, userId]);
   const unread = useMemo(() => totalUnread(conversations ?? []), [conversations]);
@@ -323,7 +414,14 @@ export function WhatsappInbox({ source = supabaseWhatsappSource }: { source?: Wh
             </span>
           )}
         </div>
-        {unread > 0 && <span className="wa-badge">{unread} não lida{unread === 1 ? "" : "s"}</span>}
+        <div className="wa-header-actions">
+          {inRouter && (
+            <Link className="btn-secondary btn-small" to="/operacional/whatsapp/contatos">
+              Contatos
+            </Link>
+          )}
+          {unread > 0 && <span className="wa-badge">{unread} não lida{unread === 1 ? "" : "s"}</span>}
+        </div>
       </div>
 
       {error && <div className="form-error" role="alert">{error}</div>}

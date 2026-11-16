@@ -31,6 +31,7 @@ import { MasterOverviewPage } from "./pages/MasterOverviewPage";
 import { MasterPlansPage } from "./pages/MasterPlansPage";
 import { ModulePlaceholderPage } from "./pages/ModulePlaceholderPage";
 import { OnboardingPage } from "./pages/OnboardingPage";
+import { OperationalWhatsappContactsPage } from "./pages/OperationalWhatsappContactsPage";
 import {
   OperationalCashierOrderPage,
   OperationalDeliveryPage,
@@ -193,6 +194,15 @@ function App() {
           <OperationalRoute area="whatsapp">
             {/* sem ModuleGate: sem o módulo o histórico segue em SOMENTE LEITURA (o banco barra qualquer escrita) */}
             <OperationalWhatsappPage />
+          </OperationalRoute>
+        }
+      />
+      <Route
+        path="/operacional/whatsapp/contatos"
+        element={
+          <OperationalRoute area="whatsapp">
+            {/* mesma proteção da caixa de entrada; o banco confere papel e módulo de novo em cada consulta */}
+            <OperationalWhatsappContactsPage />
           </OperationalRoute>
         }
       />

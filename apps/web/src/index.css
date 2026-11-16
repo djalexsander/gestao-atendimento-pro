@@ -5649,3 +5649,39 @@ button {
 @media (max-width: 600px) {
   .court-card-actions .btn-primary, .court-card-actions .btn-secondary { flex: 1 1 140px; }
 }
+
+/* ===== Contatos do WhatsApp (Etapa 7.4) ===== */
+.wa-header-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wc-page { display: flex; flex-direction: column; gap: 12px; min-width: 0; max-width: 960px; margin: 0 auto; width: 100%; }
+.wc-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px 12px; flex-wrap: wrap; }
+.wc-sub { margin: 2px 0 0; font-size: 14px; }
+.wc-search { display: flex; flex-direction: column; gap: 6px; }
+.wc-input { width: 100%; min-height: 44px; box-sizing: border-box; font-size: 16px; }
+.wc-hint { font-size: 13px; color: var(--text-muted); min-height: 20px; overflow-wrap: anywhere; }
+.wc-example { font-weight: 600; color: var(--text); }
+.wc-hint code { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; font-size: 12px; white-space: nowrap; }
+.wc-error { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.wc-count { margin: 0; font-size: 13px; }
+.wc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.wc-card { display: flex; align-items: center; justify-content: space-between; gap: 10px 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); min-width: 0; }
+.wc-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; flex: 1 1 auto; }
+.wc-top { display: flex; align-items: center; gap: 6px 8px; flex-wrap: wrap; }
+.wc-name { color: var(--text-h); overflow-wrap: anywhere; }
+.wc-badge { font-size: 12px; border: 1px solid var(--border); border-radius: 999px; padding: 1px 8px; color: var(--text-muted); white-space: nowrap; }
+.wc-phone { font-size: 14px; color: var(--text); overflow-wrap: anywhere; }
+.wc-meta { display: flex; gap: 4px 6px; flex-wrap: wrap; }
+.wc-chip { font-size: 12px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 1px 6px; color: var(--text-muted); overflow-wrap: anywhere; }
+.wc-chip-customer { color: var(--success); background: var(--success-bg); border-color: transparent; }
+.wc-chip-time { background: transparent; border-color: transparent; padding-left: 0; }
+.wc-warning { margin: 2px 0 0; font-size: 13px; color: var(--warning); background: var(--warning-bg); border-radius: 8px; padding: 6px 8px; overflow-wrap: anywhere; }
+.wc-actions { flex: 0 0 auto; display: flex; align-items: center; }
+.wc-actions .btn-small { min-height: 40px; display: inline-flex; align-items: center; text-decoration: none; white-space: nowrap; }
+.wc-no-conv { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+.wc-more { display: flex; justify-content: center; padding: 4px 0 12px; }
+.wc-more .btn-secondary { min-height: 44px; min-width: 180px; }
+@media (max-width: 640px) {
+  .wc-card { flex-direction: column; align-items: stretch; }
+  .wc-actions .btn-small { width: 100%; justify-content: center; }
+  .wc-no-conv { align-self: flex-start; }
+  .wc-more .btn-secondary { width: 100%; }
+}

@@ -32,6 +32,13 @@ export interface SendOutcome {
 export interface WhatsappSource {
   summary(companyId: string): Promise<Result<ConnectionSummary>>;
   conversations(companyId: string): Promise<Result<ConversationRow[]>>;
+  /**
+   * Uma conversa por id, SÓ da empresa informada (a consulta filtra por empresa e o RLS esconde excluídas e papéis sem acesso).
+   * Sem resultado (inexistente, excluída, de outra empresa ou sem permissão) devolve { data: null, error: null }: nunca distingue o motivo.
+   * Usada para abrir uma conversa pedida de fora (Contatos → ?conversation=) mesmo quando ela passa do limite da lista. Opcional:
+   * fontes simuladas antigas continuam válidas.
+   */
+  conversationById?(companyId: string, conversationId: string): Promise<Result<ConversationRow | null>>;
   messages(companyId: string, conversationId: string): Promise<Result<MessageRow[]>>;
   suggestions(conversationId: string): Promise<Result<Suggestions>>;
   markRead(conversationId: string): Promise<Result<null>>;
@@ -103,6 +110,16 @@ export const supabaseWhatsappSource: WhatsappSource = {
       .limit(500);
     if (error) return fail(error);
     return { data: ((data ?? []) as unknown as RawConversation[]).map(toConversation), error: null };
+  },
+  async conversationById(companyId, conversationId) {
+    const { data, error } = await supabase
+      .from("whatsapp_conversations")
+      .select(CONVERSATION_COLUMNS)
+      .eq("company_id", companyId)
+      .eq("id", conversationId)
+      .maybeSingle();
+    if (error) return fail(error);
+    return { data: data ? toConversation(data as unknown as RawConversation) : null, error: null };
   },
   async messages(companyId, conversationId) {
     // as MAIS RECENTES (limite), exibidas em ordem cronológica

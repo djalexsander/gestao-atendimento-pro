@@ -1,7 +1,7 @@
 import { NotificationsButton } from "../features/notifications/NotificationEntryPoints";
 import { CommercialBanner } from "../features/commercial/CommercialBanner";
-import { useEffect, useState, type ReactNode } from "react";
-import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { canOpenOperationalArea, homePathForRole, OPERATIONAL_PATH } from "../app/accessRules";
 import { useAuth } from "../app/useAuth";
 import { supabaseCashSource } from "../features/cash/cashApi";
@@ -32,7 +32,8 @@ import type { OrdersSource } from "../features/orders/ordersApi";
 // cabeçalho e a ênfase da busca (no Caixa, pronta para o leitor de código de barras).
 const CASH_CHECK_TIMEOUT_MS = 8000;
 
-function OperationalShell({ title, children }: { title: string; children: ReactNode }) {
+// exportada só para a página de Contatos do WhatsApp reutilizar a MESMA casca (nada muda no cabeçalho)
+export function OperationalShell({ title, children }: { title: string; children: ReactNode }) {
   const { activeMembership, user, profile, signOut } = useAuth();
   const navigate = useNavigate();
   const isCashier = activeMembership?.role === "cashier";
@@ -46,7 +47,8 @@ function OperationalShell({ title, children }: { title: string; children: ReactN
   const isAdminRole = role === "owner" || role === "admin";
   const { entitlements } = useCommercial();
   const onDelivery = pathname === OPERATIONAL_PATH.delivery;
-  const onWhatsapp = pathname === OPERATIONAL_PATH.whatsapp;
+  // a área WhatsApp inclui as telas dentro dela (ex.: /operacional/whatsapp/contatos): o cabeçalho trata todas como "estou no WhatsApp"
+  const onWhatsapp = pathname === OPERATIONAL_PATH.whatsapp || pathname.startsWith(`${OPERATIONAL_PATH.whatsapp}/`);
   // WhatsApp só aparece com o módulo liberado (sem oferta comercial: nunca vira "contratar").
   const canSeeWhatsapp = role !== null && canOpenOperationalArea(role, "whatsapp") && moduleAccess(entitlements, "whatsapp") === "allowed";
   // Delivery só aparece quando o módulo está liberado (módulo ainda sem oferta comercial: nada de "contratar").
@@ -267,9 +269,22 @@ export function OperationalOrdersPage({ source }: { source?: OrdersBoardApi }) {
 
 // WhatsApp: inbox somente leitura (Fase 2A-1). `source` só existe para exercitar a tela com dados simulados.
 export function OperationalWhatsappPage({ source }: { source?: WhatsappSource }) {
+  // ?conversation=<id> (vindo de Contatos): a caixa valida e abre; depois o parâmetro sai da URL (replace) para não reabrir ao atualizar
+  const [params, setParams] = useSearchParams();
+  const requested = params.get("conversation");
+  const handled = useCallback(() => {
+    setParams(
+      (current) => {
+        const next = new URLSearchParams(current);
+        next.delete("conversation");
+        return next;
+      },
+      { replace: true },
+    );
+  }, [setParams]);
   return (
     <OperationalShell title="WhatsApp">
-      <WhatsappInbox source={source} />
+      <WhatsappInbox source={source} requestedConversationId={requested} onRequestHandled={handled} />
     </OperationalShell>
   );
 }
