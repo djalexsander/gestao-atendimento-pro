@@ -25,6 +25,16 @@ export interface KnowledgeFacts {
   truncated: boolean;
   /** A empresa não tem NENHUM produto ativo cadastrado (catalog_size = 0). Ausente/false = há catálogo (ou o banco ainda não informa o tamanho). */
   catalog_empty?: boolean;
+  /** Algum produto cobre TODOS os termos pedidos e nada pedido ficou sem correspondência (false = correspondência inexata). Ausente = banco antigo. */
+  exact_match?: boolean;
+  /** Erros de digitação corrigidos pelo vocabulário da própria empresa ("haineken" -> "heineken"). */
+  corrections?: { from: string; to: string }[];
+  /** Marca/tipo (brands) e atributos (attrs: zero, lata, long neck, 600ml...) pedidos que o cardápio NÃO tem. */
+  missing?: { brands: string[]; attrs: string[] };
+  /** Família do que foi pedido e não existe (cerveja, refrigerante, suco, energetico, agua). */
+  requested_type?: string | null;
+  /** Até 3 produtos REAIS da mesma família quando a marca pedida não existe. */
+  alternatives?: KnowledgeProduct[];
   products: KnowledgeProduct[];
   categories: { name: string; products: number }[];
   profile: {
@@ -76,6 +86,24 @@ export function parseKnowledge(raw: unknown): KnowledgeFacts | null {
       availability: a === "available" || a === "unavailable" ? a : "in_menu",
     });
   }
+  const sanitizeProducts = (arr: unknown, max: number): KnowledgeProduct[] => {
+    const out: KnowledgeProduct[] = [];
+    for (const p of Array.isArray(arr) ? arr.slice(0, max) : []) {
+      if (!isObj(p)) continue;
+      const name = str(p.name, 120);
+      const price = money(p.price);
+      if (!name || price === null) continue;
+      const a = p.availability;
+      out.push({ name, category: str(p.category, 80) ?? "", price, description: str(p.description, 200), availability: a === "available" || a === "unavailable" ? a : "in_menu" });
+    }
+    return out;
+  };
+  const words = (v: unknown, n: number): string[] => (Array.isArray(v) ? v.filter((x): x is string => typeof x === "string" && /^[a-z0-9]{1,40}$/.test(x)).slice(0, n) : []);
+  const corrections = (Array.isArray(raw.corrections) ? raw.corrections.slice(0, 10) : [])
+    .map((c) => (isObj(c) && typeof c.from === "string" && typeof c.to === "string" && /^[a-z0-9]{1,40}$/.test(c.from) && /^[a-z0-9]{1,40}$/.test(c.to) ? { from: c.from, to: c.to } : null))
+    .filter((c): c is { from: string; to: string } => c !== null);
+  const miss = isObj(raw.missing) ? raw.missing : null;
+  const TYPES = ["cerveja", "refrigerante", "suco", "energetico", "agua"];
   const categories = (Array.isArray(raw.categories) ? raw.categories.slice(0, 20) : [])
     .map((c) => (isObj(c) && str(c.name, 80) ? { name: str(c.name, 80) as string, products: int(c.products) ?? 0 } : null))
     .filter((c): c is { name: string; products: number } => c !== null);
@@ -128,6 +156,11 @@ export function parseKnowledge(raw: unknown): KnowledgeFacts | null {
     ambiguous: raw.ambiguous === true,
     truncated: raw.truncated === true,
     catalog_empty: typeof raw.catalog_size === "number" && raw.catalog_size === 0,
+    exact_match: typeof raw.exact_match === "boolean" ? raw.exact_match : undefined,
+    corrections,
+    missing: miss ? { brands: words(miss.brands, 5), attrs: words(miss.attrs, 8) } : { brands: [], attrs: [] },
+    requested_type: typeof raw.requested_type === "string" && TYPES.includes(raw.requested_type) ? raw.requested_type : null,
+    alternatives: sanitizeProducts(raw.alternatives, 3),
     products,
     categories,
     profile,
@@ -156,7 +189,8 @@ const dmy = (iso: string): string => `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${i
 /** Fatos como linhas de texto (uma frase por fato). Com descrições só quando includeDescriptions (prompt); a checagem usa sem. */
 function factLines(f: KnowledgeFacts, includeDescriptions: boolean, forSafety = false): string[] {
   const out: string[] = [];
-  for (const p of f.products) {
+  // alternativas reais só entram nas linhas de SEGURANÇA (autorizam nome e preço); no prompt têm seção própria
+  for (const p of forSafety ? [...f.products, ...(f.alternatives ?? [])] : f.products) {
     const desc = includeDescriptions && p.description ? ` — ${p.description}` : "";
     out.push(`${p.name} (${p.category}): ${brl(p.price)}${desc}. Situação: ${AV_TEXT[p.availability]}.`);
   }
@@ -211,6 +245,25 @@ export function buildFactsBlock(f: KnowledgeFacts, audience: "suggest" | "auto" 
   } else {
     lines.push("Nenhum produto do cadastro corresponde à pergunta do cliente.");
   }
+  // INTERPRETAÇÃO do pedido (feita no banco, sem IA extra): digitação corrigida, o que NÃO existe no cardápio e alternativas reais
+  if (f.corrections?.length) {
+    lines.push(`Interpretação (erro de digitação corrigido pelo próprio cadastro): ${f.corrections.map((c) => `"${c.from}" foi entendido como "${c.to}"`).join("; ")}.`);
+  }
+  if (f.exact_match === false && f.products.length > 0 && !f.alternatives?.length) {
+    lines.push("Correspondência INEXATA: nenhum produto atende exatamente ao que o cliente pediu; os produtos acima são apenas PARECIDOS. NÃO diga que temos o item pedido e NÃO escolha nem substitua por conta própria: apresente-os como opções (com os preços) e pergunte qual o cliente prefere.");
+  }
+  if (f.missing?.attrs.length) {
+    lines.push(`O cardápio NÃO tem a variação pedida (${f.missing.attrs.join(", ")}) para esse item: diga isso com clareza e ofereça o que existe.`);
+  }
+  if (f.missing?.brands.length) {
+    lines.push(`NÃO consta no cardápio: ${f.missing.brands.join(", ")}. Isso é ausência no cardápio, NÃO falta de estoque: nunca diga "acabou", "em falta" ou "indisponível no momento".`);
+  }
+  if (f.alternatives?.length) {
+    lines.push(`Alternativas REAIS do cardápio na mesma família (${f.requested_type ?? "produto"}), para oferecer no máximo estas:`);
+    for (const a of f.alternatives) lines.push(`- ${a.name} (${a.category}): ${brl(a.price)}.`);
+  } else if (f.missing?.brands.length) {
+    lines.push("Não há alternativas da mesma família no cardápio: diga isso com transparência e ofereça chamar um atendente.");
+  }
   if (f.categories.length) lines.push(`Categorias do cardápio: ${f.categories.map((c) => `${c.name} (${c.products})`).join(", ")}.`);
   for (const l of factLines({ ...f, products: [] }, true)) lines.push(`- ${l}`);
   const missing: string[] = [];
@@ -232,6 +285,7 @@ export function buildFactsBlock(f: KnowledgeFacts, audience: "suggest" | "auto" 
     "- Informação NÃO cadastrada (horário, endereço, pagamento...): diga que não tem essa informação cadastrada e que pode pedir para a equipe confirmar; não invente nem deduza.",
     "- Se faltar outra informação, peça o dado que falta ou diga que um atendente vai confirmar.",
     ...(f.catalog_empty ? CATALOG_EMPTY_RULES : CATALOG_PRIORITY_RULES),
+    ...INTERPRETATION_RULES,
   );
   if (audience === "auto") lines.push(...AUTO_FACT_RULES);
   return lines;
@@ -244,6 +298,14 @@ export function buildFactsBlock(f: KnowledgeFacts, audience: "suggest" | "auto" 
 const CATALOG_PRIORITY_RULES = [
   "- PRIORIDADE: em perguntas sobre produtos, preços, categorias, cardápio ou disponibilidade, o CATÁLOGO acima prevalece sobre qualquer texto das instruções personalizadas. Se divergirem, informe o do catálogo.",
   "- Não ofereça produto que não esteja no catálogo, mesmo que apareça nas instruções personalizadas ou na fala do cliente.",
+];
+
+/** Interpretação do pedido: nada de trocar produto sozinha; alternativas só as reais; ausência no cardápio não é falta de estoque. */
+const INTERPRETATION_RULES = [
+  "- Sem correspondência exata, NUNCA troque por outro produto sem o cliente confirmar: apresente as opções reais, com preço, e pergunte qual prefere. Marca, sabor, tamanho e versão (zero, lata, long neck, 600 ml) são diferentes entre si.",
+  "- Ao oferecer alternativas, cite no máximo 3, só as listadas nos fatos, de forma natural e sem insistir em venda. Se não houver alternativa, diga isso com transparência.",
+  "- Produto que não está no cardápio NÃO é falta de estoque: diga que não consta no cardápio; use \"indisponível/em falta\" só quando os fatos indicarem essa situação.",
+  "- Se o cliente informou uma quantidade (\"2 heineken\"), mantenha essa quantidade ao confirmar o produto, sem calcular total.",
 ];
 
 /** Empresa sem nenhum produto cadastrado: a IA não inventa catálogo; só o que as instruções personalizadas disserem explicitamente. */
@@ -288,6 +350,7 @@ export function buildSafetyFactsText(f: KnowledgeFacts): string {
 
 const POSITIVE_AV = /\b(sim|temos|tem|disponivel|disponiveis|pronta entrega|esta disponivel|pode pedir)\b/;
 const NEGATIVE_AV = /\b(nao|indisponivel|indisponiveis|acabou|acabaram|esgotad[oa]s?|sem estoque|infelizmente|no momento nao|nao esta|nao temos)\b/;
+const SHORTAGE = /\b(em\s+falta|faltando|acabou|acabaram|esgotad[oa]s?|sem\s+estoque|indisponivel|indisponiveis)\b/;
 const AV_WORDS = /\bdisponiv|\bestoque\b|\bpronta entrega\b|\d+ unidades?\b|\bunidades\b|\bultima unidade\b/;
 const DEFERRAL = /(atendente|confirm|verific|consult|nao (garant|posso)|sem garantia|equipe)/;
 const CLOSURE = /(fechad|nao abr|nao funcion|nao atend|folga)/;
@@ -344,7 +407,7 @@ function moneyValues(clause: string): number[] {
   return out;
 }
 export function catalogPricesMatch(reply: string, f: KnowledgeFacts): boolean {
-  const prods = f.products.map((p) => ({ p, words: nameWords(p.name) })).filter((x) => x.words.length > 0);
+  const prods = [...f.products, ...(f.alternatives ?? [])].map((p) => ({ p, words: nameWords(p.name) })).filter((x) => x.words.length > 0);
   if (prods.length === 0) return true;
   for (const sent of splitS(reply)) {
     for (const clause of sent.split(/,(?!\d)|\se\s|\sou\s|\s\+\s|\//)) {
@@ -401,6 +464,8 @@ export function checkSuggestionSafety(
   if (opts.strictProducts && !catalogPricesMatch(reply, facts)) return BLOCKED;
 
   const sentences = splitS(reply);
+  // AUSÊNCIA NO CARDÁPIO != FALTA DE ESTOQUE: dizer que algo "acabou/está em falta/indisponível" só vale quando os fatos marcam um produto como indisponível (modo tempo real)
+  if (!facts.products.some((p) => p.availability === "unavailable") && sentences.some((sent) => SHORTAGE.test(sent))) return BLOCKED;
   if (facts.mode === "catalog") {
     // sem tempo real: qualquer fala sobre disponibilidade/estoque/unidades só vale se for encaminhar ao atendente
     for (const sent of sentences) if (AV_WORDS.test(sent) && !DEFERRAL.test(sent) && !NEGATIVE_AV.test(sent)) return BLOCKED;

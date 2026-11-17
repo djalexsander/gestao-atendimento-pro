@@ -32,9 +32,19 @@ import {
   parseKnowledge,
   type KnowledgeFacts,
 } from "../_shared/ai-knowledge.ts";
+import {
+  HUMAN_CONFIRM_TEXT,
+  RESERVATION_HANDOFF_TEXT,
+  RESERVATION_INFO_TEXT,
+  classifyItem,
+  composeOrderReply,
+  isReservationQuestion,
+  orderRequestFrom,
+  type ItemState,
+} from "../_shared/ai-catalog-intent.ts";
 import { ORDER_EXTRACT_SCHEMA, maskSavedAddress, validateExtraction } from "../_shared/ai-order.ts";
 import { runOrderFlow, type OrderFlowIo } from "../_shared/ai-order-flow.ts";
-import { composeWithIntro, greetingReply, isGreetingOnly, parseGreetingParts, personalGreetingReply, personalPrefix } from "../_shared/ai-intro.ts";
+import { composeWithIntro, greetingReply, isGreetingOnly, lastInboundText, parseGreetingParts, personalGreetingReply, personalPrefix } from "../_shared/ai-intro.ts";
 import { authorizeInternalRequest } from "../_shared/push-core.ts";
 import { MENU_CAPTION, MENU_OFFER_TEXT, menuFilename, menuIntent } from "../_shared/ai-menu.ts";
 import { MENU_PDF_MAX_BYTES, buildMenuPdf, type MenuCatalog } from "../_shared/menu-pdf.ts";
@@ -179,6 +189,8 @@ async function commitAndDispatch(
     okOutcome: string;
     okReason: string;
     fallback: boolean;
+    /** Transferência para o humano com mensagem de confirmação: a conversa vai ao humano DEPOIS do envio e também se o envio falhar (nunca se perde o pedido). */
+    handoff?: boolean;
     onSent?: (messageId: string) => Promise<void>;
     /** Envio do cardápio: commit do DOCUMENTO (mesmas barreiras do automático) + despacho por media_id. */
     menu?: { hash: string; document: DispatchDocument };
@@ -211,16 +223,16 @@ async function commitAndDispatch(
     const st = typeof res.status === "string" ? res.status : "";
     if (st === "queued") {
       await markMessageFailed(c.deps.admin, messageId, "send_interrupted");
-      await completeJob(c, jobId, "failed_send", "send_interrupted", { usageId: opts.usageId });
+      await completeJob(c, jobId, "failed_send", "send_interrupted", { usageId: opts.usageId, handoff: opts.handoff === true });
       return "failed_send";
     }
     if (st === "failed") {
-      await completeJob(c, jobId, "failed_send", "send_failed", { usageId: opts.usageId });
+      await completeJob(c, jobId, "failed_send", "send_failed", { usageId: opts.usageId, handoff: opts.handoff === true });
       return "failed_send";
     }
     // retry de worker com a mensagem já enviada: garante o que depende do envio (ex.: marcar o resumo do pedido)
     if (opts.onSent && (st === "sent" || st === "delivered" || st === "read")) await opts.onSent(messageId);
-    await completeJob(c, jobId, opts.okOutcome, opts.okReason, { usageId: opts.usageId, handled: latest });
+    await completeJob(c, jobId, opts.okOutcome, opts.okReason, { usageId: opts.usageId, handled: latest, handoff: opts.handoff === true });
     return opts.okOutcome;
   }
 
@@ -229,10 +241,11 @@ async function commitAndDispatch(
   const sent = await dispatchQueuedMessage({ admin: c.deps.admin, graph: c.deps.graph, graphVersion }, messageId, opts.menu?.document);
   if (sent.ok) {
     if (opts.onSent) await opts.onSent(messageId);
-    await completeJob(c, jobId, opts.okOutcome, opts.okReason, { usageId: opts.usageId, handled: latest });
+    await completeJob(c, jobId, opts.okOutcome, opts.okReason, { usageId: opts.usageId, handled: latest, handoff: opts.handoff === true });
     return opts.okOutcome;
   }
-  await completeJob(c, jobId, "failed_send", sent.errorCode, { usageId: opts.usageId });
+  if (opts.handoff) console.error("whatsapp-ai-auto: confirmação de transferência não enviada; a conversa foi transferida mesmo assim", { code: sent.errorCode });
+  await completeJob(c, jobId, "failed_send", sent.errorCode, { usageId: opts.usageId, handoff: opts.handoff === true });
   return "failed_send";
 }
 
@@ -379,6 +392,16 @@ async function tryMenu(c: Ctx, jobId: string, latest: string, inbound: string[],
   });
 }
 
+/** Uma consulta ao cadastro (RPC do job; a empresa vem do job no banco). "error" = falha de comunicação (o job é retomado); null = consulta desligada/resposta inválida. */
+async function lookupFacts(c: Ctx, jobId: string, query: string): Promise<KnowledgeFacts | null | "error"> {
+  const r = await call(c.deps.admin, "whatsapp_ai_lookup_knowledge_job", { p_job_id: jobId, p_query: query.slice(0, 500), p_limit: KNOWLEDGE_LOOKUP_LIMIT });
+  if (r.error) {
+    console.error("whatsapp-ai-auto: consulta de conhecimento (item) falhou", { code: r.error.code ?? null });
+    return "error";
+  }
+  return parseKnowledge(r.data);
+}
+
 async function processJob(base: Ctx, job: JobRow): Promise<string> {
   const { deps } = base;
   let c: Ctx = base;
@@ -500,7 +523,25 @@ async function processJob(base: Ctx, job: JobRow): Promise<string> {
       await completeJob(c, job.id, "ignored", pre.reason_code, { handled: latest });
       return "ignored";
     }
+    // PEDIDO DE ATENDENTE: confirmação curta ao cliente ANTES de transferir (sem IA, sem cota). Uma mensagem por job (sem duplicar); depois da transferência a IA não
+    // responde mais (ai_control = human). Se o envio da confirmação falhar, a conversa é transferida do mesmo jeito e o problema fica registrado. Sem encaminhamento
+    // ao humano ativo, vale o comportamento de sempre (nada é prometido).
+    if (pre.reason_code === "human_requested" && fallback) {
+      return await commitAndDispatch(c, job.id, latest, HUMAN_CONFIRM_TEXT, { usageId: null, okOutcome: "handoff", okReason: "human_requested", fallback, handoff: true });
+    }
     return await handoffOrIgnore(c, job.id, fallback, pre.reason_code, { handled: latest });
+  }
+
+  // MESA / RESERVA: a IA não tem como verificar; não inventa disponibilidade. Mensagem fixa e, quando permitido, transferência (sem IA, sem cota).
+  const lastIn = lastInboundText(ctx.messages);
+  if (lastIn && isReservationQuestion(lastIn)) {
+    return await commitAndDispatch(c, job.id, latest, fallback ? RESERVATION_HANDOFF_TEXT : RESERVATION_INFO_TEXT, {
+      usageId: null,
+      okOutcome: fallback ? "handoff" : "replied",
+      okReason: "reservation_unverifiable",
+      fallback,
+      handoff: fallback,
+    });
   }
 
   // BASE DE CONHECIMENTO (Etapa 3): só com knowledge_enabled=true (senão a RPC devolve {enabled:false} e nada muda). UMA consulta ao
@@ -514,8 +555,31 @@ async function processJob(base: Ctx, job: JobRow): Promise<string> {
   }
   const facts = parseKnowledge(lookup.data);
   // com a base ligada, pedido/compra não gasta IA: handoff direto (o automático nunca cria, anota nem reserva pedido)
-  if (facts && isOrderIntent(kQuery) && !orderActive) {
-    return await handoffOrIgnore(c, job.id, fallback, "action_required", { handled: latest });
+  if (facts && !orderActive) {
+    const req = orderRequestFrom(ctx.messages);
+    if (req || isOrderIntent(kQuery)) {
+      if (!req || !fallback || req.items.length === 0) return await handoffOrIgnore(c, job.id, fallback, "action_required", { handled: latest });
+      // um lookup (RPC do banco, mesma consulta de sempre) por item; o texto sai dos fatos do CADASTRO da empresa do job, sem IA e sem total
+      const states: ItemState[] = [];
+      for (const it of req.items) {
+        const first = await lookupFacts(c, job.id, it.term);
+        if (first === "error") return "left_for_retry";
+        let facts1 = first;
+        let st: ItemState | null = facts1 ? classifyItem(it, facts1) : null;
+        if (st && st.kind !== "resolved" && it.fallbackTerm) {
+          const second = await lookupFacts(c, job.id, it.fallbackTerm);
+          if (second === "error") return "left_for_retry";
+          if (second) {
+            const st2 = classifyItem(it, second);
+            if (st2.kind === "resolved") { st = st2; facts1 = second; }
+          }
+        }
+        if (!st) return await handoffOrIgnore(c, job.id, fallback, "action_required", { handled: latest });
+        states.push(st);
+      }
+      const out = composeOrderReply(states, { catalogEmpty: facts.catalog_empty === true });
+      return await commitAndDispatch(c, job.id, latest, out.text, { usageId: null, okOutcome: out.handoff ? "handoff" : "replied", okReason: out.reason, fallback, handoff: out.handoff });
+    }
   }
 
   // reserva atômica da cota ANTES do provedor
