@@ -5781,3 +5781,17 @@ button {
   .sc-req-actions .mc-actions-row { flex-direction: column; }
   .sc-error button { width: 100%; }
 }
+
+/* Atualizar templates e configuração do Master (Etapa 7.11M) */
+.wa-tpl { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.wa-tpl-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.wa-tpl-count { font-weight: 600; margin: 0; }
+.wa-tpl-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-height: 45vh; overflow: auto; }
+.wa-tpl-item { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; overflow-wrap: anywhere; }
+.wa-tpl-body { margin-top: 4px; white-space: pre-wrap; font-size: 0.92em; }
+.wa-start-grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); align-items: start; margin-top: 8px; }
+.wa-start-grid > label.wa-start-switch { grid-column: 1 / -1; display: flex; align-items: center; gap: 8px; font-weight: 600; }
+.wa-start-grid input:not([type="checkbox"]) { width: 100%; box-sizing: border-box; }
+@media (max-width: 640px) {
+  .wa-tpl-actions button { width: 100%; }
+}

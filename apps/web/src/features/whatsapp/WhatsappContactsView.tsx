@@ -126,6 +126,7 @@ export function ContactsView({
   canStart,
   onStart,
   onOpenRequests,
+  onOpenTemplates,
   attentionCount = 0,
 }: {
   text: string;
@@ -150,6 +151,8 @@ export function ContactsView({
   onStart?: (c: ContactRow) => void;
   /** Abre a lista de solicitações de início (só quando o recurso está disponível). */
   onOpenRequests?: () => void;
+  /** Atualizar templates (7.11M): só owner/admin; o servidor revalida. */
+  onOpenTemplates?: () => void;
   /** Quantas solicitações precisam de ação (incerto/aguardando envio). */
   attentionCount?: number;
 }) {
@@ -169,6 +172,11 @@ export function ContactsView({
           {canCreate && onNewContact && (
             <button type="button" className="btn-primary btn-small" onClick={onNewContact}>
               Novo contato
+            </button>
+          )}
+          {onOpenTemplates && (
+            <button type="button" className="btn-secondary btn-small" data-testid="wc-templates" onClick={onOpenTemplates}>
+              Templates
             </button>
           )}
           {onOpenRequests && (

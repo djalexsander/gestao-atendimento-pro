@@ -1,4 +1,5 @@
 import { MonitoringSection } from "../features/master/whatsapp/MonitoringSection";
+import { StartConversationSection } from "../features/master/whatsapp/StartConversationSection";
 import { PilotSection } from "../features/master/whatsapp/PilotSection";
 import { RegistrationsSection } from "../features/master/whatsapp/RegistrationsSection";
 import { TokenHealthSection } from "../features/master/whatsapp/TokenHealthSection";
@@ -16,6 +17,7 @@ export function MasterWhatsappPage() {
       <MonitoringSection />
       <TokenHealthSection />
       <PilotSection />
+      <StartConversationSection />
       <RegistrationsSection />
     </div>
   );

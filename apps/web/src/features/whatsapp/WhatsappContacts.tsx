@@ -8,6 +8,9 @@ import { CONTACTS_DEBOUNCE_MS, CONTACTS_PAGE_SIZE, conversationPath, formatConta
 import { createStartController, supabaseStartSource, type StartSource } from "./whatsappStartApi";
 import { canShowStart, needsAttention, startAvailable, startTargetOf, type StartSettings } from "./whatsappStartLogic";
 import { StartConversationDialog, StartRequestsDialog } from "./WhatsappStartUi";
+import { supabaseTemplatesSync, type TemplatesSyncSource } from "./whatsappTemplatesSyncApi";
+import { canSyncTemplates } from "./whatsappTemplatesSyncLogic";
+import { TemplatesDialog } from "./WhatsappTemplatesUi";
 import { ContactsView } from "./WhatsappContactsView";
 import { canUseWhatsapp } from "./whatsappLogic";
 import { createManualContactsController, supabaseManualContactsSource, type ManualContactsSource, type ManualResult } from "./whatsappManualContactsApi";
@@ -29,6 +32,7 @@ export function WhatsappContacts({
   manualSource = supabaseManualContactsSource,
   customerSource,
   startSource = supabaseStartSource,
+  syncSource = supabaseTemplatesSync,
   debounceMs = CONTACTS_DEBOUNCE_MS,
   pageSize = CONTACTS_PAGE_SIZE,
 }: {
@@ -39,6 +43,8 @@ export function WhatsappContacts({
   customerSource?: CustomersSource;
   /** Fonte do "Iniciar conversa" (7.11G); por padrão as RPCs e a Edge reais. */
   startSource?: StartSource;
+  /** Fonte do "Atualizar templates" (7.11M); por padrão a Edge real. */
+  syncSource?: TemplatesSyncSource;
   debounceMs?: number;
   pageSize?: number;
 }) {
@@ -58,6 +64,7 @@ export function WhatsappContacts({
       manualSource={manualSource}
       customerSource={customerSource}
       startSource={startSource}
+      syncSource={syncSource}
       debounceMs={debounceMs}
       pageSize={pageSize}
     />
@@ -72,6 +79,7 @@ function ContactsScreen({
   manualSource,
   customerSource,
   startSource,
+  syncSource,
   debounceMs,
   pageSize,
 }: {
@@ -82,6 +90,7 @@ function ContactsScreen({
   manualSource: ManualContactsSource;
   customerSource?: CustomersSource;
   startSource: StartSource;
+  syncSource: TemplatesSyncSource;
   debounceMs: number;
   pageSize: number;
 }) {
@@ -138,6 +147,7 @@ function ContactsScreen({
   const [attention, setAttention] = useState(0);
   const [startFor, setStartFor] = useState<ContactRow | null>(null);
   const [showRequests, setShowRequests] = useState(false);
+  const [showTemplates, setShowTemplates] = useState(false);
   const startController = useMemo(() => createStartController({ source: startSource, companyId, role }), [startSource, companyId, role]);
   const refreshStart = useCallback(() => {
     void startSource.settings(companyId).then((r) => {
@@ -261,6 +271,7 @@ function ContactsScreen({
         canStart={(c) => canShowStart(role, startSettings, c)}
         onStart={startOn ? (c) => setStartFor(c) : undefined}
         onOpenRequests={startOn ? () => setShowRequests(true) : undefined}
+        onOpenTemplates={canSyncTemplates(role) ? () => setShowTemplates(true) : undefined}
         attentionCount={attention}
         onTextChange={(value) => {
           textRef.current = value;
@@ -290,6 +301,18 @@ function ContactsScreen({
           onStarted={() => {
             refreshStart();
             void loader.refresh();
+          }}
+        />
+      )}
+
+      {showTemplates && canSyncTemplates(role) && (
+        <TemplatesDialog
+          companyId={companyId}
+          sync={syncSource}
+          source={startSource}
+          onClose={() => {
+            setShowTemplates(false);
+            refreshStart();
           }}
         />
       )}
