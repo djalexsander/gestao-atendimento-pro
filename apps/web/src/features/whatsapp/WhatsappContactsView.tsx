@@ -42,7 +42,7 @@ function ArchivedCard({ contact, selected, onOpenContact }: { contact: ContactRo
   );
 }
 
-function ContactCard({ contact, selected, onOpenContact, onStart }: { contact: ContactRow; selected: boolean; onOpenContact?: (c: ContactRow) => void; onStart?: (c: ContactRow) => void }) {
+function ContactCard({ contact, selected, onOpenContact }: { contact: ContactRow; selected: boolean; onOpenContact?: (c: ContactRow) => void }) {
   const notice = ambiguityNotice(contact);
   const last = lastInteraction(contact);
   const link = customerLinkText(contact);
@@ -90,14 +90,7 @@ function ContactCard({ contact, selected, onOpenContact, onStart }: { contact: C
             Abrir conversa
           </Link>
         ) : (
-          <>
-            <span className="wc-no-conv">Sem conversa</span>
-            {onStart && (
-              <button type="button" className="btn-primary btn-small" data-testid="wc-start" onClick={() => onStart(contact)}>
-                Iniciar conversa
-              </button>
-            )}
-          </>
+          <span className="wc-no-conv">Sem conversa</span>
         )}
       </div>
     </li>
@@ -123,11 +116,6 @@ export function ContactsView({
   notice = null,
   filter = "active",
   onFilterChange,
-  canStart,
-  onStart,
-  onOpenRequests,
-  onOpenTemplates,
-  attentionCount = 0,
 }: {
   text: string;
   state: ContactsState;
@@ -146,15 +134,6 @@ export function ContactsView({
   /** Aba atual (Ativos/Arquivados). Sem onFilterChange as abas não aparecem. */
   filter?: ContactsFilter;
   onFilterChange?: (f: ContactsFilter) => void;
-  /** Iniciar conversa (7.11G): decide, por contato, se o botão aparece (papel + habilitado pelo Master + contato sem conversa). */
-  canStart?: (c: ContactRow) => boolean;
-  onStart?: (c: ContactRow) => void;
-  /** Abre a lista de solicitações de início (só quando o recurso está disponível). */
-  onOpenRequests?: () => void;
-  /** Atualizar templates (7.11M): só owner/admin; o servidor revalida. */
-  onOpenTemplates?: () => void;
-  /** Quantas solicitações precisam de ação (incerto/aguardando envio). */
-  attentionCount?: number;
 }) {
   const live = classifyContactQuery(text);
   const loading = state.status === "loading";
@@ -172,16 +151,6 @@ export function ContactsView({
           {canCreate && onNewContact && (
             <button type="button" className="btn-primary btn-small" onClick={onNewContact}>
               Novo contato
-            </button>
-          )}
-          {onOpenTemplates && (
-            <button type="button" className="btn-secondary btn-small" data-testid="wc-templates" onClick={onOpenTemplates}>
-              Templates
-            </button>
-          )}
-          {onOpenRequests && (
-            <button type="button" className="btn-secondary btn-small" data-testid="wc-requests" onClick={onOpenRequests}>
-              Solicitações{attentionCount > 0 ? ` (${attentionCount})` : ""}
             </button>
           )}
           <Link className="btn-secondary btn-small" to={CONTACTS_BASE_PATH}>
@@ -268,7 +237,7 @@ export function ContactsView({
               c.archivedAt !== null ? (
                 <ArchivedCard key={c.contactKey} contact={c} selected={c.contactKey === selectedKey} onOpenContact={onOpenContact} />
               ) : (
-                <ContactCard key={c.contactKey} contact={c} selected={c.contactKey === selectedKey} onOpenContact={onOpenContact} onStart={onStart && canStart?.(c) ? onStart : undefined} />
+                <ContactCard key={c.contactKey} contact={c} selected={c.contactKey === selectedKey} onOpenContact={onOpenContact} />
               ),
             )}
           </ul>

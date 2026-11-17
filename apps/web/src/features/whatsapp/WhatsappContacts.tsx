@@ -1,16 +1,9 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, useSyncExternalStore, type FormEvent } from "react";
-import { useNavigate } from "react-router-dom";
 import { useAuth } from "../../app/useAuth";
 import type { CustomersSource } from "../customers/customersApi";
 import { createContactsLoader, supabaseArchivedContactsSource, supabaseContactsSource, type ContactsSource } from "./whatsappContactsApi";
 import { classifyContactQuery, type ContactRow } from "./whatsappContactsLogic";
-import { CONTACTS_DEBOUNCE_MS, CONTACTS_PAGE_SIZE, conversationPath, formatContactPhone, type ContactsFilter } from "./whatsappContactsPresentation";
-import { createStartController, supabaseStartSource, type StartSource } from "./whatsappStartApi";
-import { canShowStart, needsAttention, startAvailable, startTargetOf, type StartSettings } from "./whatsappStartLogic";
-import { StartConversationDialog, StartRequestsDialog } from "./WhatsappStartUi";
-import { supabaseTemplatesSync, type TemplatesSyncSource } from "./whatsappTemplatesSyncApi";
-import { canSyncTemplates } from "./whatsappTemplatesSyncLogic";
-import { TemplatesDialog } from "./WhatsappTemplatesUi";
+import { CONTACTS_DEBOUNCE_MS, CONTACTS_PAGE_SIZE, type ContactsFilter } from "./whatsappContactsPresentation";
 import { ContactsView } from "./WhatsappContactsView";
 import { canUseWhatsapp } from "./whatsappLogic";
 import { createManualContactsController, supabaseManualContactsSource, type ManualContactsSource, type ManualResult } from "./whatsappManualContactsApi";
@@ -31,8 +24,6 @@ export function WhatsappContacts({
   archivedSource = supabaseArchivedContactsSource,
   manualSource = supabaseManualContactsSource,
   customerSource,
-  startSource = supabaseStartSource,
-  syncSource = supabaseTemplatesSync,
   debounceMs = CONTACTS_DEBOUNCE_MS,
   pageSize = CONTACTS_PAGE_SIZE,
 }: {
@@ -41,10 +32,6 @@ export function WhatsappContacts({
   archivedSource?: ContactsSource;
   manualSource?: ManualContactsSource;
   customerSource?: CustomersSource;
-  /** Fonte do "Iniciar conversa" (7.11G); por padrão as RPCs e a Edge reais. */
-  startSource?: StartSource;
-  /** Fonte do "Atualizar templates" (7.11M); por padrão a Edge real. */
-  syncSource?: TemplatesSyncSource;
   debounceMs?: number;
   pageSize?: number;
 }) {
@@ -63,8 +50,6 @@ export function WhatsappContacts({
       archivedSource={archivedSource}
       manualSource={manualSource}
       customerSource={customerSource}
-      startSource={startSource}
-      syncSource={syncSource}
       debounceMs={debounceMs}
       pageSize={pageSize}
     />
@@ -78,8 +63,6 @@ function ContactsScreen({
   archivedSource,
   manualSource,
   customerSource,
-  startSource,
-  syncSource,
   debounceMs,
   pageSize,
 }: {
@@ -89,8 +72,6 @@ function ContactsScreen({
   archivedSource: ContactsSource;
   manualSource: ManualContactsSource;
   customerSource?: CustomersSource;
-  startSource: StartSource;
-  syncSource: TemplatesSyncSource;
   debounceMs: number;
   pageSize: number;
 }) {
@@ -139,36 +120,6 @@ function ContactsScreen({
       controller.invalidate(); // operações em andamento passam a valer "stale": nada é atualizado depois de sair (empresa e papel não mudam: o StrictMode remonta com o mesmo controlador)
     };
   }, [controller]);
-
-  // ---- iniciar conversa (7.11G) ----
-  // O recurso só aparece quando o Master habilitou, o servidor permite e o papel é owner/admin/atendente. Qualquer falha ao consultar = recurso escondido.
-  const navigate = useNavigate();
-  const [startSettings, setStartSettings] = useState<StartSettings | null>(null);
-  const [attention, setAttention] = useState(0);
-  const [startFor, setStartFor] = useState<ContactRow | null>(null);
-  const [showRequests, setShowRequests] = useState(false);
-  const [showTemplates, setShowTemplates] = useState(false);
-  const startController = useMemo(() => createStartController({ source: startSource, companyId, role }), [startSource, companyId, role]);
-  const refreshStart = useCallback(() => {
-    void startSource.settings(companyId).then((r) => {
-      if (!alive.current) return;
-      setStartSettings(r.ok ? r.data : null);
-      if (r.ok && startAvailable(role, r.data)) {
-        void startSource.requests(companyId, true).then((q) => alive.current && setAttention(q.ok ? q.data.filter(needsAttention).length : 0));
-      } else setAttention(0);
-    });
-  }, [startSource, companyId, role]);
-  useEffect(() => {
-    refreshStart();
-    return () => startController.invalidate();
-  }, [refreshStart, startController]);
-  const startOn = startAvailable(role, startSettings);
-  const startTarget = startFor ? startTargetOf(startFor) : null;
-  const openConversation = (conversationId: string) => {
-    setStartFor(null);
-    setShowRequests(false);
-    navigate(conversationPath(conversationId));
-  };
 
   const [panel, dispatch] = useReducer(panelReducer, CLOSED_PANEL);
   const [detail, setDetail] = useState<DetailState | null>(null);
@@ -268,11 +219,6 @@ function ContactsScreen({
           dispatch({ type: "create" });
         }}
         onOpenContact={onOpenContact}
-        canStart={(c) => canShowStart(role, startSettings, c)}
-        onStart={startOn ? (c) => setStartFor(c) : undefined}
-        onOpenRequests={startOn ? () => setShowRequests(true) : undefined}
-        onOpenTemplates={canSyncTemplates(role) ? () => setShowTemplates(true) : undefined}
-        attentionCount={attention}
         onTextChange={(value) => {
           textRef.current = value;
           setText(value);
@@ -281,45 +227,6 @@ function ContactsScreen({
         onRetry={() => void loader.retry()}
         onLoadMore={() => void loader.loadMore()}
       />
-
-      {startFor && startTarget && startSettings && startOn && (
-        <StartConversationDialog
-          key={startFor.contactKey}
-          companyId={companyId}
-          source={startSource}
-          start={(input, n) => startController.start(input, n)}
-          target={startTarget}
-          contactName={startFor.displayName}
-          phoneText={formatContactPhone(startFor)}
-          settings={startSettings}
-          onClose={() => setStartFor(null)}
-          onOpenConversation={openConversation}
-          onOpenRequests={() => {
-            setStartFor(null);
-            setShowRequests(true);
-          }}
-          onStarted={() => {
-            refreshStart();
-            void loader.refresh();
-          }}
-        />
-      )}
-
-      {showTemplates && canSyncTemplates(role) && (
-        <TemplatesDialog
-          companyId={companyId}
-          sync={syncSource}
-          source={startSource}
-          onClose={() => {
-            setShowTemplates(false);
-            refreshStart();
-          }}
-        />
-      )}
-
-      {showRequests && startOn && (
-        <StartRequestsDialog companyId={companyId} source={startSource} onClose={() => setShowRequests(false)} onOpenConversation={openConversation} onChanged={refreshStart} />
-      )}
 
       {panel.mode === "create" && (
         <ManualContactForm
