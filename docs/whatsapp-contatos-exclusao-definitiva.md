@@ -1,6 +1,6 @@
 # Contatos manuais do WhatsApp — especificação da exclusão definitiva
 
-Status: **ESPECIFICAÇÃO. Nada disto está implementado** (Etapa 7.10C só prepara o texto; a exclusão é uma etapa separada, a ser autorizada).
+Status: **implementada localmente na Etapa 7.10I** (migration `20261130010000_whatsapp_contacts_delete.sql`, RPC `delete_whatsapp_contact`; ainda NÃO aplicada no remoto nem publicada). Decisão da implementação: a confirmação é a palavra exata `EXCLUIR` (conferida no banco), em vez do telefone.
 
 ## Princípio
 
@@ -21,7 +21,7 @@ Arquivar (já existe) é o caminho normal e reversível. Exclusão definitiva é
 
 RPC `delete_whatsapp_contact(p_contact_id uuid, p_confirmation text)`:
 
-- `p_confirmation` deve ser exatamente o telefone do contato em formato E.164 apenas com dígitos (ou a palavra `EXCLUIR`, a decidir na etapa), conferido no banco, não só na tela.
+- `p_confirmation` deve ser exatamente `EXCLUIR` (maiúsculas, sem espaços), conferido no banco, não só na tela. (Decisão 7.10I: mais simples no celular que digitar o telefone e não expõe o número em um campo de texto.)
 - A interface exibirá o aviso: "Esta ação apaga o contato e suas observações definitivamente e não pode ser desfeita."
 - Sem confirmação correta: PT400, nada é alterado.
 

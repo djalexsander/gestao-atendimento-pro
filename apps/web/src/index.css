@@ -5716,6 +5716,9 @@ button {
 .mc-actions-row { display: flex; gap: 8px; flex-wrap: wrap; }
 .mc-actions-row button { min-height: 44px; }
 .mc-danger { color: var(--danger); }
+.mc-delete, .mc-delete-confirm .btn-danger { min-height: 44px; }
+.mc-delete-warning { color: var(--danger); margin: 0; font-weight: 600; overflow-wrap: anywhere; }
+.mc-delete-confirm input { width: 100%; box-sizing: border-box; font-size: 16px; min-height: 44px; }
 .mc-confirm { display: flex; flex-direction: column; gap: 8px; }
 .mc-actions button { min-height: 44px; }
 @media (max-width: 520px) {

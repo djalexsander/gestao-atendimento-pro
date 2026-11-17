@@ -6,7 +6,7 @@ import type { ManualContactDetail, ManualContactError } from "./whatsappManualCo
 export type ManualPanel =
   | { mode: "closed" }
   | { mode: "create" }
-  | { mode: "view"; contactId: string; confirm: "archive" | "restore" | null }
+  | { mode: "view"; contactId: string; confirm: "archive" | "restore" | "delete" | null }
   | { mode: "edit"; contactId: string }
   | { mode: "link"; contactId: string };
 
@@ -17,7 +17,7 @@ export type ManualPanelAction =
   | { type: "view"; contactId: string }
   | { type: "edit" }
   | { type: "link" }
-  | { type: "confirm"; what: "archive" | "restore" | null }
+  | { type: "confirm"; what: "archive" | "restore" | "delete" | null }
   | { type: "back" }
   | { type: "close" };
 
@@ -80,6 +80,9 @@ export const MANUAL_TEXT = {
   loadingDetail: "Carregando contato…",
   linkHelp: "Escolha um cliente já cadastrado e ativo. Nenhum cliente novo é criado aqui.",
   archivedBadge: "Arquivado",
+  deleteForever: "Excluir definitivamente",
+  confirmDelete: "Esta ação apaga o contato e as observações definitivamente e NÃO pode ser desfeita. Clientes, conversas e mensagens não são apagados.",
+  deleteTypeLabel: "Para confirmar, digite EXCLUIR",
 } as const;
 
 export const NOTICES = {
@@ -90,4 +93,5 @@ export const NOTICES = {
   linked: "Cliente vinculado.",
   unlinked: "Cliente desvinculado.",
   unchanged: "Nada foi alterado.",
+  deleted: "Contato excluído definitivamente.",
 } as const;

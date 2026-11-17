@@ -2,11 +2,14 @@ import { supabase } from "../../lib/supabaseClient";
 import {
   FORM_MESSAGES,
   forbiddenMessage,
+  isDeleteConfirmationValid,
   isOperationAllowed,
   mapManualContactError,
+  toManualContactDeletion,
   toManualContactDetail,
   toManualContactMutation,
   validateManualContactForm,
+  type ManualContactDeletion,
   type ManualContactDetail,
   type ManualContactError,
   type ManualContactFormInput,
@@ -38,6 +41,8 @@ export interface ManualContactsSource {
   restore(contactId: string): Promise<ManualResult<ManualContactMutation>>;
   /** customerId = null desvincula. */
   setCustomer(contactId: string, customerId: string | null): Promise<ManualResult<ManualContactMutation>>;
+  /** Exclusão DEFINITIVA (só dono, só arquivado, confirmação conferida no banco). */
+  remove(contactId: string, confirmation: string): Promise<ManualResult<ManualContactDeletion>>;
 }
 
 const UNEXPECTED: ManualContactError = { kind: "generic", message: "Resposta inesperada do servidor. Tente novamente." };
@@ -66,16 +71,24 @@ export const supabaseManualContactsSource: ManualContactsSource = {
   restore: (contactId) => call("restore", supabase.rpc("restore_whatsapp_contact", { p_contact_id: contactId }), toManualContactMutation),
   setCustomer: (contactId, customerId) =>
     call("link", supabase.rpc("set_whatsapp_contact_customer", { p_contact_id: contactId, p_customer_id: customerId }), toManualContactMutation),
+  remove: (contactId, confirmation) =>
+    call("delete", supabase.rpc("delete_whatsapp_contact", { p_contact_id: contactId, p_confirmation: confirmation }), toManualContactDeletion),
 };
 
 // ---------------------------------------------------------------------------
 // Controlador (sem React): uma tela futura apenas chama estes métodos e mostra o resultado.
 // ---------------------------------------------------------------------------
-export interface ManualContactChange {
-  op: Exclude<ManualContactOperation, "get">;
-  /** O contato depois da operação (a chave pode ter mudado se o telefone mudou). */
-  contact: ManualContactMutation["contact"];
-}
+export type ManualContactChange =
+  | {
+      op: Exclude<ManualContactOperation, "get" | "delete">;
+      /** O contato depois da operação (a chave pode ter mudado se o telefone mudou). */
+      contact: ManualContactMutation["contact"];
+    }
+  | {
+      /** Contato excluído definitivamente: só o id (a linha deixa de existir). */
+      op: "delete";
+      contactId: string;
+    };
 
 export interface ManualContactsController {
   create(input: ManualContactFormInput): Promise<ManualResult<ManualContactMutation>>;
@@ -85,6 +98,8 @@ export interface ManualContactsController {
   restore(contactId: string): Promise<ManualResult<ManualContactMutation>>;
   /** customerId = null desvincula. */
   setCustomer(contactId: string, customerId: string | null): Promise<ManualResult<ManualContactMutation>>;
+  /** Exclusão definitiva (só dono; confirmação EXCLUIR validada aqui e de novo no banco). */
+  deleteContact(contactId: string, confirmation: string): Promise<ManualResult<ManualContactDeletion>>;
   /** Há operação em andamento? (sem argumento: qualquer uma; com id: só para aquele contato). */
   isBusy(contactId?: string): boolean;
   /** Troca a empresa ativa: operações em andamento deixam de valer (resultado descartado, lista não é atualizada). */
@@ -120,7 +135,7 @@ export function createManualContactsController(options: {
   }
 
   /** Executa uma escrita/consulta com: chamada duplicada = mesma promessa; uma operação por contato; descarte se a empresa/papel mudou. */
-  function run<T extends ManualContactMutation | ManualContactDetail>(
+  function run<T extends ManualContactMutation | ManualContactDetail | ManualContactDeletion>(
     op: ManualContactOperation,
     contactId: string | null,
     payloadKey: string,
@@ -170,7 +185,7 @@ export function createManualContactsController(options: {
     return p;
   }
 
-  const mutationChange = (op: ManualContactChange["op"]) => (m: ManualContactMutation): ManualContactChange | null => (m.changed ? { op, contact: m.contact } : null);
+  const mutationChange = (op: Exclude<ManualContactChange["op"], "delete">) => (m: ManualContactMutation): ManualContactChange | null => (m.changed ? { op, contact: m.contact } : null);
 
   function invalid(errors: NonNullable<ManualContactError["fieldErrors"]>): ManualResult<never> {
     return { ok: false, error: { kind: "invalid", message: Object.values(errors)[0] ?? FORM_MESSAGES.phoneInvalid, fieldErrors: errors } };
@@ -213,6 +228,14 @@ export function createManualContactsController(options: {
       const blocked = guard("link");
       if (blocked) return Promise.resolve(blocked);
       return run("link", contactId, String(customerId), () => source.setCustomer(contactId, customerId), mutationChange("link"));
+    },
+    deleteContact(contactId, confirmation) {
+      const blocked = guard("delete");
+      if (blocked) return Promise.resolve(blocked);
+      if (!isDeleteConfirmationValid(confirmation)) {
+        return Promise.resolve<ManualResult<never>>({ ok: false, error: { kind: "invalid", message: "Confirmação inválida. Digite EXCLUIR para excluir definitivamente." } });
+      }
+      return run("delete", contactId, confirmation, () => source.remove(contactId, confirmation), (r): ManualContactChange => ({ op: "delete", contactId: r.contactId }));
     },
     isBusy: (contactId) => (contactId ? busyContacts.has(contactId) : busyContacts.size > 0 || busyCreate > 0),
     setCompany(next) {

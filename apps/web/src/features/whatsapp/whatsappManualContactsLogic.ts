@@ -81,6 +81,21 @@ export function toManualContactMutation(raw: unknown): ManualContactMutation | n
   return contact ? { changed: raw.changed === true, contact } : null;
 }
 
+/** Resposta de delete_whatsapp_contact: só o id do contato removido (nada de dados pessoais). */
+export interface ManualContactDeletion {
+  contactId: string;
+}
+
+export function toManualContactDeletion(raw: unknown): ManualContactDeletion | null {
+  if (!isObj(raw) || raw.ok !== true || raw.deleted !== true) return null;
+  const contactId = str(raw.contact_id);
+  return contactId ? { contactId } : null;
+}
+
+/** Palavra que o usuário precisa digitar para excluir definitivamente (o banco confere de novo, exatamente assim). */
+export const DELETE_CONFIRMATION = "EXCLUIR";
+export const isDeleteConfirmationValid = (text: string | null | undefined): boolean => text === DELETE_CONFIRMATION;
+
 export function toManualContactDetail(raw: unknown): ManualContactDetail | null {
   if (!isObj(raw)) return null;
   const contact = toManualContact(raw.contact);
@@ -97,6 +112,8 @@ export function toManualContactDetail(raw: unknown): ManualContactDetail | null 
 // ---------------------------------------------------------------------------
 export interface ManualContactPermissions {
   canView: boolean;
+  /** Exclusão definitiva: SOMENTE o dono (o servidor também exige que o contato esteja arquivado). */
+  canDelete: boolean;
   canCreate: boolean;
   canEdit: boolean;
   canLinkCustomer: boolean;
@@ -109,10 +126,10 @@ export function manualContactPermissions(role: string | null | undefined): Manua
   const manage = role === "owner" || role === "admin";
   const write = manage || role === "attendant";
   const view = write || role === "cashier";
-  return { canView: view, canCreate: write, canEdit: write, canLinkCustomer: write, canArchive: manage, canRestore: manage };
+  return { canView: view, canDelete: role === "owner", canCreate: write, canEdit: write, canLinkCustomer: write, canArchive: manage, canRestore: manage };
 }
 
-export type ManualContactOperation = "create" | "update" | "get" | "archive" | "restore" | "link";
+export type ManualContactOperation = "create" | "update" | "get" | "archive" | "restore" | "link" | "delete";
 
 export function isOperationAllowed(role: string | null | undefined, op: ManualContactOperation): boolean {
   const p = manualContactPermissions(role);
@@ -129,6 +146,8 @@ export function isOperationAllowed(role: string | null | undefined, op: ManualCo
       return p.canArchive;
     case "restore":
       return p.canRestore;
+    case "delete":
+      return p.canDelete;
   }
 }
 
@@ -242,7 +261,7 @@ export type ManualContactErrorKind =
   | "stale" // a empresa/papel mudou enquanto a operação rodava: resultado descartado
   | "generic";
 
-export type ManualContactConflictReason = "duplicate_phone" | "restore_conflict" | "archived" | "inactive_customer" | "other";
+export type ManualContactConflictReason = "duplicate_phone" | "restore_conflict" | "archived" | "not_archived" | "inactive_customer" | "other";
 
 export interface ManualContactError {
   kind: ManualContactErrorKind;
@@ -275,6 +294,7 @@ export function mapManualContactError(error: ManualRpcErrorLike, op: ManualConta
     return { kind: "readonly", message: "A empresa está em modo somente leitura. Regularize a contratação/pagamento para voltar a alterar contatos." };
   }
   if (code === "PT403") {
+    if (/excluir contatos definitivamente/i.test(msg)) return { kind: "forbidden", message: "Somente o dono da empresa pode excluir contatos definitivamente." };
     return { kind: "forbidden", message: /arquivar ou restaurar/i.test(msg) ? "Somente donos e administradores podem arquivar ou restaurar contatos." : "Você não tem permissão para esta ação com contatos do WhatsApp." };
   }
   if (code === "PT404") {
@@ -291,11 +311,13 @@ export function mapManualContactError(error: ManualRpcErrorLike, op: ManualConta
         ? { kind: "conflict", reason: "restore_conflict", existingContactId, message: "Já existe outro contato ativo com este telefone. Não é possível restaurar este." }
         : { kind: "conflict", reason: "duplicate_phone", existingContactId, message: "Já existe um contato ativo com este telefone." };
     }
+    if (/arquive o contato antes/i.test(msg)) return { kind: "conflict", reason: "not_archived", message: "Arquive o contato antes de excluí-lo definitivamente." };
     if (/arquivado/i.test(msg)) return { kind: "conflict", reason: "archived", message: "Este contato está arquivado. Restaure-o antes de alterar." };
     if (/inativo/i.test(msg)) return { kind: "conflict", reason: "inactive_customer", message: "Este cliente está inativo e não pode ser vinculado." };
     return { kind: "conflict", reason: "other", message: "Não foi possível concluir: o contato mudou. Atualize e tente de novo." };
   }
   if (code === "PT400") {
+    if (/confirma/i.test(msg)) return { kind: "invalid", message: `Confirmação inválida. Digite ${DELETE_CONFIRMATION} para excluir definitivamente.` };
     const fieldErrors: Partial<Record<ManualContactFormField, string>> = {};
     if (/telefone/i.test(msg)) fieldErrors.phone = FORM_MESSAGES.phoneInvalid;
     else if (/observa/i.test(msg)) fieldErrors.notes = FORM_MESSAGES.notesTooLong;
@@ -308,6 +330,7 @@ export function mapManualContactError(error: ManualRpcErrorLike, op: ManualConta
 
 /** Mensagem de bloqueio local por permissão (o servidor também recusa). */
 export function forbiddenMessage(op: ManualContactOperation): string {
+  if (op === "delete") return "Somente o dono da empresa pode excluir contatos definitivamente.";
   return op === "archive" || op === "restore"
     ? "Somente donos e administradores podem arquivar ou restaurar contatos."
     : op === "get"

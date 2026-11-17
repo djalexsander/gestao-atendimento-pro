@@ -5,6 +5,7 @@ import type { CustomerOption } from "../customers/customersLogic";
 import { Modal } from "../employees/Modal";
 import { formatWaPhone } from "./whatsappLogic";
 import {
+  DELETE_CONFIRMATION,
   MANUAL_NAME_MAX,
   MANUAL_NOTES_MAX,
   manualContactToForm,
@@ -135,19 +136,24 @@ export function ManualContactDetailView({
   onConfirm,
   onRetry,
   onOpenExisting,
+  canDelete = false,
+  onDelete,
 }: {
   detail: DetailState;
   busy: boolean;
   error: ManualContactError | null;
-  confirm: "archive" | "restore" | null;
+  confirm: "archive" | "restore" | "delete" | null;
   onClose: () => void;
   onEdit: () => void;
   onLink: () => void;
   onUnlink: () => void;
-  onAskConfirm: (what: "archive" | "restore" | null) => void;
+  onAskConfirm: (what: "archive" | "restore" | "delete" | null) => void;
   onConfirm: () => void;
   onRetry: () => void;
   onOpenExisting: (contactId: string) => void;
+  /** Mostra "Excluir definitivamente" (somente o dono; só aparece em contato arquivado). */
+  canDelete?: boolean;
+  onDelete?: (confirmation: string) => void;
 }) {
   return (
     <Modal title={MANUAL_TEXT.detailTitle} onClose={onClose}>
@@ -167,7 +173,7 @@ export function ManualContactDetailView({
             )}
           </div>
         )}
-        {detail.status === "ready" && <DetailBody data={detail.data} busy={busy} error={error} confirm={confirm} onEdit={onEdit} onLink={onLink} onUnlink={onUnlink} onAskConfirm={onAskConfirm} onConfirm={onConfirm} onOpenExisting={onOpenExisting} />}
+        {detail.status === "ready" && <DetailBody data={detail.data} busy={busy} error={error} confirm={confirm} onEdit={onEdit} onLink={onLink} onUnlink={onUnlink} onAskConfirm={onAskConfirm} onConfirm={onConfirm} onOpenExisting={onOpenExisting} canDelete={canDelete} onDelete={onDelete} />}
         <div className="modal-actions mc-actions">
           <button type="button" className="btn-secondary" disabled={busy} onClick={onClose}>
             {MANUAL_TEXT.close}
@@ -189,17 +195,21 @@ function DetailBody({
   onAskConfirm,
   onConfirm,
   onOpenExisting,
+  canDelete,
+  onDelete,
 }: {
   data: ManualContactDetail;
   busy: boolean;
   error: ManualContactError | null;
-  confirm: "archive" | "restore" | null;
+  confirm: "archive" | "restore" | "delete" | null;
   onEdit: () => void;
   onLink: () => void;
   onUnlink: () => void;
-  onAskConfirm: (what: "archive" | "restore" | null) => void;
+  onAskConfirm: (what: "archive" | "restore" | "delete" | null) => void;
   onConfirm: () => void;
   onOpenExisting: (contactId: string) => void;
+  canDelete: boolean;
+  onDelete?: (confirmation: string) => void;
 }) {
   const c = data.contact;
   const p = data.permissions; // permissões DO SERVIDOR (já consideram contato arquivado e papel)
@@ -250,7 +260,9 @@ function DetailBody({
 
       {error && <OperationError error={error} onOpenExisting={onOpenExisting} />}
 
-      {confirm !== null ? (
+      {confirm === "delete" && onDelete ? (
+        <DeleteConfirm busy={busy} onCancel={() => onAskConfirm(null)} onDelete={onDelete} />
+      ) : confirm !== null && confirm !== "delete" ? (
         <div className="mc-confirm" role="group" aria-label="Confirmação">
           <p className="modal-text">{confirm === "archive" ? MANUAL_TEXT.confirmArchive : MANUAL_TEXT.confirmRestore}</p>
           <div className="mc-actions-row">
@@ -289,9 +301,45 @@ function DetailBody({
               {MANUAL_TEXT.restore}
             </button>
           )}
+          {canDelete && archived && onDelete && (
+            <button type="button" className="btn-danger mc-delete" disabled={busy} onClick={() => onAskConfirm("delete")}>
+              {MANUAL_TEXT.deleteForever}
+            </button>
+          )}
         </div>
       )}
     </>
+  );
+}
+
+/** Confirmação da exclusão definitiva: o botão só habilita com a palavra EXCLUIR digitada (o banco confere de novo). */
+function DeleteConfirm({ busy, onCancel, onDelete }: { busy: boolean; onCancel: () => void; onDelete: (confirmation: string) => void }) {
+  const [typed, setTyped] = useState("");
+  const ok = typed === DELETE_CONFIRMATION;
+  return (
+    <form
+      className="mc-confirm mc-delete-confirm"
+      role="group"
+      aria-label="Confirmar exclusão definitiva"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (ok && !busy) onDelete(typed);
+      }}
+    >
+      <p className="modal-text mc-delete-warning">{MANUAL_TEXT.confirmDelete}</p>
+      <div className="field">
+        <label htmlFor="mc-delete-confirm">{MANUAL_TEXT.deleteTypeLabel}</label>
+        <input id="mc-delete-confirm" type="text" autoComplete="off" autoCapitalize="characters" spellCheck={false} value={typed} onChange={(e) => setTyped(e.target.value)} disabled={busy} />
+      </div>
+      <div className="mc-actions-row">
+        <button type="button" className="btn-secondary" disabled={busy} onClick={onCancel}>
+          {MANUAL_TEXT.cancel}
+        </button>
+        <button type="submit" className="btn-danger" disabled={busy || !ok}>
+          {busy ? MANUAL_TEXT.saving : MANUAL_TEXT.deleteForever}
+        </button>
+      </div>
+    </form>
   );
 }
 

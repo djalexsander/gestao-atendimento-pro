@@ -267,6 +267,19 @@ function ContactsScreen({
           }
           onRetry={() => void loadDetail(panel.contactId)}
           onOpenExisting={openView}
+          canDelete={perms.canDelete}
+          onDelete={(confirmation) =>
+            void act(
+              () => controller.deleteContact(panel.contactId, confirmation),
+              () => {
+                // excluído: fecha o detalhe, tira o destaque e mostra o aviso; a lista (aba Arquivados) já foi atualizada pelo onChanged
+                closePanel();
+                setSelectedKey(null);
+                setSelectedId(null);
+                setNotice(NOTICES.deleted);
+              },
+            )
+          }
         />
       )}
 
