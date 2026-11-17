@@ -1,45 +1,49 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { fmtDateTimeSP } from "../../../lib/dates";
 import { Modal } from "../../employees/Modal";
 import { supabaseStartSource, type StartSource } from "../../whatsapp/whatsappStartApi";
 import { supabaseStartSettings, supabaseTemplatesSync, type StartSettingsSource, type TemplatesSyncSource } from "../../whatsapp/whatsappTemplatesSyncApi";
 import {
+  ACCESS_RULE_TEXT,
+  ACTION_LABEL,
+  BLOCK_CONFIRM_TEXT,
   DEFAULT_DAILY_LIMIT,
   DEFAULT_INTERVAL_HOURS,
-  ENABLE_CONFIRM_TEXT,
-  needsEnableConfirmation,
-  STATE_UNKNOWN_TEXT,
-  startSettingsLine,
+  needsBlockConfirmation,
+  REASON_LABEL,
+  SOURCE_LABEL,
+  startRowLine,
   validateStartSettings,
-  type SavedStartSettings,
+  type StartEvent,
+  type StartOverviewRow,
 } from "../../whatsapp/whatsappTemplatesSyncLogic";
 import { TemplatesSyncPanel } from "../../whatsapp/WhatsappTemplatesUi";
-import { fetchMasterCompanies } from "../api";
 import { Badge } from "../MasterBits";
+import { shortUserId } from "./whatsappMasterLogic";
 
-// Painel Master › WhatsApp › "Iniciar conversa por empresa" (Etapa 7.11M). Habilita/desabilita o recurso e define limite diário e intervalo mínimo por
-// contato, pela RPC whatsapp_set_start_settings (reautentica o Admin Master no banco). Nada é habilitado por padrão e nada sincroniza sozinho.
-// O Master só LÊ o estado das empresas das quais participa: nas demais a tela diz que não leu e mostra o que o servidor confirmar ao salvar.
+// Painel Master › WhatsApp › "Iniciar conversa por empresa". Iniciar conversa faz parte do módulo WhatsApp: fica disponível AUTOMATICAMENTE para toda empresa
+// com direito ativo ao módulo (assinatura, cortesia válida, liberação do Master). Aqui o Master vê o direito efetivo de cada empresa e só pode BLOQUEAR/LIBERAR
+// individualmente (o bloqueio tem precedência) e ajustar o limite diário e o intervalo mínimo. Tudo vem do servidor (RPC master_whatsapp_start_overview) e a
+// gravação é a RPC whatsapp_set_start_settings (reautentica o Admin Master no banco). Nada habilita à mão e nada sincroniza sozinho.
 
-type Company = { id: string; name: string };
-type Known = { state: "loading" } | { state: "known"; value: SavedStartSettings } | { state: "unknown" };
+type Tone = "ok" | "warn" | "bad" | "muted";
+const toneOf = (r: StartOverviewRow): Tone => (r.reason === "available" ? "ok" : r.reason === "blocked" ? "bad" : "muted");
 
 export function StartConversationSection({
   settings = supabaseStartSettings,
   sync = supabaseTemplatesSync,
   templatesSource = supabaseStartSource,
-  loadCompanies = async () => (await fetchMasterCompanies()).data.map((c) => ({ id: c.id, name: c.name })),
 }: {
   settings?: StartSettingsSource;
   sync?: TemplatesSyncSource;
   /** Leitura da lista de templates (só quem participa da empresa consegue ler). */
   templatesSource?: StartSource;
-  loadCompanies?: () => Promise<Company[]>;
 }) {
-  const [companies, setCompanies] = useState<Company[]>([]);
-  const [loaded, setLoaded] = useState(false);
+  const [rows, setRows] = useState<StartOverviewRow[] | null>(null);
+  const [failed, setFailed] = useState(false);
   const [companyId, setCompanyId] = useState("");
-  const [known, setKnown] = useState<Known>({ state: "unknown" });
-  const [enabled, setEnabled] = useState(false);
+  const [events, setEvents] = useState<StartEvent[]>([]);
+  const [blocked, setBlocked] = useState(false);
   const [limit, setLimit] = useState(String(DEFAULT_DAILY_LIMIT));
   const [interval, setIntervalHours] = useState(String(DEFAULT_INTERVAL_HOURS));
   const [touched, setTouched] = useState(false);
@@ -49,63 +53,55 @@ export function StartConversationSection({
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const alive = useRef(true);
-  const readToken = useRef(0);
+  const token = useRef(0);
+  const pickToken = useRef(0);
 
+  const loadAll = useCallback(async () => {
+    const t = ++token.current;
+    const o = await settings.overview(null);
+    if (!alive.current || t !== token.current) return;
+    setRows(o ? o.companies : null);
+    setFailed(!o);
+  }, [settings]);
   useEffect(() => {
     alive.current = true;
-    void loadCompanies().then((c) => {
-      if (!alive.current) return;
-      setCompanies(c);
-      setLoaded(true);
-    });
+    void loadAll();
     return () => {
       alive.current = false;
     };
-  }, [loadCompanies]);
+  }, [loadAll]);
 
-  const company = companies.find((c) => c.id === companyId) ?? null;
+  const current = rows?.find((r) => r.companyId === companyId) ?? null;
 
-  const apply = useCallback((v: SavedStartSettings) => {
-    setEnabled(v.enabled);
-    setLimit(String(v.dailyLimit));
-    setIntervalHours(String(v.minIntervalHours));
-  }, []);
+  function fillForm(r: StartOverviewRow) {
+    setBlocked(r.blocked);
+    setLimit(String(r.dailyLimit));
+    setIntervalHours(String(r.minIntervalHours));
+  }
 
-  function pickCompany(id: string) {
-    setCompanyId(id);
+  async function pick(r: StartOverviewRow) {
+    const t = ++pickToken.current;
+    setCompanyId(r.companyId);
     setError(null);
     setNotice(null);
     setTouched(false);
     setConfirming(false);
-    setEnabled(false);
-    setLimit(String(DEFAULT_DAILY_LIMIT));
-    setIntervalHours(String(DEFAULT_INTERVAL_HOURS));
-    if (!id) {
-      setKnown({ state: "unknown" });
-      return;
-    }
-    setKnown({ state: "loading" });
-    const t = ++readToken.current;
-    void settings.read(id).then((v) => {
-      if (!alive.current || t !== readToken.current) return; // resposta de outra empresa
-      if (v) {
-        setKnown({ state: "known", value: v });
-        apply(v);
-      } else setKnown({ state: "unknown" });
-    });
+    fillForm(r);
+    setEvents([]);
+    const o = await settings.overview(r.companyId);
+    if (!alive.current || t !== pickToken.current) return; // resposta de outra empresa é descartada
+    if (o) setEvents(o.events);
   }
 
-  const issues = validateStartSettings({ companyId, enabled, dailyLimit: limit, minIntervalHours: interval });
-  const current = known.state === "known" ? known.value : null;
+  const issues = validateStartSettings({ companyId, blocked, dailyLimit: limit, minIntervalHours: interval });
 
   async function save() {
-    if (busyRef.current || !issues.ok || !issues.value) return; // clique repetido: um salvamento por vez
+    if (busyRef.current || !issues.ok || !issues.value || !current) return; // clique repetido: um salvamento por vez
     busyRef.current = true;
     setBusy(true);
     setError(null);
     setNotice(null);
-    const value = issues.value;
-    const r = await settings.save(companyId, value);
+    const r = await settings.save(companyId, issues.value);
     busyRef.current = false;
     if (!alive.current) return;
     setBusy(false);
@@ -114,15 +110,21 @@ export function StartConversationSection({
       setError(r.message);
       return;
     }
-    setKnown({ state: "known", value: r.data });
-    apply(r.data);
-    setNotice(`Confirmado pelo servidor — ${company?.name ?? "empresa"}: ${startSettingsLine(r.data)}.`);
+    setNotice(`Confirmado pelo servidor — ${current.name}: ${startRowLine(r.data)}.`);
+    await loadAll();
+    const o = await settings.overview(companyId);
+    if (!alive.current) return;
+    if (o) {
+      setEvents(o.events);
+      const fresh = o.companies[0];
+      if (fresh) fillForm(fresh);
+    }
   }
 
   function submit() {
     setTouched(true);
     if (!issues.ok) return;
-    if (needsEnableConfirmation(enabled, current)) setConfirming(true);
+    if (needsBlockConfirmation(blocked, current)) setConfirming(true);
     else void save();
   }
 
@@ -131,35 +133,67 @@ export function StartConversationSection({
       <div className="mst-head">
         <h3 id="wa-start-title">Iniciar conversa por empresa</h3>
       </div>
-      <p className="mst-sub">
-        Liga ou desliga o envio de templates aprovados para iniciar conversas e define o limite diário e o intervalo mínimo por contato. Todas as empresas começam desabilitadas.
+      <p className="mst-sub" data-testid="start-rule">
+        {ACCESS_RULE_TEXT}
       </p>
 
-      <div className="mst-toolbar">
-        <div>
-          <label htmlFor="wa-start-company">Empresa</label>
-          <select id="wa-start-company" value={companyId} onChange={(e) => pickCompany(e.target.value)} disabled={busy}>
-            <option value="">{loaded ? "Selecione…" : "Carregando…"}</option>
-            {companies.map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.name}
-              </option>
-            ))}
-          </select>
+      {failed && (
+        <div className="form-error" role="alert">
+          Não foi possível carregar as empresas agora.{" "}
+          <button type="button" className="btn-secondary btn-small" onClick={() => void loadAll()}>
+            Tentar de novo
+          </button>
         </div>
-      </div>
+      )}
+      {rows === null && !failed && <p className="mst-sub">Carregando empresas…</p>}
+      {rows && rows.length === 0 && <p className="mst-sub">Nenhuma empresa cadastrada.</p>}
+      {rows && rows.length > 0 && (
+        <div className="mst-scroll">
+          <table className="mst-table" data-testid="start-table">
+            <thead>
+              <tr>
+                <th>Empresa</th>
+                <th>Direito ao módulo WhatsApp</th>
+                <th>Iniciar conversa</th>
+                <th>Limite / intervalo</th>
+                <th>Hoje</th>
+                <th>Ações</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => (
+                <tr key={r.companyId} data-testid="start-row" aria-selected={r.companyId === companyId}>
+                  <td>{r.name}</td>
+                  <td>{SOURCE_LABEL[r.source]}</td>
+                  <td>
+                    <Badge tone={toneOf(r)}>{REASON_LABEL[r.reason]}</Badge>
+                  </td>
+                  <td>
+                    {r.dailyLimit}/dia · {r.minIntervalHours} h
+                    {r.hasSettings ? "" : " (padrão)"}
+                  </td>
+                  <td>{r.usedToday}</td>
+                  <td>
+                    <button type="button" className="btn-secondary btn-small" onClick={() => void pick(r)}>
+                      Ajustar
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
 
-      {company && (
+      {current && (
         <>
           <div className="mst-banner" role="status" data-testid="start-current-state">
-            <strong>Estado atual · {company.name}</strong>
-            {known.state === "loading" && <span>Lendo o estado…</span>}
-            {known.state === "known" && (
-              <span>
-                <Badge tone={known.value.enabled ? "ok" : "muted"}>{known.value.enabled ? "Habilitado" : "Desabilitado"}</Badge> {startSettingsLine(known.value)}
-              </span>
-            )}
-            {known.state === "unknown" && <span>{STATE_UNKNOWN_TEXT}</span>}
+            <strong>Estado atual · {current.name}</strong>
+            <span>
+              <Badge tone={toneOf(current)}>{REASON_LABEL[current.reason]}</Badge> {SOURCE_LABEL[current.source]} · {startRowLine(current)}
+              {current.connection ? ` · conexão ${current.connection.type === "coexistence" ? "Coexistence" : "Cloud API"} (${current.connection.status})` : " · sem conexão ativa"}
+            </span>
+            {current.reason === "no_module" && <span>Sem o módulo WhatsApp a empresa não usa o recurso; liberar aqui não concede o módulo.</span>}
           </div>
 
           {notice && (
@@ -175,7 +209,7 @@ export function StartConversationSection({
 
           <div className="wa-start-grid">
             <label className="wa-start-switch">
-              <input type="checkbox" checked={enabled} disabled={busy} onChange={(e) => setEnabled(e.target.checked)} data-testid="start-enabled" /> Iniciar conversa habilitado para esta empresa
+              <input type="checkbox" checked={blocked} disabled={busy} onChange={(e) => setBlocked(e.target.checked)} data-testid="start-blocked" /> Bloquear Iniciar conversa para esta empresa
             </label>
             <div>
               <label htmlFor="wa-start-limit">Limite diário de conversas iniciadas</label>
@@ -189,31 +223,41 @@ export function StartConversationSection({
             </div>
           </div>
           <div className="mst-actions">
-            <button type="button" className="btn-primary" data-testid="start-save" disabled={busy} onClick={submit}>
-              {busy ? "Salvando…" : enabled ? "Salvar e habilitar…" : "Salvar"}
+            <button type="button" className={blocked ? "btn-danger" : "btn-primary"} data-testid="start-save" disabled={busy} onClick={submit}>
+              {busy ? "Salvando…" : blocked && !current.blocked ? "Bloquear…" : "Salvar"}
             </button>
           </div>
 
+          {events.length > 0 && (
+            <>
+              <h4>Histórico</h4>
+              <ul data-testid="start-events">
+                {events.map((e, i) => (
+                  <li key={`${e.at}-${i}`}>
+                    {fmtDateTimeSP(e.at)} · {ACTION_LABEL[e.action] ?? e.action} por {shortUserId(e.actorUserId)}
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+
           <h4>Templates desta empresa</h4>
-          <TemplatesSyncPanel key={company.id} companyId={company.id} sync={sync} source={templatesSource} />
+          <TemplatesSyncPanel key={current.companyId} companyId={current.companyId} sync={sync} source={templatesSource} />
         </>
       )}
 
-      {confirming && company && (
-        <Modal title={ENABLE_CONFIRM_TEXT.title} onClose={() => !busy && setConfirming(false)}>
+      {confirming && current && (
+        <Modal title={BLOCK_CONFIRM_TEXT.title} onClose={() => !busy && setConfirming(false)}>
           <p>
-            <strong>{company.name}</strong>
+            <strong>{current.name}</strong>
           </p>
-          <p>{ENABLE_CONFIRM_TEXT.body}</p>
-          <p className="muted">
-            Limite de {limit.trim()} por dia · intervalo de {interval.trim()} h por contato.
-          </p>
+          <p>{BLOCK_CONFIRM_TEXT.body}</p>
           <div className="mst-actions">
             <button type="button" className="btn-secondary" disabled={busy} onClick={() => setConfirming(false)}>
               Cancelar
             </button>
-            <button type="button" className="btn-primary" data-testid="start-confirm" disabled={busy} onClick={() => void save()}>
-              {busy ? "Salvando…" : ENABLE_CONFIRM_TEXT.confirm}
+            <button type="button" className="btn-danger" data-testid="start-confirm" disabled={busy} onClick={() => void save()}>
+              {busy ? "Salvando…" : BLOCK_CONFIRM_TEXT.confirm}
             </button>
           </div>
         </Modal>

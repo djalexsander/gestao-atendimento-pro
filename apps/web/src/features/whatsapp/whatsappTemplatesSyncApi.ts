@@ -3,8 +3,10 @@ import {
   mapSetSettingsError,
   NETWORK_SYNC_OUTCOME,
   toSavedStartSettings,
+  toStartOverview,
   toSyncOutcome,
   type SavedStartSettings,
+  type StartOverview,
   type StartSettingsFormIssues,
   type SyncOutcome,
 } from "./whatsappTemplatesSyncLogic";
@@ -19,8 +21,8 @@ export interface TemplatesSyncSource {
 }
 
 export interface StartSettingsSource {
-  /** Lê o estado. Falha (null) quando o Master não participa da empresa: a tela mostra isso, não inventa um estado. */
-  read(companyId: string): Promise<SavedStartSettings | null>;
+  /** Direito efetivo por empresa (módulo/cortesia/bloqueio) e trilha. Sem empresa = todas. Falha = null: a tela diz que não leu. */
+  overview(companyId?: string | null): Promise<StartOverview | null>;
   save(companyId: string, value: NonNullable<StartSettingsFormIssues["value"]>): Promise<SettingsResult>;
 }
 
@@ -53,10 +55,10 @@ export const supabaseTemplatesSync: TemplatesSyncSource = {
 };
 
 export const supabaseStartSettings: StartSettingsSource = {
-  async read(companyId) {
+  async overview(companyId) {
     try {
-      const { data, error } = await supabase.rpc("whatsapp_get_start_settings", { p_company_id: companyId });
-      return error ? null : toSavedStartSettings(data);
+      const { data, error } = await supabase.rpc("master_whatsapp_start_overview", { p_company_id: companyId ?? null });
+      return error ? null : toStartOverview(data);
     } catch {
       return null;
     }
@@ -65,7 +67,7 @@ export const supabaseStartSettings: StartSettingsSource = {
     try {
       const { data, error } = await supabase.rpc("whatsapp_set_start_settings", {
         p_company_id: companyId,
-        p_enabled: value.enabled,
+        p_enabled: !value.blocked, // no servidor: enabled = liberada; false = bloqueio do Master
         p_daily_limit: value.dailyLimit,
         p_min_interval_hours: value.minIntervalHours,
       });

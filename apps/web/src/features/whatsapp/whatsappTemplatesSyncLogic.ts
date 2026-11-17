@@ -83,7 +83,7 @@ export const categoryLabel = (c: string | null | undefined): string => (c ? (CAT
 export const categoryIsBilled = (c: string | null | undefined): boolean => !!c && ["MARKETING", "UTILITY", "AUTHENTICATION"].includes(c.toUpperCase());
 
 // ---------------------------------------------------------------------------
-// 2) Configuração por empresa (Master)
+// 2) Acesso por empresa (Master): AUTOMÁTICO pelo módulo WhatsApp; o Master só BLOQUEIA/LIBERA e ajusta os limites
 // ---------------------------------------------------------------------------
 export const LIMIT_MIN = 1;
 export const LIMIT_MAX = 1000;
@@ -92,24 +92,114 @@ export const INTERVAL_MAX = 720;
 export const DEFAULT_DAILY_LIMIT = 50;
 export const DEFAULT_INTERVAL_HOURS = 24;
 
+export type StartReason = "available" | "blocked" | "no_module" | "read_only";
+export type AccessSource = "subscription" | "courtesy" | "override" | "trial" | "unmanaged" | "none";
+const REASONS: readonly string[] = ["available", "blocked", "no_module", "read_only"];
+const SOURCES: readonly string[] = ["subscription", "courtesy", "override", "trial", "unmanaged", "none"];
+
+export const REASON_LABEL: Record<StartReason, string> = {
+  available: "Disponível",
+  blocked: "Bloqueado pelo Master",
+  no_module: "Sem módulo WhatsApp",
+  read_only: "Somente leitura (assinatura restrita)",
+};
+export const SOURCE_LABEL: Record<AccessSource, string> = {
+  subscription: "Módulo contratado",
+  courtesy: "Cortesia",
+  override: "Liberado pelo Master (módulo)",
+  trial: "Período de teste",
+  unmanaged: "Empresa sem gestão de plano",
+  none: "Sem direito ao módulo",
+};
+export const ACTION_LABEL: Record<string, string> = { created: "Configuração criada", blocked: "Bloqueada pelo Master", unblocked: "Liberada pelo Master", limits_changed: "Limites alterados" };
+
+export interface StartOverviewRow {
+  companyId: string;
+  name: string;
+  moduleActive: boolean;
+  blocked: boolean;
+  readOnly: boolean;
+  available: boolean;
+  reason: StartReason;
+  source: AccessSource;
+  dailyLimit: number;
+  minIntervalHours: number;
+  usedToday: number;
+  hasSettings: boolean;
+  updatedAt: string | null;
+  connection: { type: string; status: string } | null;
+}
+
+export interface StartEvent {
+  action: string;
+  at: string | null;
+  actorUserId: string | null;
+}
+
+export interface StartOverview {
+  companies: StartOverviewRow[];
+  events: StartEvent[];
+}
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Resposta de master_whatsapp_start_overview. Linha malformada é descartada; formato estranho = null (a tela diz que não leu). */
+export function toStartOverview(raw: unknown): StartOverview | null {
+  if (!isObj(raw) || !Array.isArray(raw.companies)) return null;
+  const companies: StartOverviewRow[] = [];
+  for (const c of raw.companies) {
+    if (!isObj(c) || typeof c.company_id !== "string" || !UUID.test(c.company_id)) continue;
+    const name = str(c.name);
+    const reason = typeof c.reason === "string" && REASONS.includes(c.reason) ? (c.reason as StartReason) : null;
+    const source = typeof c.source === "string" && SOURCES.includes(c.source) ? (c.source as AccessSource) : null;
+    const daily = num(c.daily_limit);
+    const interval = num(c.min_interval_hours);
+    if (!name || !reason || !source || daily === null || interval === null) continue;
+    if (typeof c.available !== "boolean" || typeof c.blocked !== "boolean" || typeof c.module_active !== "boolean") continue;
+    const k = isObj(c.connection) && typeof c.connection.type === "string" && typeof c.connection.status === "string" ? { type: c.connection.type, status: c.connection.status } : null;
+    companies.push({
+      companyId: c.company_id,
+      name,
+      moduleActive: c.module_active,
+      blocked: c.blocked,
+      readOnly: c.read_only === true,
+      available: c.available,
+      reason,
+      source,
+      dailyLimit: daily,
+      minIntervalHours: interval,
+      usedToday: num(c.used_today) ?? 0,
+      hasSettings: c.has_settings === true,
+      updatedAt: str(c.updated_at),
+      connection: k,
+    });
+  }
+  const events: StartEvent[] = [];
+  for (const e of Array.isArray(raw.events) ? raw.events : []) {
+    if (!isObj(e)) continue;
+    const action = str(e.action);
+    if (action) events.push({ action, at: str(e.at), actorUserId: str(e.actor_user_id) });
+  }
+  return { companies, events };
+}
+
+/** Resposta de whatsapp_set_start_settings: enabled=true significa LIBERADA; false, BLOQUEADA pelo Master. */
 export interface SavedStartSettings {
-  enabled: boolean;
+  blocked: boolean;
   dailyLimit: number;
   minIntervalHours: number;
 }
-
-/** Resposta de whatsapp_set_start_settings (e, quando o Master pertence à empresa, de whatsapp_get_start_settings). */
 export function toSavedStartSettings(raw: unknown): SavedStartSettings | null {
   if (!isObj(raw) || typeof raw.enabled !== "boolean") return null;
   const limit = num(raw.daily_limit);
   const interval = num(raw.min_interval_hours);
   if (limit === null || interval === null) return null;
-  return { enabled: raw.enabled, dailyLimit: limit, minIntervalHours: interval };
+  return { blocked: !raw.enabled, dailyLimit: limit, minIntervalHours: interval };
 }
 
 export interface StartSettingsFormInput {
   companyId: string;
-  enabled: boolean;
+  blocked: boolean;
   dailyLimit: string;
   minIntervalHours: string;
 }
@@ -119,11 +209,10 @@ export interface StartSettingsFormIssues {
   company: string | null;
   dailyLimit: string | null;
   minIntervalHours: string | null;
-  value: { enabled: boolean; dailyLimit: number; minIntervalHours: number } | null;
+  value: { blocked: boolean; dailyLimit: number; minIntervalHours: number } | null;
 }
 
 const WHOLE = /^\d{1,5}$/;
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** MESMOS limites do servidor: limite diário de 1 a 1000, intervalo de 0 a 720 horas, números inteiros. */
 export function validateStartSettings(i: StartSettingsFormInput): StartSettingsFormIssues {
@@ -135,23 +224,23 @@ export function validateStartSettings(i: StartSettingsFormInput): StartSettingsF
   const dailyLimit = Number.isInteger(limit) && limit >= LIMIT_MIN && limit <= LIMIT_MAX ? null : `Informe um número inteiro de ${LIMIT_MIN} a ${LIMIT_MAX}.`;
   const minIntervalHours = Number.isInteger(interval) && interval >= INTERVAL_MIN && interval <= INTERVAL_MAX ? null : `Informe um número inteiro de ${INTERVAL_MIN} a ${INTERVAL_MAX} horas.`;
   const ok = company === null && dailyLimit === null && minIntervalHours === null;
-  return { ok, company, dailyLimit, minIntervalHours, value: ok ? { enabled: i.enabled, dailyLimit: limit, minIntervalHours: interval } : null };
+  return { ok, company, dailyLimit, minIntervalHours, value: ok ? { blocked: i.blocked, dailyLimit: limit, minIntervalHours: interval } : null };
 }
 
-/** Habilitar (ou manter habilitado com outro limite/intervalo) pede confirmação; desabilitar não. */
-export const needsEnableConfirmation = (enabled: boolean, current: SavedStartSettings | null): boolean => enabled && !(current && current.enabled);
+/** BLOQUEAR pede confirmação (derruba o recurso da empresa); liberar e ajustar limites não. */
+export const needsBlockConfirmation = (blocked: boolean, current: { blocked: boolean } | null): boolean => blocked && !(current && current.blocked);
 
-export const ENABLE_CONFIRM_TEXT = {
-  title: "Habilitar Iniciar conversa",
-  body: "Com isto ligado, owner, admin e atendentes desta empresa poderão iniciar conversas por template aprovado da Meta. Cada conversa iniciada pela empresa pode ser cobrada pela Meta e depende do consentimento do contato.",
-  confirm: "Habilitar para esta empresa",
+export const BLOCK_CONFIRM_TEXT = {
+  title: "Bloquear Iniciar conversa",
+  body: "Com o bloqueio, esta empresa NÃO poderá iniciar conversas por template, mesmo tendo o módulo WhatsApp ativo. As conversas já abertas e o atendimento normal continuam. Você pode liberar de novo a qualquer momento.",
+  confirm: "Bloquear esta empresa",
 } as const;
 
-export const STATE_UNKNOWN_TEXT =
-  "Não foi possível ler o estado atual desta empresa (o Master só lê o estado das empresas das quais participa). O que vale é o que o servidor confirmar ao salvar.";
+export const ACCESS_RULE_TEXT =
+  "Iniciar conversa faz parte do módulo WhatsApp: fica disponível sozinho para toda empresa com direito ativo ao módulo (assinatura, cortesia válida ou liberação do Master). Aqui você só pode bloquear uma empresa, liberar de novo e ajustar os limites. Sem configuração, vale 50 por dia e 24 h por contato.";
 
-export function startSettingsLine(s: SavedStartSettings): string {
-  return `${s.enabled ? "Habilitado" : "Desabilitado"} · limite de ${s.dailyLimit} por dia · intervalo mínimo de ${s.minIntervalHours} h por contato`;
+export function startRowLine(r: Pick<StartOverviewRow, "blocked" | "dailyLimit" | "minIntervalHours">): string {
+  return `${r.blocked ? "Bloqueado" : "Liberado"} · limite de ${r.dailyLimit} por dia · intervalo mínimo de ${r.minIntervalHours} h por contato`;
 }
 
 /** Erros do servidor na gravação: o texto do banco já é em português; sem ele, mensagem padrão. */
