@@ -6,10 +6,10 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { loadAll } from "./full-db.mjs";
 
-const root = "D:/orça facil";
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");   // independe de onde o repositório foi clonado
 const require = createRequire(path.join(root, "package.json"));
 const ts = require("typescript");
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "coexcompat-"));
@@ -39,8 +39,10 @@ const NEW = await bundle("new", srcNow);
 // ---- bancos: NOVO (todas as migrations) e ANTIGO (sem as 3 da Coexistence) ----
 const MIG = path.join(root, "supabase/migrations");
 const NEWMIG = ["20261123010000", "20261124010000", "20261125010000"];
+// migrations POSTERIORES que dependem de objetos da Coexistence (ex.: 7.11H altera whatsapp_ingest_echo): não existem no banco "antigo" por definição
+const DEPENDENT = ["20261206010000"];
 const oldDir = fs.mkdtempSync(path.join(os.tmpdir(), "mig-oldcoex-"));
-for (const f of fs.readdirSync(MIG)) if (f.endsWith(".sql") && !NEWMIG.some((p) => f.startsWith(p))) fs.copyFileSync(path.join(MIG, f), path.join(oldDir, f));
+for (const f of fs.readdirSync(MIG)) if (f.endsWith(".sql") && !NEWMIG.some((p) => f.startsWith(p)) && !DEPENDENT.some((p) => f.startsWith(p))) fs.copyFileSync(path.join(MIG, f), path.join(oldDir, f));
 const dbNew = await loadAll(undefined, { legacyIaMirror: false });
 const dbOld = await loadAll(oldDir, { legacyIaMirror: false });
 const { ck, summary } = dbNew;

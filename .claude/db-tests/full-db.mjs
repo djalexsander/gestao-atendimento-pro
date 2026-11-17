@@ -1,12 +1,13 @@
 import { PGlite } from "@electric-sql/pglite";
 import fs from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 // Carregador compartilhado (2026-09-26): banco descartável com TODAS as migrations reais, exceto o
 // agendamento pg_cron (só existe no Supabase), mais shims mínimos de `auth` e `storage`. Serve às
 // suítes novas que precisam das migrations POSTERIORES à 095000 (as antigas ainda filtram por `<`).
 // Uso:  const { pg, ck, as, su, errHas, summary } = await loadAll();
-export async function loadAll(dir = process.env.MIG_DIR ?? "D:/orça facil/supabase/migrations", { skipActivation = false, legacyIaMirror = true } = {}) {
+export async function loadAll(dir = process.env.MIG_DIR ?? path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../supabase/migrations"), { skipActivation = false, legacyIaMirror = true } = {}) {
   // Etapa 6: HOMOLOG_REAL=1 roda a MESMA suíte contra o PostgreSQL 17 local e descartável (container courtesy-homolog-pg, só 127.0.0.1) em vez do PGlite.
   if (process.env.HOMOLOG_REAL === "1") return (await import("../../scripts/courtesies/homolog/real-db.mjs")).loadAllReal(dir, { skipActivation, legacyIaMirror });
   const pg = new PGlite();
@@ -52,7 +53,7 @@ export async function loadAll(dir = process.env.MIG_DIR ?? "D:/orça facil/supab
   await pg.exec(`do $$ begin if not exists (select 1 from pg_publication where pubname = 'supabase_realtime') then create publication supabase_realtime; end if; end $$;`);
   await pg.exec(`create schema if not exists net; create table if not exists net.calls (id bigserial primary key, url text, body jsonb, headers jsonb); create or replace function net.http_post(url text, body jsonb default '{}'::jsonb, params jsonb default '{}'::jsonb, headers jsonb default '{}'::jsonb, timeout_milliseconds integer default 5000) returns bigint language sql as $f$ insert into net.calls (url, body, headers) values (url, body, headers) returning id $f$; create schema if not exists vault; create table if not exists vault.decrypted_secrets (name text primary key, decrypted_secret text);`);
 for (const f of fs.readdirSync(dir).filter((x) => x.endsWith(".sql") && !/billing_cron|push_cron/.test(x) && !(skipActivation && /activate_delivery_module/.test(x))).sort()) {
-    await pg.exec(fs.readFileSync(path.join(dir, f), "utf8"));
+    await pg.exec(fs.readFileSync(path.join(dir, f), "utf8").replace(/\r\n/g, "\n"));   // clone no Windows (autocrlf) entrega CRLF; as migrations versionadas sao LF e os patches por substituicao exata dependem disso
   }
 
   // As suítes ANTERIORES à separação WhatsApp/IA concedem só 'whatsapp'; este espelho (só no banco de teste) concede 'ia' junto,

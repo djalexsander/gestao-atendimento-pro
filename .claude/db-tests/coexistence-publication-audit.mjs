@@ -8,14 +8,16 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { loadAll } from "./full-db.mjs";
 
-const MIG = "D:/orça facil/supabase/migrations";
-const RB = "D:/orça facil/supabase/rollbacks/whatsapp-coexistence";
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");   // independe de onde o repositório foi clonado
+const MIG = path.join(ROOT, "supabase/migrations");
+const RB = path.join(ROOT, "supabase/rollbacks/whatsapp-coexistence");
 const NEW = ["20261123010000_whatsapp_coexistence_connection_type.sql", "20261124010000_whatsapp_coexistence_webhooks.sql", "20261125010000_whatsapp_coexistence_sync.sql"];
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "mig-precoex-"));
-for (const f of fs.readdirSync(MIG)) if (f.endsWith(".sql") && !NEW.includes(f)) fs.copyFileSync(path.join(MIG, f), path.join(tmp, f));
+for (const f of fs.readdirSync(MIG)) if (f.endsWith(".sql") && !NEW.includes(f) && !f.startsWith("20261206010000")) fs.copyFileSync(path.join(MIG, f), path.join(tmp, f));   // 7.11H (altera o eco) depende da Coexistence: fora da base "pré-publicação"
 const { pg, ck, as, su: su0, summary } = await loadAll(tmp, { legacyIaMirror: false });
 const su = async (sql, params) => { await pg.exec("select set_config('request.jwt.claim.sub','',false)"); return su0(sql, params); };
 const svc = (sql, params) => as("service_role", null, sql, params);

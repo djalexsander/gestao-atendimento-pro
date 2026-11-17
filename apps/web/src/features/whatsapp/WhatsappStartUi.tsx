@@ -354,9 +354,8 @@ export function StartConversationDialog({
     };
   }, []);
 
+  // O diálogo é remontado por contato (key) e os dois estados já nascem em "loading": a carga inicial não precisa de setState síncrono no efeito.
   const load = useCallback(() => {
-    setTemplates({ status: "loading" });
-    setOptout({ status: "loading" });
     void source.templates(companyId).then((r) => alive.current && setTemplates(r.ok ? { status: "ready", data: r.data } : { status: "error", message: r.message }));
     void source.optout(companyId, target.kind, target.ref).then((r) => alive.current && setOptout(r.ok ? { status: "ready", data: r.data } : { status: "error", message: r.message }));
   }, [source, companyId, target.kind, target.ref]);
@@ -533,19 +532,31 @@ export function StartRequestsDialog({
     };
   }, []);
 
-  const load = useCallback(
+  // fetchRequests só busca e grava o resultado (sem setState síncrono): é o que o efeito chama. load = "carregando" + busca, para ações do usuário.
+  const fetchRequests = useCallback(
     async (attention: boolean) => {
       const t = ++token.current;
-      setState({ status: "loading" });
       const r = await source.requests(companyId, attention);
       if (!alive.current || t !== token.current) return; // resposta de uma consulta anterior
       setState(r.ok ? { status: "ready", data: r.data } : { status: "error", message: r.message });
     },
     [source, companyId],
   );
+  const load = useCallback(
+    (attention: boolean) => {
+      setState({ status: "loading" });
+      return fetchRequests(attention);
+    },
+    [fetchRequests],
+  );
+  const chooseFilter = (attention: boolean) => {
+    if (attention === onlyAttention) return;
+    setOnlyAttention(attention);
+    setState({ status: "loading" });
+  };
   useEffect(() => {
-    void load(onlyAttention);
-  }, [load, onlyAttention]);
+    void fetchRequests(onlyAttention);
+  }, [fetchRequests, onlyAttention]);
 
   async function resolve(requestId: string, resolution: Resolution) {
     if (busyRef.current) return;
@@ -568,10 +579,10 @@ export function StartRequestsDialog({
       <div className="sc-requests-wrap">
         <p className="muted">Acompanhe as conversas iniciadas pela empresa. Resultados incertos nunca são reenviados automaticamente: confira e registre o resultado.</p>
         <div className="wc-filter" role="group" aria-label="Mostrar solicitações">
-          <button type="button" className={onlyAttention ? "wc-filter-btn wc-filter-btn-on" : "wc-filter-btn"} aria-pressed={onlyAttention} onClick={() => setOnlyAttention(true)}>
+          <button type="button" className={onlyAttention ? "wc-filter-btn wc-filter-btn-on" : "wc-filter-btn"} aria-pressed={onlyAttention} onClick={() => chooseFilter(true)}>
             Precisam de ação
           </button>
-          <button type="button" className={!onlyAttention ? "wc-filter-btn wc-filter-btn-on" : "wc-filter-btn"} aria-pressed={!onlyAttention} onClick={() => setOnlyAttention(false)}>
+          <button type="button" className={!onlyAttention ? "wc-filter-btn wc-filter-btn-on" : "wc-filter-btn"} aria-pressed={!onlyAttention} onClick={() => chooseFilter(false)}>
             Todas
           </button>
         </div>
