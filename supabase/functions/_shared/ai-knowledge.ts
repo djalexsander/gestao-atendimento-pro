@@ -23,6 +23,8 @@ export interface KnowledgeFacts {
   category_listing: boolean;
   ambiguous: boolean;
   truncated: boolean;
+  /** A empresa não tem NENHUM produto ativo cadastrado (catalog_size = 0). Ausente/false = há catálogo (ou o banco ainda não informa o tamanho). */
+  catalog_empty?: boolean;
   products: KnowledgeProduct[];
   categories: { name: string; products: number }[];
   profile: {
@@ -125,6 +127,7 @@ export function parseKnowledge(raw: unknown): KnowledgeFacts | null {
     category_listing: raw.category_listing === true,
     ambiguous: raw.ambiguous === true,
     truncated: raw.truncated === true,
+    catalog_empty: typeof raw.catalog_size === "number" && raw.catalog_size === 0,
     products,
     categories,
     profile,
@@ -203,6 +206,8 @@ export function buildFactsBlock(f: KnowledgeFacts, audience: "suggest" | "auto" 
         "(Mais de um produto corresponde ao pedido: apresente TODAS as opções com os respectivos preços e pergunte qual o cliente prefere. Não escolha uma sozinho e NÃO diga que vai confirmar o valor: os preços acima já são confirmados.)",
       );
     }
+  } else if (f.catalog_empty) {
+    lines.push("O estabelecimento AINDA NÃO TEM PRODUTOS cadastrados no sistema (cardápio vazio): não há lista de produtos nem preços cadastrados.");
   } else {
     lines.push("Nenhum produto do cadastro corresponde à pergunta do cliente.");
   }
@@ -226,10 +231,25 @@ export function buildFactsBlock(f: KnowledgeFacts, audience: "suggest" | "auto" 
     "- Taxa de entrega: só informe um valor se ele estiver nos fatos para o endereço do cliente; caso contrário diga que depende do endereço e que um atendente confirma.",
     "- Informação NÃO cadastrada (horário, endereço, pagamento...): diga que não tem essa informação cadastrada e que pode pedir para a equipe confirmar; não invente nem deduza.",
     "- Se faltar outra informação, peça o dado que falta ou diga que um atendente vai confirmar.",
+    ...(f.catalog_empty ? CATALOG_EMPTY_RULES : CATALOG_PRIORITY_RULES),
   );
   if (audience === "auto") lines.push(...AUTO_FACT_RULES);
   return lines;
 }
+
+/**
+ * PRIORIDADE DOS DADOS REAIS: nas consultas de produtos, preços, categorias e disponibilidade vale o CATÁLOGO cadastrado. As instruções
+ * personalizadas do estabelecimento seguem valendo para regras comerciais específicas (promoções, políticas, tom), mas não substituem o catálogo.
+ */
+const CATALOG_PRIORITY_RULES = [
+  "- PRIORIDADE: em perguntas sobre produtos, preços, categorias, cardápio ou disponibilidade, o CATÁLOGO acima prevalece sobre qualquer texto das instruções personalizadas. Se divergirem, informe o do catálogo.",
+  "- Não ofereça produto que não esteja no catálogo, mesmo que apareça nas instruções personalizadas ou na fala do cliente.",
+];
+
+/** Empresa sem nenhum produto cadastrado: a IA não inventa catálogo; só o que as instruções personalizadas disserem explicitamente. */
+const CATALOG_EMPTY_RULES = [
+  "- SEM CATÁLOGO: a empresa ainda não cadastrou produtos no sistema. Para pedidos de cardápio, produtos ou preços, use SOMENTE o que as instruções personalizadas disserem de forma explícita; se elas não trouxerem, NÃO invente produto nem preço: diga que não tem o cardápio disponível por aqui e que um atendente vai ajudar (use handoff quando o encaminhamento ao humano estiver ativo).",
+];
 
 /**
  * Regras EXTRAS do modo automático (o worker decide em JSON: reply | handoff | ignore). Os FATOS AUTORIZADOS valem como
@@ -307,6 +327,40 @@ function pricedWordsAreAuthorized(reply: string, f: KnowledgeFacts): boolean {
   return true;
 }
 
+// ---- PRIORIDADE DOS DADOS REAIS (modo automático): o preço citado para um produto do CATÁLOGO tem de ser o do catálogo ----------------
+// Instruções personalizadas podem trazer um preço desatualizado ("espeto de carne R$ 9,00"); o texto delas autoriza o valor na checagem
+// geral, então aqui se confere, cláusula a cláusula: se a resposta cita um produto presente nos fatos junto de um valor em reais, o valor
+// precisa ser o do cadastro desse produto (o nome mais específico vence: "Coca Cola Zero" não herda o preço da "Coca-cola"). Falso positivo vira handoff.
+const MONEY_VALUE = /r\$\s*(\d{1,6}(?:[.,]\d{1,2})?)|(\d{1,6}(?:[.,]\d{1,2})?)\s*reais?\b/g;
+function brlToCents(raw: string): number {
+  const t = raw.trim();
+  if (/,\d{1,2}$/.test(t)) return Math.round(Number(t.replace(/\./g, "").replace(",", ".")) * 100);
+  if (/\.\d{1,2}$/.test(t) && !t.includes(",")) return Math.round(Number(t) * 100);
+  return Math.round(Number(t.replace(/[.,]/g, "")) * 100);
+}
+function moneyValues(clause: string): number[] {
+  const out: number[] = [];
+  for (const m of clause.matchAll(MONEY_VALUE)) out.push(brlToCents(m[1] ?? m[2]));
+  return out;
+}
+export function catalogPricesMatch(reply: string, f: KnowledgeFacts): boolean {
+  const prods = f.products.map((p) => ({ p, words: nameWords(p.name) })).filter((x) => x.words.length > 0);
+  if (prods.length === 0) return true;
+  for (const sent of splitS(reply)) {
+    for (const clause of sent.split(/,(?!\d)|\se\s|\sou\s|\s\+\s|\//)) {
+      const vals = moneyValues(clause);
+      if (vals.length === 0) continue;
+      const fl = flat(clause);
+      const mentioned = prods.filter((x) => x.words.every((w) => fl.includes(w)));
+      if (mentioned.length === 0) continue;
+      const maximal = mentioned.filter((x) => !mentioned.some((y) => y !== x && y.words.length > x.words.length && x.words.every((w) => y.words.includes(w))));
+      const allowed = new Set(maximal.map((x) => Math.round(x.p.price * 100)));
+      if (vals.some((v) => !allowed.has(v))) return false;
+    }
+  }
+  return true;
+}
+
 /**
  * A sugestão só pode afirmar o que os fatos autorizam. Falha => unsupported_commercial_claim (o atendente vê o aviso e responde
  * manualmente). Conservador: falso positivo vira resposta humana, nunca informação errada ao cliente.
@@ -343,6 +397,8 @@ export function checkSuggestionSafety(
 
   // automático: produto citado junto de preço precisa estar nos fatos (preço certo no produto errado não passa)
   if (opts.strictProducts && !pricedWordsAreAuthorized(reply, facts)) return BLOCKED;
+  // e o preço de um produto do catálogo é SEMPRE o do cadastro, mesmo que as instruções personalizadas citem outro
+  if (opts.strictProducts && !catalogPricesMatch(reply, facts)) return BLOCKED;
 
   const sentences = splitS(reply);
   if (facts.mode === "catalog") {

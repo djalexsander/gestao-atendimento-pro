@@ -83,11 +83,13 @@ export function WhatsappKnowledgeSettings({ companyId, source = supabaseKnowledg
     <div className="dl-settings" data-testid="wa-knowledge">
       <section className="dl-card-box">
         <h3>Conhecimento da empresa</h3>
-        <p className="field-hint">Informações do seu estabelecimento que, no futuro, a IA poderá usar para responder clientes. Nesta etapa elas apenas ficam guardadas.</p>
-        <label className="dl-check">
-          <input type="checkbox" checked={false} disabled readOnly data-testid="wa-knowledge-enabled" />
-          Base de conhecimento — preparação (a IA ainda não utiliza estes dados)
-        </label>
+        <p className="field-hint">
+          Informações do seu estabelecimento que a IA usa automaticamente para responder seus clientes, junto com os produtos, categorias e preços cadastrados. Mantenha-as
+          atualizadas: a IA só fala o que estiver aqui, no cadastro de produtos ou nas instruções personalizadas.
+        </p>
+        <p className="field-hint" data-testid="wa-knowledge-auto">
+          A IA consulta estes dados e o cadastro de produtos sozinha, sem precisar de instruções.
+        </p>
 
         <label className="dl-field dl-field-wide">
           <span>Endereço</span>

@@ -443,7 +443,7 @@ async function processJob(base: Ctx, job: JobRow): Promise<string> {
     });
   }
 
-  const ctx = p as AutoContext & { latest_message_id: string };
+  let ctx = p as AutoContext & { latest_message_id: string };
   const fallback = ctx.fallback_to_human === true;
   // o endereço cadastrado mostrado ao cliente na confirmação final nunca vai a um prompt: o histórico entra com a mensagem mascarada
   if (Array.isArray(ctx.messages)) ctx.messages = ctx.messages.map((m) => (m.direction === "outbound" && typeof m.text === "string" ? { ...m, text: maskSavedAddress(m.text) } : m));
@@ -533,6 +533,8 @@ async function processJob(base: Ctx, job: JobRow): Promise<string> {
   if (!usageId) return "left_for_retry";
 
   // com fatos, o prompt ganha a seção FATOS AUTORIZADOS (+ regras do auto); sem fatos é EXATAMENTE o prompt de sempre
+  // o nome do estabelecimento vem do cadastro da empresa quando as configurações da IA não o trazem (contexto automático)
+  if (facts && !ctx.business_name && facts.business_name) ctx = { ...ctx, business_name: facts.business_name };
   const systemPrompt = facts ? [buildAutoSystemPrompt(ctx), ...buildFactsBlock(facts, "auto")].join("\n") : buildAutoSystemPrompt(ctx);
   let knowledgeRecorded = false;
   const recordKn = async (reason: string | null): Promise<void> => {
@@ -605,7 +607,8 @@ async function processJob(base: Ctx, job: JobRow): Promise<string> {
   }
   // Com fatos: a MESMA checagem do suggest (fatos + instruções + horário; preço/produto/pagamento/horário/entrega/disponibilidade).
   // Sem fatos: a checagem de sempre. Fora dos fatos => handoff, zero mensagem.
-  const safe = facts ? checkSuggestionSafety(reply, facts, ctx, { strictProducts: true }) : checkReplySafety(reply, ctx);
+  // sem produtos cadastrados não há catálogo para a regra produto×preço: valem as instruções personalizadas (e o perfil/entrega dos fatos)
+  const safe = facts ? checkSuggestionSafety(reply, facts, ctx, { strictProducts: facts.catalog_empty !== true }) : checkReplySafety(reply, ctx);
   if (!safe.ok) {
     await recordKn(safe.reason_code === "action_required" ? "action_required" : "unsupported_commercial_claim");
     return await handoffOrIgnore(c, job.id, fallback, safe.reason_code ?? "other", { usageId, handled: latest });

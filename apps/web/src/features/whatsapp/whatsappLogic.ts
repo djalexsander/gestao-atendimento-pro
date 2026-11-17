@@ -571,7 +571,7 @@ export function aiSettingsError(
   if (!Number.isInteger(s.maxContextMessages) || s.maxContextMessages < 1 || s.maxContextMessages > 30) return "O contexto deve ter entre 1 e 30 mensagens.";
   if (s.enabled && !acknowledged) return "Confirme a ciência sobre o tratamento dos dados para ativar.";
   if (s.enabled && auto?.mode === "auto") {
-    if (!s.customInstructions.trim()) return "Preencha as instruções da IA (produtos, preços e regras) antes de ativar o modo automático.";
+    // instruções são OPCIONAIS: a IA usa o cadastro real da empresa (produtos, horário, endereço, pagamento, entrega)
     if (!auto.autoAcknowledged) return "Confirme que a IA poderá responder seus clientes automaticamente para ativar o modo automático.";
   }
   return null;

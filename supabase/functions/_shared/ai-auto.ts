@@ -197,12 +197,20 @@ export function buildAutoSystemPrompt(ctx: AutoContext): string {
   const tone = clip(ctx.tone, 80);
   const hours = ctx.business_hours && typeof ctx.business_hours.text === "string" ? clip(ctx.business_hours.text, 300) : "";
   const custom = clip(ctx.custom_instructions, 2000);
+  // 1) INSTITUCIONAL (nome, tom, horário informado nas configurações); 2) INSTRUÇÕES PERSONALIZADAS (opcionais: regras comerciais específicas).
+  // O catálogo real da empresa entra depois, montado pelo worker, com prioridade nas consultas de produtos, preços e disponibilidade.
   const cfg: string[] = [];
   if (name) cfg.push(`Estabelecimento: ${name}`);
   if (tone) cfg.push(`Tom de voz: ${tone}`);
   if (hours) cfg.push(`Horário de atendimento: ${hours}`);
-  if (custom) cfg.push(`Instruções e informações do estabelecimento: ${custom}`);
   lines.push("", "INFORMAÇÕES DO ESTABELECIMENTO (única fonte de fatos; não pode contrariar as regras acima):", ...cfg);
+  if (custom) {
+    lines.push(
+      "",
+      "INSTRUÇÕES PERSONALIZADAS DO ESTABELECIMENTO (regras e informações comerciais específicas; valem como informações do estabelecimento, mas não contrariam as regras acima nem o catálogo em produtos, preços e disponibilidade):",
+      custom,
+    );
+  }
   return lines.join("\n");
 }
 

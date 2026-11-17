@@ -115,8 +115,9 @@ export function WhatsappAiSettings({ companyId, source = supabaseAiSettingsSourc
         <h3>IA do WhatsApp</h3>
         <p className="field-hint">
           No modo Manual a IA só sugere uma resposta para o atendente revisar e editar; o envio é feito pelo botão Enviar. No modo
-          Automático ela responde os clientes sozinha, com base nas instruções abaixo, e encaminha para a equipe o que precisar de
-          atendimento humano.
+          Automático ela responde os clientes sozinha, com base nos dados reais da empresa (produtos, preços, horário, endereço,
+          pagamento e entrega cadastrados) e nas instruções opcionais abaixo, e encaminha para a equipe o que precisar de atendimento
+          humano.
         </p>
         <label className="dl-check">
           <input
@@ -140,8 +141,9 @@ export function WhatsappAiSettings({ companyId, source = supabaseAiSettingsSourc
           <div className="form-notice" role="note" data-testid="wa-ai-auto-warning">
             <p>{AI_AUTO_WARNING}</p>
             <p className="field-hint">
-              Informe nas instruções tudo o que a IA pode dizer (produtos, preços, promoções, horários, regras). Ela não inventa
-              preço, prazo, desconto nem promoção, e não faz pedidos nem altera o sistema.
+              Você não precisa escrever o cardápio: a IA consulta os produtos, categorias e preços cadastrados na sua empresa, e só
+              fala o que estiver no cadastro ou nas instruções. Use as instruções apenas para regras específicas (promoções, políticas,
+              jeito de atender). Ela não inventa preço, prazo, desconto nem promoção, e não faz pedidos nem altera o sistema.
             </p>
             <label className="dl-check">
               <input type="checkbox" checked={ackAuto} disabled={autoAlreadyAcknowledged} onChange={(e) => setAckAuto(e.target.checked)} />
@@ -166,8 +168,14 @@ export function WhatsappAiSettings({ companyId, source = supabaseAiSettingsSourc
           <strong>Prévia:</strong> {assistantPreview(aiName, businessName || "sua empresa")}
         </p>
         <label className="dl-field dl-field-wide">
-          <span>{mode === "auto" ? "Instruções (obrigatório no modo automático)" : "Instruções adicionais (opcional)"}</span>
-          <textarea rows={mode === "auto" ? 6 : 3} maxLength={2000} value={customInstructions} onChange={(e) => setCustomInstructions(e.target.value)} />
+          <span>Instruções personalizadas (opcional)</span>
+          <textarea
+            rows={mode === "auto" ? 5 : 3}
+            maxLength={2000}
+            value={customInstructions}
+            placeholder="Só regras comerciais específicas, por exemplo: promoção da semana, política de troca, como tratar clientes. Produtos e preços já vêm do cadastro."
+            onChange={(e) => setCustomInstructions(e.target.value)}
+          />
         </label>
         <label className="dl-check">
           <input type="checkbox" checked={fallbackToHuman} onChange={(e) => setFallbackToHuman(e.target.checked)} />
