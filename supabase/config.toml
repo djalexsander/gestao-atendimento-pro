@@ -102,3 +102,14 @@ verify_jwt = false
 # Pedido da sincronização INICIAL de contatos/histórico da Coexistence (smb_app_data). JWT obrigatório; owner/admin da empresa. Todas as
 # travas (trava mestra do operador, piloto, janela de 24 h, ordem, um pedido por tipo) são decididas no banco. Não importa conversas.
 verify_jwt = true
+
+[functions.whatsapp-templates-sync]
+# Atualização do CACHE de templates da Meta (SOMENTE leitura: GET message_templates). JWT obrigatório na borda; o handler repassa o JWT do usuário à
+# RPC de pedido (papel owner/admin ou administrador da plataforma, módulo, funcionalidade ativada, lease e intervalo são decididos no banco). O token da
+# Meta só é lido pelo service_role, a partir do Vault, com o lease válido. NÃO fazer deploy sem autorização.
+verify_jwt = true
+
+[functions.whatsapp-start-conversation]
+# Iniciar conversa com template aprovado (7.11F). JWT obrigatório na borda; o handler repassa o JWT do usuário à RPC whatsapp_start_conversation (papel, módulo,
+# PT402, consentimento, opt-out, limites e idempotência são decididos no banco) e só então despacha o template (7.11E) com o service_role. NÃO fazer deploy sem autorização.
+verify_jwt = true
