@@ -881,6 +881,24 @@ button {
   gap: 8px 16px;
 }
 
+/* faixa de atalhos entre as telas operacionais (saiu do cabeçalho) */
+.op-shortcuts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 24px;
+  border-bottom: 1px solid var(--border);
+}
+.op-shortcuts:empty {
+  display: none;
+}
+@media (max-width: 640px) {
+  .op-shortcuts {
+    padding: 8px 12px;
+  }
+}
+
 .op-panel {
   display: flex;
   flex-direction: column;

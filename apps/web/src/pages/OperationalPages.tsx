@@ -34,7 +34,7 @@ const CASH_CHECK_TIMEOUT_MS = 8000;
 
 // exportada só para a página de Contatos do WhatsApp reutilizar a MESMA casca (nada muda no cabeçalho)
 export function OperationalShell({ title, children }: { title: string; children: ReactNode }) {
-  const { activeMembership, user, profile, signOut } = useAuth();
+  const { activeMembership, user, signOut } = useAuth();
   const navigate = useNavigate();
   const isCashier = activeMembership?.role === "cashier";
   const role = activeMembership?.role ?? null;
@@ -44,7 +44,6 @@ export function OperationalShell({ title, children }: { title: string; children:
   const canSeeOpenBoard = role !== null && canOpenOperationalArea(role, "abertos");
   const onLabels = pathname === OPERATIONAL_PATH.etiquetas;
   const canSeeLabels = role !== null && canOpenOperationalArea(role, "etiquetas");
-  const isAdminRole = role === "owner" || role === "admin";
   const { entitlements } = useCommercial();
   const onDelivery = pathname === OPERATIONAL_PATH.delivery;
   // a área WhatsApp inclui as telas dentro dela (ex.: /operacional/whatsapp/contatos): o cabeçalho trata todas como "estou no WhatsApp"
@@ -53,6 +52,10 @@ export function OperationalShell({ title, children }: { title: string; children:
   const canSeeWhatsapp = role !== null && canOpenOperationalArea(role, "whatsapp") && moduleAccess(entitlements, "whatsapp") === "allowed";
   // Delivery só aparece quando o módulo está liberado (módulo ainda sem oferta comercial: nada de "contratar").
   const canSeeDelivery = role !== null && canOpenOperationalArea(role, "delivery") && moduleAccess(entitlements, "delivery") === "allowed";
+  // "Voltar" leva à tela principal do papel (Dono/Administrador: Administrativo, único ponto de partida deles);
+  // não aparece quando já se está nela.
+  const homePath = role ? homePathForRole(role) : null;
+  const backPath = homePath && homePath !== pathname ? homePath : null;
   const { cash: myCash } = useMyOpenCash(isCashier);
   const [logoutBlocked, setLogoutBlocked] = useState<"open-cash" | "unverified" | null>(null);
 
@@ -102,51 +105,52 @@ export function OperationalShell({ title, children }: { title: string; children:
           <div className="brand">Gestão Atendimento Pro</div>
           <span style={{ color: "var(--text-muted)", fontSize: 14 }}>{activeMembership?.company.name}</span>
         </div>
+        {/* Cabeçalho enxuto: identificação, perfil (indicador, não clicável), Voltar e Sair. Os atalhos
+            entre as telas operacionais ficam na faixa logo abaixo (op-shortcuts). */}
         <div className="app-user">
-          {canSeeOpenBoard && !onOpenBoard && (
-            <Link to={OPERATIONAL_PATH.abertos} className="btn-secondary btn-small" style={{ textDecoration: "none" }}>
-              Atendimentos abertos
-            </Link>
+          {activeMembership && (
+            <span className="role-badge" data-testid="op-role-badge">
+              {ROLE_LABEL[activeMembership.role]}
+            </span>
           )}
-          {canSeeOpenBoard && !onOrdersBoard && (
-            <Link to={OPERATIONAL_PATH.pedidos} className="btn-secondary btn-small" style={{ textDecoration: "none" }}>
-              Pedidos
-            </Link>
-          )}
-          {canSeeDelivery && !onDelivery && (
-            <Link to={OPERATIONAL_PATH.delivery} className="btn-secondary btn-small" style={{ textDecoration: "none" }}>
-              Delivery
-            </Link>
-          )}
-          {canSeeWhatsapp && !onWhatsapp && (
-            <Link to={OPERATIONAL_PATH.whatsapp} className="btn-secondary btn-small" style={{ textDecoration: "none" }}>
-              WhatsApp
-            </Link>
-          )}
-          {canSeeLabels && !onLabels && (
-            <Link to={OPERATIONAL_PATH.etiquetas} className="btn-secondary btn-small" style={{ textDecoration: "none" }}>
-              Etiquetas
-            </Link>
-          )}
-          {(onOpenBoard || onOrdersBoard || onLabels || onDelivery || onWhatsapp) && role && !isAdminRole && role !== "courier" && (
-            <Link to={homePathForRole(role)} className="btn-secondary btn-small" style={{ textDecoration: "none" }}>
+          {backPath && (
+            <Link to={backPath} className="btn-secondary btn-small" style={{ textDecoration: "none" }}>
               Voltar
             </Link>
           )}
-          {isAdminRole && (
-            <Link to="/app" className="btn-secondary btn-small" style={{ textDecoration: "none" }}>
-              Voltar ao Administrativo
-            </Link>
-          )}
-          <NotificationsButton />
-          {/* Nome do funcionário; o e-mail técnico do Auth nunca aparece. */}
-          <span>{profile?.full_name}</span>
-          {activeMembership && <span className="role-badge">{ROLE_LABEL[activeMembership.role]}</span>}
           <button className="btn-secondary" type="button" onClick={() => void handleSignOut()}>
             Sair
           </button>
         </div>
       </header>
+      <nav className="op-shortcuts" aria-label="Atalhos operacionais">
+        {canSeeOpenBoard && !onOpenBoard && (
+          <Link to={OPERATIONAL_PATH.abertos} className="btn-secondary btn-small" style={{ textDecoration: "none" }}>
+            Atendimentos abertos
+          </Link>
+        )}
+        {canSeeOpenBoard && !onOrdersBoard && (
+          <Link to={OPERATIONAL_PATH.pedidos} className="btn-secondary btn-small" style={{ textDecoration: "none" }}>
+            Pedidos
+          </Link>
+        )}
+        {canSeeDelivery && !onDelivery && (
+          <Link to={OPERATIONAL_PATH.delivery} className="btn-secondary btn-small" style={{ textDecoration: "none" }}>
+            Delivery
+          </Link>
+        )}
+        {canSeeWhatsapp && !onWhatsapp && (
+          <Link to={OPERATIONAL_PATH.whatsapp} className="btn-secondary btn-small" style={{ textDecoration: "none" }}>
+            WhatsApp
+          </Link>
+        )}
+        {canSeeLabels && !onLabels && (
+          <Link to={OPERATIONAL_PATH.etiquetas} className="btn-secondary btn-small" style={{ textDecoration: "none" }}>
+            Etiquetas
+          </Link>
+        )}
+        <NotificationsButton />
+      </nav>
       <CommercialBanner />
       <main className="app-body app-body-wide">
         <h2>{title}</h2>
