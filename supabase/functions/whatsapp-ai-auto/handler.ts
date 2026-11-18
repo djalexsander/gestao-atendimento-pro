@@ -47,6 +47,7 @@ import { runOrderFlow, type OrderFlowIo } from "../_shared/ai-order-flow.ts";
 import { composeWithIntro, greetingReply, isGreetingOnly, lastInboundText, parseGreetingParts, personalGreetingReply, personalPrefix } from "../_shared/ai-intro.ts";
 import { authorizeInternalRequest } from "../_shared/push-core.ts";
 import { MENU_CAPTION, MENU_OFFER_TEXT, menuFilename, menuIntent } from "../_shared/ai-menu.ts";
+import { isCatalogListRequest, isCategoryReply, parseCatalogMenu, renderCatalogMenu } from "../_shared/ai-catalog-menu.ts";
 import { MENU_PDF_MAX_BYTES, buildMenuPdf, type MenuCatalog } from "../_shared/menu-pdf.ts";
 import { dispatchQueuedMessage, markMessageFailed, type DispatchDocument, type DispatchRpcClient } from "../_shared/whatsapp-dispatch.ts";
 import { isValidGraphVersion, type GraphSender } from "../_shared/whatsapp-graph.ts";
@@ -392,6 +393,27 @@ async function tryMenu(c: Ctx, jobId: string, latest: string, inbound: string[],
   });
 }
 
+/**
+ * LISTAGEM DO CATÁLOGO ("cardápio" = "catálogo"): pedido de ver o cardápio completo ou de uma categoria. Sem IA, sem cota; o texto sai só do cadastro da empresa do job
+ * (RPC whatsapp_ai_catalog_menu_job). Qualquer dúvida (função ausente, erro, sem categoria correspondente, catálogo vazio) = null e o fluxo de sempre segue IGUAL.
+ */
+async function tryCatalogList(c: Ctx, jobId: string, latest: string, messages: AutoContext["messages"], fallback: boolean, businessName: string | null): Promise<string | null> {
+  const tail = unansweredTail(messages).filter((m) => m.direction === "inbound" && (m.type === undefined || m.type === "text" || m.type === "interactive")).map((m) => m.text);
+  const last = tail.length > 0 ? tail[tail.length - 1] : null;
+  if (!last) return null;
+  const lastBot = [...messages].reverse().find((m) => m.direction === "outbound")?.text ?? null;
+  if (!isCatalogListRequest(last) && !isCategoryReply(last, lastBot)) return null;
+  const r = await call(c.deps.admin, "whatsapp_ai_catalog_menu_job", { p_job_id: jobId, p_query: last.slice(0, 300) });
+  if (r.error) {
+    console.error("whatsapp-ai-auto: listagem do catálogo indisponível", { code: r.error.code ?? null });
+    return null;
+  }
+  const menu = parseCatalogMenu(r.data);
+  if (!menu) return null;
+  const reply = renderCatalogMenu(menu, businessName);
+  return await commitAndDispatch(c, jobId, latest, reply.text, { usageId: null, okOutcome: "replied", okReason: reply.askCategory ? "catalog_categories" : "catalog_list", fallback });
+}
+
 /** Uma consulta ao cadastro (RPC do job; a empresa vem do job no banco). "error" = falha de comunicação (o job é retomado); null = consulta desligada/resposta inválida. */
 async function lookupFacts(c: Ctx, jobId: string, query: string): Promise<KnowledgeFacts | null | "error"> {
   const r = await call(c.deps.admin, "whatsapp_ai_lookup_knowledge_job", { p_job_id: jobId, p_query: query.slice(0, 500), p_limit: KNOWLEDGE_LOOKUP_LIMIT });
@@ -507,6 +529,11 @@ async function processJob(base: Ctx, job: JobRow): Promise<string> {
       .map((m) => m.text);
     const sent = await tryMenu(c, job.id, latest, inbound, fallback);
     if (sent) return sent;
+  }
+  // LISTAGEM DO CATÁLOGO/CARDÁPIO (texto do cadastro real; o PDF, quando ligado, já foi tratado acima). Nunca por cima de um handoff duro.
+  if (!pre || pre.action === "ignore" || pre.reason_code === "action_required") {
+    const listed = await tryCatalogList(c, job.id, latest, ctx.messages, fallback, ctx.business_name ?? null);
+    if (listed) return listed;
   }
   // PEDIDO CONVERSACIONAL (só roda com order_drafts_enabled=true e as migrations aplicadas; senão devolve handled=false e o fluxo
   // de sempre segue IGUAL). Handoffs duros (injeção, humano, jurídico, cobrança, reclamação, mídia) continuam sendo os de sempre.

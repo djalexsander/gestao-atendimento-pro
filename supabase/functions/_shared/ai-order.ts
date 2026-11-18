@@ -364,6 +364,7 @@ export function buildOrderSystemPrompt(businessName: string | null): string {
     "- Uma lista de itens com quantidade MESMO SEM verbo (\"2 espetos de carne 3 coca\") é um pedido: order_intent=true e uma add_item por item, preservando cada quantidade escrita.",
     "- Várias frases/itens => uma operação por item. \"Coloca mais um coração\" => add_item. \"Troca o de frango por linguiça\" => replace_item com product_text=frango e to_text=linguiça.",
     "- Retirar item: remove_item = tirar a LINHA INTEIRA, sem número (\"tira o espeto de carne\", \"não quero mais a Coca\", \"tira todos\"). decrement_item = REDUZIR N unidades (\"tira 1 espeto de carne\", \"remove 2\", \"diminui 1\"): quantity=N, o número que o cliente escreveu, quantity_kind=explicit. NÃO calcule a quantidade final. set_quantity = o cliente disse a quantidade FINAL (\"deixa só 1\", \"muda para 3\"): quantity=essa quantidade.",
+    "- Ajuste de quantidade TOTAL de um item que já está no pedido (\"quero 2 no total\", \"só 2\", \"fica 2\", \"deixa 3\") => set_quantity com quantity=N e quantity_kind=explicit. \"Mais 2\"/\"outra\"/\"também\" => add_item (acrescenta). Repetir a mesma frase de pedido não é acréscimo: gere UMA add_item.",
     "- Observação como \"sem cebola\" => set_item_notes com notes (product_text=o item, ou null se só houver um item no pedido). Opção de item (ponto da carne, adicionais) => set_item_options ou options_text no add_item.",
     "- set_fulfillment: value=pickup (retirada/buscar) ou delivery (entrega). set_contact_name: value=nome. set_order_notes: value=observação geral.",
     "- set_address: preencha SÓ os campos que o cliente escreveu (street, number, complement, neighborhood, city, state em 2 letras, cep, reference); os demais null. Não deduza cidade nem UF.",
@@ -557,9 +558,100 @@ export function nextQuestion(s: OrderState): string | null {
   return null;
 }
 
-export function renderCreated(total: number | string, fulfillment: string, minutes: number | null): string {
+// Atendimento em MESA/COMANDA: o rascunho do pedido só cobre retirada e delivery. Quem indica mesa/comanda (ex.: "mesa 5", "comanda 12",
+// "estou na mesa") é encaminhado a um atendente para lançar na comanda correta (adicionar itens a uma comanda exige autorização humana).
+// "mesa para 6 pessoas" é pergunta de reserva (tratada à parte), não identificação.
+export function mentionsServicePoint(text: string): boolean {
+  const t = norm(text);
+  return /\b(mesa|comanda)\s*(n(o|\.|\u00ba)?\s*)?\d+\b/.test(t) || /\b(estou|to|sentad[oa]|nossa|minha)\s+(na|no|a)?\s*(mesa|comanda)\b/.test(t);
+}
+export const MSG_SERVICE_POINT = "Anotei! Como o atendimento é na mesa/comanda, vou chamar um atendente para lançar seu pedido com segurança.";
+
+
+// ---------------------------------------------------------------------------
+// REPETIÇÃO DE ITEM JÁ NO PEDIDO (caso real 18/11: a mesma frase enviada duas vezes somou 2+2). Regras:
+//  - o mesmo produto, igual (sem observação/opção), pedido de novo SEM indício de acréscimo, NÃO soma: a IA pergunta;
+//  - "mais N" soma N; "N no total" / "só N" / "manter" ajusta ou preserva — lidos por REGRA (sem modelo) a partir da própria pergunta.
+// ---------------------------------------------------------------------------
+const ADD_CUE_RE = /(?:\b(?:mais|outr[oa]s?|tambem|adiciona|adicione|adicionar|acrescenta|acrescente|acrescentar|soma|some|somar|alem)\b|^\s*\+)/;
+/** O texto do cliente indica ACRÉSCIMO ("mais 2", "outra", "também", "adiciona")? Sem isso, repetir um item que já está no pedido é ambíguo. */
+export function hasAddCue(text: string): boolean {
+  return ADD_CUE_RE.test(norm(text));
+}
+
+const CLAUSE_SPLIT_RE = /\s*(?:,|;|\.|\?|!|\be\b|\bmas\b|\bdepois\b)\s*/;
+const clauseTokens = (s: string): string[] => norm(s).replace(/[^a-z0-9\s]+/g, " ").split(/\s+/).filter((w) => w.length >= 3 && !/^\d+$/.test(w) && !STOP.has(w));
+/**
+ * O acréscimo é avaliado POR PRODUTO: acha a(s) frase(s) do cliente que falam desse produto (a que mais compartilha palavras com o nome pedido) e vê se
+ * ELAS têm indício de acréscimo. "mais 1 espeto e quero 2 coca zero" => espeto: acréscimo; coca: NÃO (repetição). Frases empatadas com e sem indício => NÃO
+ * (pergunta; nunca soma sozinha). Sem nenhuma frase identificável, vale o texto inteiro só quando o lote tem UMA única operação de adicionar.
+ */
+export function addCueFor(productText: string | null, segments: string[], singleAdd: boolean): boolean {
+  const clauses = segments.flatMap((s) => norm(s).split(CLAUSE_SPLIT_RE)).map((c) => c.trim()).filter(Boolean);
+  const want = new Set(clauseTokens(productText ?? ""));
+  if (want.size > 0) {
+    let best = 0;
+    const scored = clauses.map((c) => { const n = clauseTokens(c).filter((w) => want.has(w)).length; if (n > best) best = n; return { c, n }; });
+    if (best > 0) return scored.filter((x) => x.n === best).every((x) => hasAddCue(x.c));
+  }
+  return singleAdd && hasAddCue(segments.join(" "));
+}
+
+export function renderRepeatQuestion(have: number, name: string, asked: number): string {
+  return `Você já tem ${have}x ${plain(name, 80)} no pedido. Quer somar mais ${asked} (ficam ${have + asked}) ou manter ${have} no total? Responda "mais ${asked}" ou "${have} no total".`;
+}
+export interface RepeatQuestion { have: number; name: string; asked: number }
+const REPEAT_Q_RE = /Você já tem (\d{1,3})x (.{1,80}?) no pedido\. Quer somar mais (\d{1,3}) \(ficam /;
+/** A última mensagem da IA é a pergunta de repetição? Devolve o que ela perguntou (a fonte da interpretação determinística da resposta). */
+export function parseRepeatQuestion(lastBot: string | null | undefined): RepeatQuestion | null {
+  if (!lastBot) return null;
+  const m = REPEAT_Q_RE.exec(lastBot);
+  if (!m) return null;
+  return { have: Number(m[1]), name: m[2], asked: Number(m[3]) };
+}
+
+export type RepeatReply = { kind: "add"; qty: number } | { kind: "total"; qty: number } | { kind: "keep" } | { kind: "ask" };
+const NUM_RE = String.raw`(?:\d{1,2}|um|uma|dois|duas|tres|quatro|cinco|seis|sete|oito|nove|dez)`;
+const toNum = (w: string): number => (/^\d/.test(w) ? Number(w) : NUMERAL_WORDS[w] ?? NaN);
+/**
+ * Resposta do cliente à pergunta de repetição, por regra. null = não é uma resposta a isso (segue o fluxo normal).
+ *  "mais 2"/"soma 2"/"somar"/"pode somar" => add; "2 no total"/"só 2"/"fica 2"/"deixa 2"/"total de 2" => total; "manter"/"deixa assim"/"não" => keep;
+ *  "sim"/"ok" soltos => ask (a pergunta é repetida; nada é somado por um "sim").
+ */
+export function parseRepeatReply(text: string, q: RepeatQuestion): RepeatReply | null {
+  const t = norm(text).replace(/[^a-z0-9+\s]+/g, " ").replace(/\s+/g, " ").trim();
+  if (!t || t.split(" ").length > 8) return null;
+  const total = new RegExp(String.raw`(?:^|\s)(${NUM_RE})\s+(?:no|ao)\s+total\b|\btotal\s+(?:de\s+)?(${NUM_RE})\b|\b(?:so|apenas|somente|fica|ficar|deixa|deixe|deixar|fique)\s+(?:com\s+)?(${NUM_RE})\b`).exec(t);
+  if (total) {
+    const n = toNum(total[1] ?? total[2] ?? total[3]);
+    return Number.isFinite(n) && n >= 1 && n <= 50 ? { kind: "total", qty: n } : null;
+  }
+  const add = new RegExp(String.raw`(?:^|\s)(?:quero\s+)?(?:mais|soma|some|somar|adiciona|adicione|acrescenta|acrescente|\+)\s*(${NUM_RE})?\b`).exec(t);
+  if (add) {
+    const n = add[1] ? toNum(add[1]) : q.asked;
+    return Number.isFinite(n) && n >= 1 && n <= 50 ? { kind: "add", qty: n } : null;
+  }
+  if (/^(?:pode\s+)?(?:somar|soma|somar\s+sim)$/.test(t)) return { kind: "add", qty: q.asked };
+  const keepNum = /\b(?:manter|mantem|mantenha)\s+(\d{1,2})\b/.exec(t);
+  if (keepNum && Number(keepNum[1]) !== q.have) return Number(keepNum[1]) >= 1 && Number(keepNum[1]) <= 50 ? { kind: "total", qty: Number(keepNum[1]) } : null;
+  if (/\b(?:manter|mantem|mantenha|mantem\s+assim|deixa\s+assim|deixe\s+assim|assim\s+mesmo|so\s+isso|nao|nenhum)\b/.test(t)) return { kind: "keep" };
+  if (/^(?:sim|s|ok|okay|ta|beleza|blz|pode|claro|isso|certo|uhum|aham)(?:\s+(?:sim|ok|pode|por\s+favor|pf|pfv))*$/.test(t)) return { kind: "ask" };
+  return null;
+}
+
+export type CreatedInfo = { order_label?: unknown; order_number?: unknown; delivery_status?: unknown; production_queue_items?: unknown };
+
+// Confirmação do pedido oficial. Com o retorno enriquecido do banco: informa o NÚMERO real e só diz "enviado para a produção" se
+// algum item realmente entrou numa fila de produção; sem fila, diz apenas que foi registrado (nunca promete o que o sistema não confirmou).
+// Sem os campos novos (banco antigo) mantém o texto anterior.
+export function renderCreated(total: number | string, fulfillment: string, minutes: number | null, info?: CreatedInfo | null): string {
   const prev = minutes ? ` Previsão: cerca de ${minutes} min.` : "";
-  return `Pedido confirmado e enviado para produção. Total: ${brl(total)}${fulfillment === "delivery" ? " (com a taxa de entrega)" : ""}.${prev}`;
+  const fee = fulfillment === "delivery" ? " (com a taxa de entrega)" : "";
+  const label = typeof info?.order_label === "string" && info.order_label.trim() ? info.order_label.trim() : null;
+  if (!info || (label === null && info.delivery_status === undefined)) return `Pedido confirmado e enviado para produção. Total: ${brl(total)}${fee}.${prev}`;
+  const queued = Number(info.production_queue_items ?? 0) > 0;
+  const head = label ? `Pedido ${label} confirmado` : "Pedido confirmado";
+  return `${head}${queued ? " e enviado para a produção" : " e registrado"}. Total: ${brl(total)}${fee}.${prev}`;
 }
 
 export function renderPriceChanges(changes: Array<{ name: string; old: number | string; new: number | string }>, oldFee: number | string | null, newFee: number | string | null, newTotal: number | string): string {

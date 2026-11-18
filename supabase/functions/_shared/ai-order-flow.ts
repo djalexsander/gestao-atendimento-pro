@@ -14,7 +14,7 @@ import {
   LEGACY_SHOW_OPTIONS_RE, MSG_ALREADY_CONFIRMED, MSG_CANCEL_AFTER_ORDER, MSG_CANCELLED, MSG_CHOICE_GIVEUP, MSG_FAILED, MSG_NOT_FOUND, MSG_NO_DRAFT, MSG_REPROMPT, MSG_TOO_BIG,
   boundedTail, countChoiceAsks, parseChoiceQuestion, parseLetterReply, pickChoice, renderChoice, renderLetterChoice, MSG_CHOICE_EXPIRED, buildOrderSystemPrompt, buildOrderUserBlock, classifyConfirmationBatch, decideQuantity, hasOrderVerb, isCancelIntent, looksLikeItemList, matchItem,
   nextQuestion, parseOrderState, plain, removalIntent, renderAmbiguous, renderAskQuantity, renderCreated, renderPriceChanges, renderSummary,
-  renderUnavailable, renderZoneAmbiguous, startsWithQuantity, validateExtraction, brl, PAYMENT_LABELS,
+  MSG_SERVICE_POINT, mentionsServicePoint, addCueFor, parseRepeatQuestion, parseRepeatReply, renderRepeatQuestion, type RepeatQuestion, type RepeatReply, renderUnavailable, renderZoneAmbiguous, startsWithQuantity, validateExtraction, brl, PAYMENT_LABELS,
   MSG_ADDRESS_ANOTHER, MSG_ADDRESS_OFFER, MSG_ADDRESS_UNAVAILABLE, addressIsNext, classifyYesNoBatch, renderAddressConfirm,
   type ExtractedOp, type OrderState,
 } from "./ai-order.ts";
@@ -89,6 +89,11 @@ export async function runOrderFlow(io: OrderFlowIo, input: OrderFlowInput): Prom
       if (c.result === "cancelled") return { handled: true, outcome: await io.reply(MSG_CANCELLED, { outcome: "replied", reason: "order_cancelled" }) };
       if (c.result === "already_confirmed") return { handled: true, outcome: await io.reply(MSG_CANCEL_AFTER_ORDER, { outcome: "handoff", reason: "action_required" }) };
       return { handled: false, active: true };
+    }
+
+    // 1-bis) MESA/COMANDA: fora do escopo do pedido por WhatsApp (retirada/delivery); o rascunho fica preservado e um atendente assume.
+    if (texts.length > 0 && mentionsServicePoint(texts[texts.length - 1])) {
+      return { handled: true, outcome: await io.reply(MSG_SERVICE_POINT, { outcome: "handoff", reason: "action_required" }) };
     }
 
     // 1a) RECUPERAÇÃO da fila de ambiguidades: se uma escolha foi resolvida mas a fila não foi consumida (o worker caiu no meio), consome
@@ -173,6 +178,17 @@ export async function runOrderFlow(io: OrderFlowIo, input: OrderFlowInput): Prom
       if (yn !== "none") return { handled: true, outcome: await handleAddressAnswer(io, input, state, yn) };
     }
 
+    // 1e) RESPOSTA À PERGUNTA DE REPETIÇÃO ("Você já tem 2x X... somar mais 2 ou manter 2 no total?"): "mais 2" soma, "2 no total"/"só 2"/"manter" ajusta ou
+    //     preserva, "sim"/"ok" soltos repetem a pergunta. Por REGRA (a pergunta guarda o produto e as quantidades); o modelo não decide nem soma.
+    if (!pendingChoiceBlock && state && state.status !== "confirmed" && texts.length > 0) {
+      const rq = parseRepeatQuestion(lastBot);
+      const rr = rq ? parseRepeatReply(lastTxt, rq) : null;
+      if (rq && rr) {
+        const line = matchItem(state.items.filter((i) => i.quantity > 0 && !i.notes && i.options.length === 0), rq.name);
+        if (line.kind === "one") return { handled: true, outcome: await sendComposed(io, input, await applyRepeatReply(io, input, state, line.item, rq, rr, inbound.length)) };
+      }
+    }
+
     // 2a) "confirmar" SEM resumo pendente (repetido depois do pedido, ou antes de o resumo existir): o banco decide
     //     (already_confirmed / not_awaiting / no_draft); nunca cai no fluxo de conversa livre.
     if (texts.length > 0 && state?.status !== "awaiting_confirmation" && classifyConfirmationBatch(texts) === "confirm") {
@@ -230,7 +246,7 @@ export async function runOrderFlow(io: OrderFlowIo, input: OrderFlowInput): Prom
       return { handled: false, active: true };
     }
 
-    const exec = await executeExtraction(io, input, state, extraction.operations, joined, orderish, inbound.length, lastBot, false, !state && !hasOrderVerb(joined) && !isOurQuestion(lastBot));
+    const exec = await executeExtraction(io, input, state, extraction.operations, joined, orderish, inbound.length, lastBot, false, !state && !hasOrderVerb(joined) && !isOurQuestion(lastBot), null, texts);
     if (exec.kind === "legacy") return { handled: false, active: true };
     return { handled: true, outcome: await sendComposed(io, input, exec) };
   } catch (e) {
@@ -278,7 +294,7 @@ async function doConfirm(io: OrderFlowIo, input: OrderFlowInput, before: OrderSt
   switch (res) {
     case "created": {
       const minutes = !before ? null : before.fulfillment === "delivery" ? before.estimated_minutes ?? before.settings.delivery_minutes : before.settings.pickup_minutes;
-      return io.reply(renderCreated(String(d.total ?? before?.grand_total ?? 0), String(d.fulfillment ?? before?.fulfillment ?? "pickup"), minutes), { outcome: "replied", reason: "order_confirmed" });
+      return io.reply(renderCreated(String(d.total ?? before?.grand_total ?? 0), String(d.fulfillment ?? before?.fulfillment ?? "pickup"), minutes, d as never), { outcome: "replied", reason: "order_confirmed" });
     }
     case "already_confirmed":
       return io.reply(MSG_ALREADY_CONFIRMED, { outcome: "replied", reason: "order_already_confirmed" });
@@ -341,7 +357,7 @@ async function respondFromState(io: OrderFlowIo, input: OrderFlowInput, st: Orde
 type Exec = { kind: "legacy" } | { kind: "reply"; state: OrderState | null; acks: Ack[]; notes: string[]; questions: string[] };
 
 async function executeExtraction(
-  io: OrderFlowIo, input: OrderFlowInput, state0: OrderState | null, ops: ExtractedOp[], text: string, orderish: boolean, tailCount: number | null, lastBot: string | null, unguarded = false, implicit = false, takeChoiceId: string | null = null,
+  io: OrderFlowIo, input: OrderFlowInput, state0: OrderState | null, ops: ExtractedOp[], text: string, orderish: boolean, tailCount: number | null, lastBot: string | null, unguarded = false, implicit = false, takeChoiceId: string | null = null, segments: string[] | null = null,
 ): Promise<Exec> {
   const { jobId } = input;
   // fila de ambiguidades: o que o cliente JÁ disse não pode se perder se chegou mensagem nova no meio do turno (o reenvio da resposta trata a nova)
@@ -359,6 +375,8 @@ async function executeExtraction(
   const deferred: Array<{ text: string; quantity: number | null; notes: string | null }> = [];
   // quantidade "viva" de cada linha dentro deste lote (várias retiradas na mesma mensagem não podem usar o estado velho)
   const qtyNow = new Map<string, number>();
+  const singleAdd = ops.filter((o) => o.op === "add_item").length === 1;
+  const addedNow = new Map<string, number>();   // produto (linha simples) já adicionado neste lote: base da proteção contra repetição
   const liveQty = (i: { item_id: string; quantity: number }) => qtyNow.get(i.item_id) ?? i.quantity;
   const removals = ops.filter((o) => o.op === "remove_item" || o.op === "decrement_item").length;
 
@@ -419,6 +437,23 @@ async function executeExtraction(
           if (ro.result === "exact" && isObj(ro.option)) optionIds.push(String(ro.option.option_id));
           else if (ro.result === "none") notes.push(`Não encontrei a opção "${plain(m, 40)}" para ${plain(String(prod.name), 60)}.`);
         }
+        // REPETIÇÃO: o mesmo produto, na MESMA linha (sem observação nem opções), sem indício de acréscimo ("mais", "outra", "também"...), não soma sozinho.
+        //  - repetido DENTRO do lote com a mesma quantidade = reenvio da mesma mensagem: conta uma vez e avisa;
+        //  - repetido com outra quantidade, ou já presente no pedido = pergunta (somar x manter). Linhas com observação/opções diferentes seguem como antes.
+        //  - o indício de acréscimo é avaliado POR PRODUTO (frase do próprio produto), não pelo lote inteiro.
+        const plainAdd = !op.notes && op.options_text.length === 0 && optionIds.length === 0;
+        const pid = String(prod.product_id);
+        if (plainAdd && !addCueFor(op.product_text, segments ?? [text], singleAdd)) {
+          const queued = addedNow.get(pid);
+          const exist = state?.items.find((i) => i.product_id === pid && !i.notes && i.options.length === 0 && liveQty(i) > 0);
+          if (queued !== undefined) {
+            if (queued === q.qty) notes.push(`Recebi o mesmo pedido mais de uma vez; considerei só ${q.qty}x ${plain(String(prod.name), 80)}. Se quiser mais, diga "mais ${q.qty}".`);
+            else questions.push(renderRepeatQuestion(queued, String(prod.name), q.qty));
+            break;
+          }
+          if (exist) { questions.push(renderRepeatQuestion(liveQty(exist), exist.name, q.qty)); break; }
+        }
+        if (plainAdd) addedNow.set(pid, (addedNow.get(pid) ?? 0) + q.qty);
         units.push({ ops: [{ op: "add_item", product_id: prod.product_id, quantity: q.qty, notes: op.notes, option_ids: optionIds }], acks: [{ kind: "add", text: `${q.qty}x ${plain(String(prod.name), 80)}` }] });
         break;
       }
@@ -600,6 +635,34 @@ Depois eu pergunto sobre: ${deferred.map((x) => `${x.quantity ? `${x.quantity}x 
     else if (r.reason === "change_value" || r.reason === "change_needs_cash") questions.push("Para quanto você precisa de troco?");
   }
   return { kind: "reply", state, acks, notes, questions };
+}
+
+/** Aplica a resposta (por regra) à pergunta de repetição. Sempre registra o fim da mensagem no banco (apply_ops, mesmo sem operação): reprocessar não repete nada. */
+async function applyRepeatReply(
+  io: OrderFlowIo, input: OrderFlowInput, state: OrderState, item: OrderState["items"][number], rq: RepeatQuestion, rr: RepeatReply, tailCount: number,
+): Promise<Extract<Exec, { kind: "reply" }>> {
+  const notes: string[] = [];
+  const questions: string[] = [];
+  const acks: Ack[] = [];
+  const cur = item.quantity;
+  const name = plain(item.name, 80);
+  let unit: Unit = { ops: [], acks: [] };
+  if (rr.kind === "add") {
+    if (cur + rr.qty > 50) { notes.push("Para mais de 50 unidades de um item, vou chamar a equipe."); throw new FlowAbort("handoff", "order_too_big", true); }
+    unit = { ops: [{ op: "add_item", product_id: item.product_id, quantity: rr.qty, notes: null, option_ids: [] }], acks: [{ kind: "add", text: `${rr.qty}x ${name}` }] };
+  } else if (rr.kind === "total") {
+    if (rr.qty === cur) notes.push(`Mantive ${cur}x ${name}.`);
+    else unit = { ops: [{ op: "set_quantity", item_id: item.item_id, quantity: rr.qty }], acks: [{ kind: "change", text: `${rr.qty}x ${name}` }] };
+  } else if (rr.kind === "keep") {
+    notes.push(`Mantive ${cur}x ${name}.`);
+  } else {
+    questions.push(renderRepeatQuestion(cur, item.name, rq.asked));
+  }
+  let st: OrderState | null = state;
+  const r = await mutate(io, "whatsapp_order_apply_ops", { p_job_id: input.jobId, p_expected_latest: input.latest, p_tail_count: tailCount, p_ops: unit.ops });
+  if (r.result === "ok") { st = parseOrderState(r.state) ?? st; acks.push(...unit.acks); }
+  else mapInvalid(String(r.reason ?? ""), unit, notes, questions);
+  return { kind: "reply", state: st, acks, notes, questions };
 }
 
 interface ActiveChoice { choiceId: string; source: string; quantity: number | null; options: Array<{ letter: string; productId: string; name: string | null; active: boolean }> }

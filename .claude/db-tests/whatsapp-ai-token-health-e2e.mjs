@@ -29,8 +29,9 @@ await load("supabase/functions/_shared/menu-pdf.ts", "menu-pdf.mjs");
 await load("supabase/functions/_shared/whatsapp-graph.ts", "whatsapp-graph.mjs");
 await load("supabase/functions/_shared/whatsapp-dispatch.ts", "whatsapp-dispatch.mjs", [['"./whatsapp-graph.ts"', '"./whatsapp-graph.mjs"']]);
 await load("supabase/functions/_shared/ai-catalog-intent.ts", "ai-catalog-intent.mjs", [['"./ai-auto.ts"', '"./ai-auto.mjs"'], ['"./ai-knowledge.ts"', '"./ai-knowledge.mjs"']]);
+await load("supabase/functions/_shared/ai-catalog-menu.ts", "ai-catalog-menu.mjs", [['"./ai-auto.ts"', '"./ai-auto.mjs"'], ['"./ai-knowledge.ts"', '"./ai-knowledge.mjs"']]);
 const H = await load("supabase/functions/whatsapp-ai-auto/handler.ts", "handler.mjs", [
-  ['"../_shared/ai-catalog-intent.ts"', '"./ai-catalog-intent.mjs"'],
+  ['"../_shared/ai-catalog-intent.ts"', '"./ai-catalog-intent.mjs"'], ['"../_shared/ai-catalog-menu.ts"', '"./ai-catalog-menu.mjs"'],
   ['"../_shared/ai-auto.ts"', '"./ai-auto.mjs"'], ['"../_shared/ai-knowledge.ts"', '"./ai-knowledge.mjs"'],
   ['"../_shared/ai-order.ts"', '"./ai-order.mjs"'], ['"../_shared/ai-order-flow.ts"', '"./ai-order-flow.mjs"'],
   ['"../_shared/push-core.ts"', '"./push-core.mjs"'], ['"../_shared/ai-intro.ts"', '"./ai-intro.mjs"'],
