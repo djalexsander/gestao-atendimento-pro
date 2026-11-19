@@ -1,6 +1,7 @@
 import { supabase } from "../../lib/supabaseClient";
 import {
   describePartialError,
+  buildSessionPayments,
   parseFinancialState,
   parsePaymentOverview,
   toCloseArgs,
@@ -8,7 +9,7 @@ import {
   toRegisterPaymentArgs,
   toReplaceSplitArgs,
 } from "./partialPaymentsLogic";
-import type { FinancialState, PaymentInput, PaymentOverview, RpcError, SplitMode, SplitPartInput } from "./partialPaymentsLogic";
+import type { FinancialState, MovementRow, PaymentInput, PaymentOverview, RpcError, SessionPaymentRow, SplitMode, SplitPartInput } from "./partialPaymentsLogic";
 
 // E9.2 — Camada de dados do estado financeiro da conta (somente RPCs; nenhuma tela usa isto ainda). O recurso é controlado POR EMPRESA
 // no banco (módulo partial_payments, desligado por padrão): desligado, as RPCs respondem PT403 "não está habilitado" e nada é gravado.
@@ -39,7 +40,11 @@ export interface SplitResult { splitId: string | null; version: number | null; r
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const toCents = (v: unknown): number => (typeof v === "number" ? Math.round(v * 100) : typeof v === "string" && v !== "" ? Math.round(Number(v) * 100) : 0);
 
-export function createPartialPaymentsApi(rpc: Rpc) {
+// Leitura dos movimentos de caixa de uma conta (vendas e estornos por pagamento), para o estorno de conta aberta. Mesma fonte que a tela
+// de estorno de conta fechada já usa (cash_movements, com RLS): só owner/admin enxergam os movimentos de outros caixas.
+export type MovementsReader = (sessionId: string) => Promise<{ data: MovementRow[] | null; error: RpcError | null }>;
+
+export function createPartialPaymentsApi(rpc: Rpc, readMovements?: MovementsReader) {
   async function call<T>(name: string, args: Record<string, unknown>, fallback: string, map: (data: unknown) => T | null): Promise<Outcome<T>> {
     let res: { data: unknown; error: RpcError | null };
     try { res = await rpc(name, args); } catch { return { ok: false, error: { code: null, message: null }, message: fallback }; }
@@ -58,6 +63,14 @@ export function createPartialPaymentsApi(rpc: Rpc) {
       call<PaymentOverview>("list_session_payment_overview", { p_company_id: companyId }, LOAD_ERROR, (d) => parsePaymentOverview(d)),
     getSplitHistory: (sessionId: string) =>
       call("get_session_split_history", { p_service_session_id: sessionId }, LOAD_ERROR, (d) => d),
+    listSessionPayments: async (sessionId: string): Promise<Outcome<SessionPaymentRow[]>> => {
+      if (!readMovements) return { ok: false, error: { code: null, message: null }, message: LOAD_ERROR };
+      try {
+        const res = await readMovements(sessionId);
+        if (res.error || !res.data) return { ok: false, error: res.error ?? { code: null, message: null }, message: LOAD_ERROR };
+        return { ok: true, data: buildSessionPayments(res.data) };
+      } catch { return { ok: false, error: { code: null, message: null }, message: LOAD_ERROR }; }
+    },
     // Escrita (todas exigem o módulo ligado para a empresa; owner/admin/cashier, estorno só owner/admin)
     registerPayment: (input: PaymentInput, requestId: string) =>
       call<RegisterPaymentResult>("register_service_payment", toRegisterPaymentArgs(input, requestId) as unknown as Record<string, unknown>, PAY_ERROR, (d) => {
@@ -87,7 +100,13 @@ export function createPartialPaymentsApi(rpc: Rpc) {
 export type PartialPaymentsApi = ReturnType<typeof createPartialPaymentsApi>;
 
 // Instância de produção (nada a usa até a E9.3+).
-export const partialPaymentsApi: PartialPaymentsApi = createPartialPaymentsApi(async (name, args) => {
-  const { data, error } = await supabase.rpc(name, args);
-  return { data, error: error ? { code: error.code ?? null, message: error.message ?? null } : null };
-});
+export const partialPaymentsApi: PartialPaymentsApi = createPartialPaymentsApi(
+  async (name, args) => {
+    const { data, error } = await supabase.rpc(name, args);
+    return { data, error: error ? { code: error.code ?? null, message: error.message ?? null } : null };
+  },
+  async (sessionId) => {
+    const { data, error } = await supabase.from("cash_movements").select("service_payment_id, movement_type, payment_method, amount, created_at").eq("service_session_id", sessionId).in("movement_type", ["sale", "refund"]);
+    return { data: (data ?? null) as MovementRow[] | null, error: error ? { code: error.code ?? null, message: error.message ?? null } : null };
+  },
+);

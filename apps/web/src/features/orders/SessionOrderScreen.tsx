@@ -5,7 +5,9 @@ import { OPERATIONAL_PATH } from "../../app/accessRules";
 import { useAuth } from "../../app/useAuth";
 import { supabaseCashSource, type CashSource } from "../cash/cashApi";
 import { CheckoutDialog, OpenCashDialog } from "../cash/CashDialogs";
-import { paymentChipClass, useSessionPaymentChip } from "../cash/usePaymentStatus";
+import { paymentChipClass, useSessionFinance } from "../cash/usePaymentStatus";
+import { AccountFinanceDialog } from "../cash/AccountFinanceDialog";
+import { hasPartialActivity } from "../cash/partialPaymentsLogic";
 import { Modal } from "../employees/Modal";
 import { supabaseDocumentsSource, type DocumentsSource } from "../printing/documentsApi";
 import { PrintDocumentButton } from "../printing/PrintDocumentButton";
@@ -189,7 +191,10 @@ export function SessionOrderScreen({
   const isDelivery = header?.kind === "delivery";
   // E9.3: status de pagamento da conta (comanda/mesa aberta). Só com o módulo partial_payments habilitado; atendente vê só o status,
   // owner/admin/cashier também os valores. Somente leitura; recarrega quando o histórico de pedidos muda.
-  const paymentChip = useSessionPaymentChip(sessionId, activeMembership?.role ?? null, header?.status === "open" && header.kind !== "delivery", orders);
+  const finance = useSessionFinance(sessionId, activeMembership?.role ?? null, header?.status === "open" && header.kind !== "delivery", orders);
+  const paymentChip = finance.chip;
+  // E9.4: diálogo financeiro da conta (Caixa, com o módulo ligado).
+  const [financeOpen, setFinanceOpen] = useState(false);
   const leave = isDelivery ? { path: OPERATIONAL_PATH.delivery, label: "Delivery" } : { path: backPath, label: "Comandas / Mesas" };
   // Rótulo do atendimento: comanda/mesa, ou Delivery/Retirada (sem ponto).
   const sessionLabel = header ? (header.point ? `${header.point.displayName} (${header.point.code})` : orderTitle(header.fulfillment === "pickup" ? "pickup" : "delivery", header.delivery?.orderNumber ?? null)) : "";
@@ -421,12 +426,37 @@ export function SessionOrderScreen({
             <span className="muted"> · {header.delivery.custody.courierName ?? "O entregador"} recebeu {formatReais(header.delivery.custody.amount)} do cliente. Confirme em “Acerto de entregadores” no Caixa; este pedido só conta como pago depois do acerto.</span>
           </p>
         )}
-        {canCheckout && header && canOrder && !header.delivery?.custody && (
+        {canCheckout && header && canOrder && !header.delivery?.custody && !(finance.enabled && hasPartialActivity(finance.state)) && (
           <button className="btn-primary btn-auto" type="button" disabled={checkoutChecking} onClick={() => void startCheckout()}>
             {isDelivery ? "Receber / Fechar conta" : "Fechar conta"}
           </button>
         )}
+        {/* E9.4: só com o módulo partial_payments habilitado, em comanda/mesa aberta do Caixa. Sem o módulo, nada disto aparece. */}
+        {canCheckout && header && canOrder && !isDelivery && finance.enabled && (
+          <button className="btn-secondary btn-auto" type="button" data-testid="open-finance" onClick={() => setFinanceOpen(true)}>
+            Pagamentos da conta
+          </button>
+        )}
       </div>
+
+      {financeOpen && header && activeMembership && (
+        <AccountFinanceDialog
+          sessionId={sessionId}
+          pointLabel={sessionLabel}
+          role={activeMembership.role}
+          companyId={activeMembership.companyId}
+          cashSource={cashSource}
+          onClose={() => {
+            setFinanceOpen(false);
+            void finance.reload();
+            requestReload();
+          }}
+          onClosed={() => {
+            setFinanceOpen(false);
+            setCheckoutStage("done");
+          }}
+        />
+      )}
 
       {checkoutStage === "open-cash" && activeMembership && (
         <OpenCashDialog

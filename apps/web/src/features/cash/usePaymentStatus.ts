@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useCommercial } from "../commercial/CommercialProvider";
 import { partialPaymentsApi, type PartialPaymentsApi } from "./partialPaymentsApi";
 import { canViewFinancialValues } from "./partialPaymentsLogic";
-import type { CompanyRole, OverviewRow } from "./partialPaymentsLogic";
+import type { CompanyRole, FinancialState, OverviewRow } from "./partialPaymentsLogic";
 import { chipFromOverview, chipFromState, chipFromStatus, paymentChipsEnabled, type PaymentChipView } from "./paymentStatusView";
 
 // E9.3 — Hooks de EXIBIÇÃO do status de pagamento. Com o módulo partial_payments desligado para a empresa (padrão) ou papel sem
@@ -38,10 +38,11 @@ export function usePaymentOverview(companyId: string | null, role: CompanyRole |
 }
 
 // Tela do pedido: o estado de UMA conta. owner/admin/cashier leem o estado completo (valores); o atendente lê só o status.
-export function useSessionPaymentChip(sessionId: string, role: CompanyRole | null | undefined, applicable: boolean, refreshKey: unknown, api: PartialPaymentsApi = partialPaymentsApi): PaymentChipView | null {
+export function useSessionFinance(sessionId: string, role: CompanyRole | null | undefined, applicable: boolean, refreshKey: unknown, api: PartialPaymentsApi = partialPaymentsApi) {
   const { entitlements } = useCommercial();
   const enabled = applicable && paymentChipsEnabled(entitlements, role);
   const [chip, setChip] = useState<PaymentChipView | null>(null);
+  const [state, setState] = useState<FinancialState | null>(null);
   const seq = useRef(0);
   const full = canViewFinancialValues(role);
   const load = useCallback(async () => {
@@ -49,13 +50,13 @@ export function useSessionPaymentChip(sessionId: string, role: CompanyRole | nul
     const current = ++seq.current;
     if (full) {
       const r = await api.getFinancialState(sessionId);
-      if (current === seq.current && r.ok) setChip(chipFromState(r.data, role));
+      if (current === seq.current && r.ok) { setChip(chipFromState(r.data, role)); setState(r.data); }
     } else {
       const r = await api.getPaymentStatus(sessionId);
       if (current === seq.current && r.ok) setChip(chipFromStatus(r.data.paymentStatus));
     }
   }, [enabled, full, sessionId, role, api]);
-  useEffect(() => { if (!enabled) { seq.current++; setChip(null); } }, [enabled]);
+  useEffect(() => { if (!enabled) { seq.current++; setChip(null); setState(null); } }, [enabled]);
   useEffect(() => { void load(); }, [load, refreshKey]);
   useEffect(() => {
     if (!enabled) return;
@@ -64,7 +65,10 @@ export function useSessionPaymentChip(sessionId: string, role: CompanyRole | nul
     document.addEventListener("visibilitychange", tick);
     return () => { window.clearInterval(id); document.removeEventListener("visibilitychange", tick); };
   }, [enabled, load]);
-  return enabled ? chip : null;
+  return { enabled, chip: enabled ? chip : null, state: enabled ? state : null, reload: load };
+}
+export function useSessionPaymentChip(sessionId: string, role: CompanyRole | null | undefined, applicable: boolean, refreshKey: unknown, api: PartialPaymentsApi = partialPaymentsApi): PaymentChipView | null {
+  return useSessionFinance(sessionId, role, applicable, refreshKey, api).chip;
 }
 
 // O indicador (mesmo visual do chip financeiro do delivery). Sem dados = nada na tela.

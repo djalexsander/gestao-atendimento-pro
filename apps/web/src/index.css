@@ -5751,3 +5751,9 @@ button {
 
 /* E9.3: status de pagamento no cabeçalho da conta (somente exibição) */
 .order-header-pay { margin-top: 4px; font-size: 14px; }
+
+/* E9.4: diálogo financeiro da conta (Caixa) */
+.fin-section { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+.fin-parts { list-style: none; margin: 8px 0; padding: 0; display: grid; gap: 4px; }
+.fin-part { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; flex-wrap: wrap; }
+.fin-alloc { margin: 8px 0; }

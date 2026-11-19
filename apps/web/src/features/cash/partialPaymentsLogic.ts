@@ -305,3 +305,55 @@ export function validateClose(state: FinancialState | null | undefined): string 
   return null;
 }
 export const toCloseArgs = (sessionId: string, requestId: string) => ({ p_service_session_id: sessionId, p_client_request_id: requestId });
+
+// ---------------------------------------------------------------------------------------------- E9.4: pagamentos da conta (estorno) e desfechos
+// Movimentos de caixa da conta (vendas e estornos por pagamento). O dono/administrador os enxerga (RLS); o servidor valida o estorno.
+export interface MovementRow { service_payment_id: string | null; movement_type: string; payment_method: string; amount: number | string; created_at: string }
+export interface SessionPaymentRow { paymentId: string; method: PaymentMethod; amountCents: number; refundedCents: number; availableCents: number; createdAt: string }
+export function buildSessionPayments(rows: readonly MovementRow[]): SessionPaymentRow[] {
+  const sales = new Map<string, SessionPaymentRow>();
+  for (const r of rows) {
+    if (r.movement_type !== "sale" || !r.service_payment_id) continue;
+    const amountCents = toCents(Number(r.amount));
+    sales.set(r.service_payment_id, { paymentId: r.service_payment_id, method: r.payment_method as PaymentMethod, amountCents, refundedCents: 0, availableCents: amountCents, createdAt: r.created_at });
+  }
+  for (const r of rows) {
+    if (r.movement_type !== "refund" || !r.service_payment_id) continue;
+    const p = sales.get(r.service_payment_id);
+    if (!p) continue;
+    p.refundedCents += toCents(Number(r.amount));
+    p.availableCents = Math.max(p.amountCents - p.refundedCents, 0);
+  }
+  return [...sales.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+// Desfecho de uma operação financeira, para a tela decidir o que fazer (nunca repetir com id novo quando o resultado é desconhecido).
+export type Outcome =
+  | "success"      // gravou
+  | "stale"        // saldo/divisão mudou: recarregar o estado antes de nova tentativa
+  | "needs-cash"   // sem caixa aberto
+  | "feature-off"  // módulo desligado para a empresa
+  | "refused"      // recusa definitiva do banco (mensagem pronta)
+  | "unknown";     // rede/timeout/resposta inválida: pode ter gravado ou não — manter o MESMO id
+export function classifyOutcome(error: RpcError | null | undefined): Outcome {
+  if (!error) return "success";
+  if (isFeatureOffError(error)) return "feature-off";
+  if (needsOpenCash(error)) return "needs-cash";
+  if (isStaleStateError(error)) return "stale";
+  if (isDefinitiveRefusal(error)) return "refused";
+  return "unknown";
+}
+
+// Assinatura estável de um pagamento (mesmos dados = mesma tentativa = mesmo client_request_id).
+export function paymentSignature(i: PaymentInput): string {
+  return JSON.stringify([i.sessionId, i.method, i.amountCents, i.method === "cash" ? i.receivedCents ?? i.amountCents : null, i.partId ?? null,
+    i.allocations ? i.allocations.map((a) => [a.partId, a.amountCents]) : null, i.confirmAllocation === true]);
+}
+// Valor sugerido: pendente da parte escolhida ou saldo da conta.
+export function suggestedPaymentCents(state: FinancialState | null | undefined, partId?: string | null): number {
+  if (!state) return 0;
+  if (partId) { const p = state.parts.find((x) => x.partId === partId); if (p) return Math.max(Math.min(p.pendingCents, state.balanceDueCents), 0); }
+  return Math.max(state.balanceDueCents, 0);
+}
+// A conta já recebeu pagamento da camada nova ou está dividida: o fechamento TRADICIONAL (legado) não serve mais (o banco recusa).
+export const hasPartialActivity = (state: FinancialState | null | undefined): boolean => !!state && (state.paymentsCount > 0 || state.split !== null);
