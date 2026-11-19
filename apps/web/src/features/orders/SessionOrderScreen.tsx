@@ -20,7 +20,7 @@ import { CartBar, CartPanel } from "./Cart";
 import { OrderHistory } from "./OrderHistory";
 import { supabaseOrdersSource, type OrdersSource, type SessionHeader } from "./ordersApi";
 import { ModifierDialog, type ModifierChoice } from "../modifiers/ModifierDialog";
-import { MODIFIERS_LOAD_ERROR, addToCart, decideAdd, changeCartQuantity, removeCartItem, sessionTotal, setCartItemNotes, updateCartLine, type CartItem, type CatalogCategory, type CatalogProduct, type SubmittedOrder, type SubmittedOrderItem } from "./ordersLogic";
+import { MODIFIERS_LOAD_ERROR, activeQuantity, addToCart, decideAdd, changeCartQuantity, removeCartItem, sessionTotal, setCartItemNotes, updateCartLine, type CartItem, type CatalogCategory, type CatalogProduct, type SubmittedOrder, type SubmittedOrderItem } from "./ordersLogic";
 
 // Tela real de atendimento (substitui o modal provisório): catálogo visual, cesta local e envio
 // via submit_service_order. O MESMO componente serve Atendimento e Caixa — só troca o `variant`
@@ -446,6 +446,7 @@ export function SessionOrderScreen({
           role={activeMembership.role}
           companyId={activeMembership.companyId}
           cashSource={cashSource}
+          orderItems={orders.filter((o) => o.status === "submitted").flatMap((o) => o.items).filter((i) => activeQuantity(i) > 0).map((i) => ({ itemId: i.id, name: i.productNameSnapshot, unitCents: Math.round(i.unitPrice * 100), billable: activeQuantity(i) }))}
           onClose={() => {
             setFinanceOpen(false);
             void finance.reload();

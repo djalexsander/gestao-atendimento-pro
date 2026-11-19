@@ -1,12 +1,14 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import { formatCents } from "../../lib/money";
 import { Modal } from "../employees/Modal";
 import { OpenCashDialog } from "./CashDialogs";
 import type { CashSource } from "./cashApi";
 import { PAYMENT_METHODS, PAYMENT_METHOD_LABEL, parseDraftCents, type PaymentMethod } from "./cashLogic";
 import { createAccountFinanceController, type FinanceView, type PaymentForm } from "./accountFinanceController";
+import { SplitEditor } from "./SplitEditor";
+import type { OrderItemSource } from "./splitEditorLogic";
 import { partialPaymentsApi, type PartialPaymentsApi } from "./partialPaymentsApi";
-import { canRefundOpenPayment, paymentStatusLabel, validateClose, changeCents, type CompanyRole } from "./partialPaymentsLogic";
+import { canRefundOpenPayment, paymentStatusLabel, validateClose, changeCents, type CompanyRole, type FinancialState } from "./partialPaymentsLogic";
 
 // E9.4 — Diálogo financeiro da conta (Caixa): saldo, pagamentos parciais por várias formas, estorno de conta aberta (owner/admin) e
 // encerramento da conta quitada. Só existe com o módulo partial_payments habilitado (quem monta este diálogo confere). O saldo, as
@@ -26,6 +28,7 @@ export function AccountFinanceDialog({
   companyId,
   cashSource,
   api = partialPaymentsApi,
+  orderItems = [],
   onClose,
   onClosed,
 }: {
@@ -35,6 +38,7 @@ export function AccountFinanceDialog({
   companyId: string;
   cashSource: CashSource;
   api?: PartialPaymentsApi;
+  orderItems?: OrderItemSource[];   // itens cobráveis da conta (para dividir por produto)
   onClose: () => void;     // fechar o diálogo (a tela recarrega o estado)
   onClosed: () => void;    // conta encerrada
 }) {
@@ -43,6 +47,8 @@ export function AccountFinanceDialog({
   const [view, setView] = useState<FinanceView>(ctrl.getView());
   const [form, setForm] = useState<PaymentForm>(emptyForm());
   const [refund, setRefund] = useState({ paymentId: "", amountText: "", reason: "" });
+  const [splitPending, setSplitPending] = useState(false);   // E9.5: o editor de divisão está ocupado ou com resultado desconhecido
+  const onSplitApplied = useCallback((s: FinancialState | null) => ctrl.refresh(s), [ctrl]);
 
   useEffect(() => {
     const off = ctrl.subscribe(setView);
@@ -52,7 +58,7 @@ export function AccountFinanceDialog({
 
   const st = view.state;
   const open = st?.sessionStatus === "open";
-  const locked = view.busy || view.unknown !== null;
+  const locked = view.busy || view.unknown !== null || splitPending;
   const split = st?.split ?? null;
   const partsOpen = st?.parts.filter((p) => p.pendingCents > 0) ?? [];
 
@@ -104,20 +110,10 @@ export function AccountFinanceDialog({
           </dl>
           {st.overpaidCents > 0 && <div className="form-error">A conta recebeu {formatCents(st.overpaidCents)} a mais que o total. Estorne o excedente antes de encerrar.</div>}
 
-          {split && (
-            <section className="fin-section" aria-label="Divisão da conta">
-              <h4 className="checkout-payment-title">Divisão da conta (versão {split.version})</h4>
-              <ul className="fin-parts" data-testid="fin-parts">
-                {st.parts.map((p) => (
-                  <li key={p.partId} className="fin-part">
-                    <span>{p.label}</span>
-                    <span>{formatCents(p.paidCents)} de {formatCents(p.plannedCents)} · {p.status === "paid" ? "quitada" : p.status === "partial" ? "em andamento" : "pendente"}</span>
-                  </li>
-                ))}
-              </ul>
-              {((st.overDistributedCents ?? 0) > 0 || (st.undistributedCents ?? 0) > 0) && <div className="form-error">A divisão está desatualizada em relação ao consumo. Peça para refazer a divisão antes de receber ou encerrar.</div>}
-            </section>
+          {open && (
+            <SplitEditor api={api} sessionId={sessionId} state={st} orderItems={orderItems} disabled={view.busy || view.unknown !== null} onApplied={onSplitApplied} onPendingChange={setSplitPending} />
           )}
+          {split && ((st.overDistributedCents ?? 0) > 0 || (st.undistributedCents ?? 0) > 0) && <div className="form-error">A divisão está desatualizada em relação ao consumo. Refaça a divisão antes de receber ou encerrar.</div>}
 
           {view.notice && <div className={view.notice.kind === "error" ? "form-error" : "form-notice"} role={view.notice.kind === "error" ? "alert" : "status"} data-testid="fin-notice">{view.notice.text}</div>}
 

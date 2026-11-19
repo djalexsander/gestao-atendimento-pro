@@ -9,6 +9,7 @@ import {
   toRegisterPaymentArgs,
   toReplaceSplitArgs,
 } from "./partialPaymentsLogic";
+import { parseSplitHistory, type SplitHistory } from "./splitEditorLogic";
 import type { FinancialState, MovementRow, PaymentInput, PaymentOverview, RpcError, SessionPaymentRow, SplitMode, SplitPartInput } from "./partialPaymentsLogic";
 
 // E9.2 — Camada de dados do estado financeiro da conta (somente RPCs; nenhuma tela usa isto ainda). O recurso é controlado POR EMPRESA
@@ -62,7 +63,7 @@ export function createPartialPaymentsApi(rpc: Rpc, readMovements?: MovementsRead
     listPaymentOverview: (companyId: string) =>
       call<PaymentOverview>("list_session_payment_overview", { p_company_id: companyId }, LOAD_ERROR, (d) => parsePaymentOverview(d)),
     getSplitHistory: (sessionId: string) =>
-      call("get_session_split_history", { p_service_session_id: sessionId }, LOAD_ERROR, (d) => d),
+      call<SplitHistory>("get_session_split_history", { p_service_session_id: sessionId }, LOAD_ERROR, (d) => parseSplitHistory(d)),
     listSessionPayments: async (sessionId: string): Promise<Outcome<SessionPaymentRow[]>> => {
       if (!readMovements) return { ok: false, error: { code: null, message: null }, message: LOAD_ERROR };
       try {

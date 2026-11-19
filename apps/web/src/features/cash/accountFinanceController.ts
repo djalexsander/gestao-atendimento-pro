@@ -198,6 +198,8 @@ export function createAccountFinanceController(deps: ControllerDeps) {
     getView: () => view,
     subscribe(l: (v: FinanceView) => void) { listeners.add(l); return () => { listeners.delete(l); }; },
     load,
+    // E9.5: depois de salvar a divisão, adota o estado devolvido pela RPC (ou recarrega do servidor).
+    refresh: (state?: FinancialState | null) => adopt(state),
     registerPayment: guarded(runPayment),
     refund: guarded(runRefund),
     close: guarded(runClose),
