@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
 import { Link } from "react-router-dom";
 import { useAuth } from "../../app/useAuth";
 import { formatCents } from "../../lib/money";
-import { Kpi, Line, SalesChart } from "../financial/FinancialOverview";
+import { Kpi, Line, PartialBlocks, SalesChart } from "../financial/FinancialOverview";
+import { canViewPartialIndicators } from "../financial/partialIndicatorsLogic";
 import {
   comparisonLabel,
   comparisonPeriod,
@@ -68,8 +69,9 @@ function Skeleton() {
   );
 }
 
-function Content({ model, versus, hasComparison, onRetry }: { model: DashboardModel; versus: string; hasComparison: boolean; onRetry: () => void }) {
+function Content({ model, versus, hasComparison, onRetry, role }: { model: DashboardModel; versus: string; hasComparison: boolean; onRetry: () => void; role: string | null }) {
   const ov = model.overview;
+  const partial = ov.ok && canViewPartialIndicators(role) ? ov.data.partial : null;
   return (
     <>
       {model.allEmpty && (
@@ -152,6 +154,8 @@ function Content({ model, versus, hasComparison, onRetry }: { model: DashboardMo
         </Card>
 
       </div>
+
+      {partial && <PartialBlocks partial={partial} />}
 
       <div className="dash-grid dash-grid-3">
         <Card title="Atendimentos">
@@ -435,7 +439,7 @@ export function DashboardPage({ source = supabaseDashboardSource }: { source?: D
       {!model && <Skeleton />}
       {model && (
         <div className={loading ? "fin-content fin-loading" : "fin-content"} aria-busy={loading}>
-          <Content model={model} versus={versus} hasComparison={hasComparison} onRetry={refresh} />
+          <Content model={model} versus={versus} hasComparison={hasComparison} onRetry={refresh} role={role} />
         </div>
       )}
     </div>

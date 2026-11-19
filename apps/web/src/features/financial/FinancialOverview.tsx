@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { useAuth } from "../../app/useAuth";
 import { formatCents } from "../../lib/money";
+import { canViewPartialIndicators, PARTIAL_LABELS, PARTIAL_NOTES, partialLines, type PartialIndicators } from "./partialIndicatorsLogic";
 import { formatDateBR, periodLabel, todayInSaoPaulo, type ReportPeriod } from "../reports/reportsLogic";
 import { supabaseFinancialOverviewSource, type FinancialOverviewSource } from "./financialOverviewApi";
 import {
@@ -137,8 +138,31 @@ export function SalesChart({ model }: { model: FinancialOverviewModel }) {
   );
 }
 
-function Content({ model, versus, hasComparison }: { model: FinancialOverviewModel; versus: string; hasComparison: boolean }) {
+// E9.6: blocos dos pagamentos parciais (só módulo ligado + owner/admin). Cada bloco é SEPARADO; nunca se soma um com outro.
+export function PartialBlocks({ partial }: { partial: PartialIndicators }) {
+  return (
+    <section className="fin-card" data-testid="partial-blocks">
+      <h3>Contas abertas e correções</h3>
+      <ul className="fin-lines">
+        {partialLines(partial).map((l) => (
+          <Line key={l.key} label={l.label} value={formatCents(l.cents)} hint={l.hint} />
+        ))}
+      </ul>
+      <p className="field-hint">{PARTIAL_NOTES.openAccounts}</p>
+      <p className="field-hint">{PARTIAL_NOTES.corrections}</p>
+      <p className="field-hint">{PARTIAL_NOTES.devolutions}</p>
+      {!partial.consistent && (
+        <p className="form-error" role="alert" data-testid="partial-inconsistent">
+          Os números dos pagamentos parciais não fecharam ({partial.problems.join("; ")}). Atualize a página; se continuar, avise o suporte.
+        </p>
+      )}
+    </section>
+  );
+}
+
+function Content({ model, versus, hasComparison, showPartial }: { model: FinancialOverviewModel; versus: string; hasComparison: boolean; showPartial: boolean }) {
   const { sales, received, refunds, netReceived, cash } = model;
+  const partial = showPartial ? model.partial : null;
   const cmp = (d: Delta | null) => (hasComparison ? d : undefined);
   return (
     <>
@@ -169,7 +193,7 @@ function Content({ model, versus, hasComparison }: { model: FinancialOverviewMod
       <dl className="fin-kpis">
         <Kpi label="Vendas" value={formatCents(sales.effectiveCents)} delta={cmp(sales.delta)} versus={versus} strong />
         <Kpi label="Recebido" value={formatCents(received.totalCents)} delta={cmp(received.delta)} versus={versus} />
-        <Kpi label="Estornos" value={formatCents(refunds.totalCents)} versus={versus} />
+        <Kpi label={partial ? "Devoluções" : "Estornos"} value={formatCents(refunds.totalCents)} versus={versus} />
         <Kpi label="Líquido recebido" value={formatCents(netReceived.cents)} delta={cmp(netReceived.delta)} versus={versus} strong />
       </dl>
 
@@ -196,7 +220,7 @@ function Content({ model, versus, hasComparison }: { model: FinancialOverviewMod
         </section>
 
         <section className="fin-card">
-          <h3>Recebimentos</h3>
+          <h3>{partial ? PARTIAL_LABELS.methodsTitle : "Recebimentos"}</h3>
           <ul className="fin-methods">
             {received.methods.map((m) => (
               <li key={m.method} className={m.paidCents === 0 ? "fin-method fin-method-zero" : "fin-method"}>
@@ -207,6 +231,7 @@ function Content({ model, versus, hasComparison }: { model: FinancialOverviewMod
                     <small className="muted"> {pct(m.sharePct)}</small>
                   </span>
                 </div>
+                {partial && (() => { const row = partial.methods.find((x) => x.method === m.method); return row && (row.correctionsCents > 0 || row.refundedCents > 0) ? <small className="muted">Correções {formatCents(row.correctionsCents)} · Devoluções {formatCents(row.refundedCents)} · Líquido {formatCents(row.netCents)}</small> : null; })()}
                 <div className="fin-method-track">
                   <div className="fin-method-fill" style={{ width: `${m.sharePct ?? 0}%` }} />
                 </div>
@@ -217,6 +242,8 @@ function Content({ model, versus, hasComparison }: { model: FinancialOverviewMod
       </div>
 
       <SalesChart model={model} />
+
+      {partial && <PartialBlocks partial={partial} />}
 
       <div className="fin-grid">
         <section className="fin-card">
@@ -239,6 +266,8 @@ function Content({ model, versus, hasComparison }: { model: FinancialOverviewMod
             <Line label="+ Suprimentos" value={formatCents(cash.supplyCents)} />
             <Line label="- Sangrias" value={formatCents(cash.withdrawalCents)} />
             <Line label="- Estornos em dinheiro" value={formatCents(cash.cashRefundCents)} />
+            {partial && cash.correctionRefundCents !== null && <Line label={`· ${PARTIAL_LABELS.cashCorrections}`} value={formatCents(cash.correctionRefundCents)} />}
+            {partial && cash.correctionRefundCents !== null && <p className="field-hint">{PARTIAL_NOTES.cashCorrections}</p>}
             <Line label="Saldo físico esperado" value={formatCents(cash.expectedCents)} strong />
           </ul>
           <ul className="fin-lines fin-lines-sub">
@@ -408,7 +437,7 @@ export function FinancialOverview({ source = supabaseFinancialOverviewSource }: 
       {!model && !error && <Skeleton />}
       {model && (
         <div className={loading ? "fin-content fin-loading" : "fin-content"} aria-busy={loading}>
-          <Content model={model} versus={versus} hasComparison={hasComparison} />
+          <Content model={model} versus={versus} hasComparison={hasComparison} showPartial={canViewPartialIndicators(activeMembership?.role)} />
         </div>
       )}
     </div>

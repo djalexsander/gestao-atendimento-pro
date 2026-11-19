@@ -30,6 +30,7 @@ export interface ReportMethod {
   paid: number;
   refunded: number;
   net: number;
+  corrections?: number; // E9.6: só com o módulo de pagamentos parciais ligado
 }
 
 export interface ReportProduct {

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "../../app/useAuth";
 import { formatReais } from "../../lib/money";
+import { canViewPartialIndicators, PARTIAL_LABELS, PARTIAL_NOTES, parsePartialIndicators, partialLines } from "../financial/partialIndicatorsLogic";
 import { buildReportPdf, reportFileName } from "./reportPdf";
 import { supabaseReportsSource, type ReportFilterOption, type ReportsSource } from "./reportsApi";
 import {
@@ -53,6 +54,7 @@ export function ReportsPage({ source = supabaseReportsSource }: { source?: Repor
   const [categories, setCategories] = useState<ReportFilterOption[]>([]);
   const [sectors, setSectors] = useState<ReportFilterOption[]>([]);
   const [data, setData] = useState<ReportData | null>(null);
+  const partialInd = data && canViewPartialIndicators(activeMembership?.role) ? parsePartialIndicators(data) : null; // E9.6: null = módulo desligado ou papel sem acesso
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
@@ -184,7 +186,8 @@ export function ReportsPage({ source = supabaseReportsSource }: { source?: Repor
         <>
           <dl className="cash-summary report-cards">
             <Card label="Total vendido" value={f(data.sales.gross)} strong />
-            <Card label="Estornado" value={f(data.sales.refunded)} />
+            <Card label={partialInd ? "Devoluções" : "Estornado"} value={f(data.sales.refunded)} />
+            {partialInd && <Card label={PARTIAL_LABELS.corrections} value={f(partialInd.salesCorrectionsCents / 100)} />}
             <Card label="Líquido" value={f(data.sales.net)} strong />
             <Card label="Contas fechadas" value={String(data.sales.sessions)} />
             <Card label="Ticket médio" value={data.sales.ticket === null ? "—" : f(data.sales.ticket)} />
@@ -201,17 +204,33 @@ export function ReportsPage({ source = supabaseReportsSource }: { source?: Repor
 
           {tab === "sales" && (
             <section>
-              <h3>Formas de pagamento</h3>
+              <h3>{partialInd ? PARTIAL_LABELS.methodsTitle : "Formas de pagamento"}</h3>
               <ul className="report-list">
                 {data.methods.map((m) => (
                   <li key={m.method} className="report-row">
                     <strong>{METHOD_LABEL[m.method]}</strong>
                     <span>Recebido: {f(m.paid)}</span>
-                    <span>Estornado: {f(m.refunded)}</span>
+                    {partialInd && <span>Correções: {f(m.corrections ?? 0)}</span>}
+                    <span>{partialInd ? "Devoluções" : "Estornado"}: {f(m.refunded)}</span>
                     <span>Líquido: {f(m.net)}</span>
                   </li>
                 ))}
               </ul>
+              {partialInd && (
+                <>
+                  <h3>Contas abertas e correções</h3>
+                  <ul className="report-list" data-testid="partial-report-lines">
+                    {partialLines(partialInd).map((l) => (
+                      <li key={l.key} className="report-row">
+                        <strong>{l.label}</strong>
+                        <span>{f(l.cents / 100)} ({l.hint})</span>
+                      </li>
+                    ))}
+                  </ul>
+                  <p className="field-hint">{PARTIAL_NOTES.openAccounts} {PARTIAL_NOTES.corrections} {PARTIAL_NOTES.devolutions}</p>
+                  {!partialInd.consistent && <p className="form-error" role="alert">Os números dos pagamentos parciais não fecharam: {partialInd.problems.join("; ")}.</p>}
+                </>
+              )}
             </section>
           )}
 
@@ -302,7 +321,7 @@ export function ReportsPage({ source = supabaseReportsSource }: { source?: Repor
             <section>
               <dl className="cash-summary">
                 <Card label="Estornos" value={String(data.refunds.count)} />
-                <Card label="Total estornado" value={f(data.refunds.total)} />
+                <Card label={partialInd ? "Total devolvido" : "Total estornado"} value={f(data.refunds.total)} />
               </dl>
               {data.refunds.list.length === 0 ? (
                 <p className="field-hint">Nenhum estorno no período.</p>

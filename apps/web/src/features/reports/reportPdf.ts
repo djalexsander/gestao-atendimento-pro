@@ -1,4 +1,5 @@
 import { formatReais } from "../../lib/money";
+import { parsePartialIndicators, partialLines } from "../financial/partialIndicatorsLogic";
 import {
   cashDifferenceText,
   METHOD_LABEL,
@@ -79,11 +80,17 @@ export async function buildReportPdf(data: ReportData, companyName: string): Pro
     ],
   );
 
-  table(
-    "Formas de pagamento",
-    ["Forma", "Recebido", "Estornado", "Líquido"],
-    data.methods.map((m) => [METHOD_LABEL[m.method], brl(m.paid), brl(m.refunded), brl(m.net)]),
-  );
+  const partial = parsePartialIndicators(data);
+  if (partial) {
+    table("Formas de pagamento (vendas fechadas)", ["Forma", "Recebido", "Correções", "Devoluções", "Líquido"], partial.methods.map((m) => [m.label, brl(m.paidCents / 100), brl(m.correctionsCents / 100), brl(m.refundedCents / 100), brl(m.netCents / 100)]));
+    table("Contas abertas e correções", ["Indicador", "Valor"], partialLines(partial).map((l) => [`${l.label} (${l.hint})`, brl(l.cents / 100)]));
+  } else {
+    table(
+      "Formas de pagamento",
+      ["Forma", "Recebido", "Estornado", "Líquido"],
+      data.methods.map((m) => [METHOD_LABEL[m.method], brl(m.paid), brl(m.refunded), brl(m.net)]),
+    );
+  }
 
   table(
     "Produtos vendidos",

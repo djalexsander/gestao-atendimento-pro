@@ -8,6 +8,7 @@ import {
   type ReportData,
   type ReportPeriod,
 } from "../reports/reportsLogic";
+import { parsePartialIndicators, type PartialIndicators } from "./partialIndicatorsLogic";
 
 // Regras PURAS da Visão financeira (sem React, sem Supabase). Os números de venda, recebimento,
 // estorno, cancelamento e produtos vêm prontos do servidor (report_period, a mesma fonte dos
@@ -210,9 +211,10 @@ export interface CashOverview {
   surplusCents: number; // sobras (positivo)
   openCashes: OpenCashView[];
   hasMovement: boolean;
+  correctionRefundCents: number | null; // E9.6: parte em dinheiro das correções de pagamento (DENTRO de cashRefundCents); null = módulo desligado
 }
 
-export function buildCashOverview(sessions: CashSessionRaw[], period: ReportPeriod): CashOverview {
+export function buildCashOverview(sessions: CashSessionRaw[], period: ReportPeriod, correctionRefundCents: number | null = null): CashOverview {
   const { start, end } = periodBoundsIso(period);
   const inPeriod = sessions.filter((s) => s.openedAt >= start && s.openedAt < end);
   const sum = (pick: (s: CashSessionRaw) => number) => inPeriod.reduce((acc, s) => acc + pick(s), 0);
@@ -257,6 +259,7 @@ export function buildCashOverview(sessions: CashSessionRaw[], period: ReportPeri
     surplusCents,
     openCashes,
     hasMovement: inPeriod.length > 0,
+    correctionRefundCents,
   };
 }
 
@@ -354,6 +357,7 @@ export interface FinancialOverviewModel {
   series: SalesSeries;
   seriesPartial: boolean;
   empty: boolean;
+  partial: PartialIndicators | null; // E9.6: null = módulo de pagamentos parciais desligado (visão legada inalterada)
 }
 
 const sumReceived = (r: ReportData) => r.methods.reduce((acc, m) => acc + toCents(m.paid), 0);
@@ -367,7 +371,9 @@ export function buildOverview(raw: FinancialRaw, period: ReportPeriod): Financia
 
   const receivedCents = sumReceived(report);
   const refundTotalCents = toCents(report.refunds.total);
-  const netCents = receivedCents - refundTotalCents;
+  // Módulo ligado: recebido = só vendas FECHADAS no período e o líquido desconta correções E devoluções (net por forma); desligado: legado.
+  const partial = parsePartialIndicators(report);
+  const netCents = partial ? partial.methodsNetCents : receivedCents - refundTotalCents;
 
   const methods: MethodView[] = report.methods.map((m) => ({
     method: m.method,
@@ -379,7 +385,8 @@ export function buildOverview(raw: FinancialRaw, period: ReportPeriod): Financia
 
   const prevEffective = previous ? toCents(previous.sales.gross) : null;
   const prevReceived = previous ? sumReceived(previous) : null;
-  const prevNet = previous && prevReceived !== null ? prevReceived - toCents(previous.refunds.total) : null;
+  const prevPartial = previous ? parsePartialIndicators(previous) : null;
+  const prevNet = previous && prevReceived !== null ? (prevPartial ? prevPartial.methodsNetCents : prevReceived - toCents(previous.refunds.total)) : null;
 
   // Ticket médio = vendido / contas fechadas COM venda (conta zerada/teste fica fora). Só é confiável
   // se a lista de contas não foi truncada.
@@ -388,7 +395,7 @@ export function buildOverview(raw: FinancialRaw, period: ReportPeriod): Financia
   const ticketCents =
     raw.sessionsTruncated || ticketBasis === 0 ? null : Math.round(withSale.reduce((acc, s) => acc + toCents(s.total), 0) / ticketBasis);
 
-  const cash = buildCashOverview(raw.cashSessions, period);
+  const cash = buildCashOverview(raw.cashSessions, period, partial ? partial.cashCorrectionRefundCents : null);
 
   const model: FinancialOverviewModel = {
     period,
@@ -418,8 +425,10 @@ export function buildOverview(raw: FinancialRaw, period: ReportPeriod): Financia
     series: buildSalesSeries(raw.closedSessions, period),
     seriesPartial: raw.sessionsTruncated,
     empty: false,
+    partial,
   };
   model.empty =
-    effectiveCents === 0 && receivedCents === 0 && refundTotalCents === 0 && cancelledCents === 0 && report.sales.sessions === 0 && !cash.hasMovement;
+    effectiveCents === 0 && receivedCents === 0 && refundTotalCents === 0 && cancelledCents === 0 && report.sales.sessions === 0 && !cash.hasMovement &&
+    (!partial || (partial.openAccounts.receivedCents === 0 && partial.openAccounts.correctionsCents === 0 && partial.refundCorrections.totalCents === 0 && partial.salesCorrectionsCents === 0));
   return model;
 }
