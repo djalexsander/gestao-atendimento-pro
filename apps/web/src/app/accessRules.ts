@@ -5,7 +5,7 @@ import type { CompanyRole } from "../lib/types";
 // guards em routeGuards.tsx só as aplicam. A proteção dos DADOS é do backend (RLS); estas
 // regras só decidem para onde a tela vai.
 
-export type OperationalArea = "atendimento" | "caixa" | "producao" | "abertos" | "pedidos" | "etiquetas" | "delivery" | "whatsapp";
+export type OperationalArea = "atendimento" | "balcao" | "caixa" | "producao" | "abertos" | "pedidos" | "etiquetas" | "delivery" | "whatsapp";
 
 export type GuardedRoute =
   | "guest" // /login, /cadastro, /funcionario: só para quem NÃO tem sessão
@@ -17,6 +17,7 @@ export type GuardedRoute =
 
 export const OPERATIONAL_PATH: Record<OperationalArea, string> = {
   atendimento: "/operacional/atendimento",
+  balcao: "/operacional/balcao",
   caixa: "/operacional/caixa",
   producao: "/operacional/producao",
   abertos: "/operacional/atendimentos-abertos",
@@ -24,6 +25,15 @@ export const OPERATIONAL_PATH: Record<OperationalArea, string> = {
   etiquetas: "/operacional/etiquetas",
   delivery: "/operacional/delivery",
   whatsapp: "/operacional/whatsapp",
+};
+// Variante das telas compartilhadas de atendimento (painel de comandas/mesas e tela de pedidos). Cada uma aponta para a
+// SUA área: é isso que mantém Atendimento, Caixa e Balcão cada um na própria rota (sem redirecionar para outra área).
+// Só "cashier" tem as ênfases e os recursos financeiros do Caixa; "counter" (Balcão) e "attendant" não têm nenhum.
+export type ServiceVariant = "attendant" | "cashier" | "counter";
+export const VARIANT_AREA: Record<ServiceVariant, OperationalArea> = {
+  attendant: "atendimento",
+  cashier: "caixa",
+  counter: "balcao",
 };
 export const DISABLED_ACCESS_PATH = "/acesso-desativado";
 export const EMPLOYEE_LOGIN_PATH = "/funcionario";
@@ -51,6 +61,9 @@ export function operationalAreaOf(role: CompanyRole): OperationalArea | null {
 // segue só do attendant. A landing de cada papel (operationalAreaOf) não muda.
 const AREA_ROLES: Record<OperationalArea, readonly CompanyRole[]> = {
   atendimento: ["attendant"],
+  // Balcão (atendimento e lançamento de pedidos, sem financeiro): rota NOVA e ainda sem links, menu nem landing
+  // (Etapa A da separação Caixa/Balcão). Quem atende abre; o banco confere de novo em cada RPC.
+  balcao: ["attendant", "cashier", "owner", "admin"],
   caixa: ["cashier", "owner", "admin"],
   // Produção / Cozinha (KDS): o papel production e, pelo menu Operacional do Administrativo, owner/admin.
   producao: ["production", "owner", "admin"],
@@ -106,7 +119,7 @@ export function landingPath(s: AuthSnapshot): string {
 // Quem chega sem sessão numa rota operacional (ou na tela de acesso desativado) volta para
 // o login do funcionário; nas demais, para o login de proprietário/administrador.
 function signedOutPath(route: GuardedRoute): string {
-  return route === "atendimento" || route === "caixa" || route === "producao" || route === "abertos" || route === "pedidos" || route === "etiquetas" || route === "delivery" || route === "whatsapp" || route === "disabled"
+  return route === "atendimento" || route === "balcao" || route === "caixa" || route === "producao" || route === "abertos" || route === "pedidos" || route === "etiquetas" || route === "delivery" || route === "whatsapp" || route === "disabled"
     ? EMPLOYEE_LOGIN_PATH
     : ADMIN_LOGIN_PATH;
 }
@@ -131,6 +144,7 @@ export function decide(route: GuardedRoute, s: AuthSnapshot): Decision {
     case "app":
       return s.role === "owner" || s.role === "admin" ? RENDER : redirect(landing);
     case "atendimento":
+    case "balcao":
     case "caixa":
     case "producao":
     case "abertos":
@@ -148,6 +162,7 @@ export function decide(route: GuardedRoute, s: AuthSnapshot): Decision {
 
 const OPERATIONAL_SEGMENT_AREA: Record<string, OperationalArea> = {
   atendimento: "atendimento",
+  balcao: "balcao",
   caixa: "caixa",
   producao: "producao",
   "atendimentos-abertos": "abertos",

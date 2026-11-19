@@ -41,6 +41,8 @@ import {
   OperationalOrdersPage,
   OperationalProductionPage,
   OperationalCashierPage,
+  OperationalCounterOrderPage,
+  OperationalCounterPage,
   OperationalServiceOrderPage,
   OperationalServicePage,
 } from "./pages/OperationalPages";
@@ -131,6 +133,22 @@ function App() {
         element={
           <OperationalRoute area="atendimento">
             <OperationalServicePage />
+          </OperationalRoute>
+        }
+      />
+      <Route
+        path="/operacional/balcao"
+        element={
+          <OperationalRoute area="balcao">
+            <OperationalCounterPage />
+          </OperationalRoute>
+        }
+      />
+      <Route
+        path="/operacional/balcao/:sessionId"
+        element={
+          <OperationalRoute area="balcao">
+            <OperationalCounterOrderPage />
           </OperationalRoute>
         }
       />

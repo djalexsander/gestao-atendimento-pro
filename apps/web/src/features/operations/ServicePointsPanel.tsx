@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { OPERATIONAL_PATH } from "../../app/accessRules";
+import { OPERATIONAL_PATH, VARIANT_AREA, type ServiceVariant } from "../../app/accessRules";
 import { useAuth } from "../../app/useAuth";
 import { supabaseServicePanelSource, type ServicePanelSource } from "./api";
 import { createCoalescedRunner } from "../orders/coalesce";
@@ -148,7 +148,7 @@ export function ServicePointsPanel({
   source = supabaseServicePanelSource,
   cashSource = supabaseCashSource,
 }: {
-  variant: "attendant" | "cashier";
+  variant: ServiceVariant;
   source?: ServicePanelSource;
   cashSource?: CashSource;
 }) {
@@ -156,7 +156,7 @@ export function ServicePointsPanel({
   const { activeMembership, profile } = useAuth();
   const companyId = activeMembership?.companyId ?? null;
   const myName = profile?.full_name ?? null;
-  const area = variant === "attendant" ? "atendimento" : "caixa";
+  const area = VARIANT_AREA[variant];
 
   const [data, setData] = useState<ServicePanelData | null>(null);
   const [loading, setLoading] = useState(true);

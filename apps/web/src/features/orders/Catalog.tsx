@@ -1,4 +1,5 @@
 import { useMemo, useState, type FormEvent } from "react";
+import type { ServiceVariant } from "../../app/accessRules";
 import { formatReais } from "../../lib/money";
 import { CategoryBar, useCategorySelection, useScrollToListStart } from "../catalog/CategoryBar";
 import { barCategories } from "../catalog/categoryBarLogic";
@@ -25,7 +26,7 @@ export function Catalog({
   categories: CatalogCategory[];
   products: CatalogProduct[];
   imageUrls: Map<string, string>;
-  variant: "attendant" | "cashier";
+  variant: ServiceVariant;
   onAdd: (product: CatalogProduct) => void;
 }) {
   const [query, setQuery] = useState("");

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { orderTitle } from "../../lib/orderNumber";
 import { useNavigate } from "react-router-dom";
-import { OPERATIONAL_PATH } from "../../app/accessRules";
+import { OPERATIONAL_PATH, VARIANT_AREA, type ServiceVariant } from "../../app/accessRules";
 import { useAuth } from "../../app/useAuth";
 import { supabaseCashSource, type CashSource } from "../cash/cashApi";
 import { CheckoutDialog, OpenCashDialog } from "../cash/CashDialogs";
@@ -34,13 +34,13 @@ export function SessionOrderScreen({
   documentsSource = supabaseDocumentsSource,
 }: {
   sessionId: string;
-  variant: "attendant" | "cashier";
+  variant: ServiceVariant;
   source?: OrdersSource;
   cashSource?: CashSource;
   documentsSource?: DocumentsSource;
 }) {
   const navigate = useNavigate();
-  const backPath = OPERATIONAL_PATH[variant === "attendant" ? "atendimento" : "caixa"];
+  const backPath = OPERATIONAL_PATH[VARIANT_AREA[variant]];
 
   const [header, setHeader] = useState<SessionHeader | null>(null);
   const [categories, setCategories] = useState<CatalogCategory[]>([]);

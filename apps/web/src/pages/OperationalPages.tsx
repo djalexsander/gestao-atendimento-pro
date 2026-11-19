@@ -197,6 +197,26 @@ export function OperationalServicePage({ source }: { source?: ServicePanelSource
 }
 
 // Produção / Cozinha (KDS): pendentes, em preparo e prontos por setor, em tempo real.
+// Balcão (Etapa B da separação Caixa/Balcão): atendimento e lançamento de pedidos, SEM financeiro. Reaproveita o MESMO
+// painel e a MESMA tela de pedidos do Atendimento/Caixa (variant="counter": rota própria, nenhum recurso do Caixa). Abrir uma
+// comanda daqui leva a /operacional/balcao/:sessionId, aberto a quem atende (attendant, cashier, owner, admin).
+export function OperationalCounterPage({ source }: { source?: ServicePanelSource }) {
+  return (
+    <OperationalShell title="Balcão">
+      <ServicePointsPanel variant="counter" source={source} />
+    </OperationalShell>
+  );
+}
+
+export function OperationalCounterOrderPage({ source }: { source?: OrdersSource }) {
+  const { sessionId } = useParams<{ sessionId: string }>();
+  return (
+    <OperationalShell title="Balcão">
+      {sessionId && <SessionOrderScreen sessionId={sessionId} variant="counter" source={source} />}
+    </OperationalShell>
+  );
+}
+
 export function OperationalProductionPage({ source }: { source?: ProductionSource }) {
   return (
     <OperationalShell title="Produção">
