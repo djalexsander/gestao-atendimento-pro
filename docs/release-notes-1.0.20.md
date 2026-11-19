@@ -1,4 +1,4 @@
-# Gestão Atendimento Pro 1.0.20 (rascunho — não publicado)
+# Gestão Atendimento Pro 1.0.20
 
 ## Novidades
 
@@ -10,5 +10,5 @@
 ## Observações
 
 - O recurso vem **desligado** para todas as empresas; é ativado empresa a empresa pelo suporte. Com ele desligado, nada muda: o recebimento e os relatórios seguem como na 1.0.19.
-- Balcão, delivery, retirada e WhatsApp não foram alterados por esta versão.
+- Delivery, retirada e WhatsApp não foram alterados por esta versão. O Balcão ganha uma rota própria (sem recursos financeiros), ainda sem atalho no menu.
 - Requer a atualização do banco antes da publicação do aplicativo.
