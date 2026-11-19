@@ -27,6 +27,8 @@ import {
   type DeliveryReceivable,
 } from "./deliveryReceivables";
 import { formatReais } from "../../lib/money";
+import { paymentChipClass, usePaymentOverview } from "../cash/usePaymentStatus";
+import type { PaymentChipView } from "../cash/paymentStatusView";
 import {
   countByStatus,
   filterPoints,
@@ -94,13 +96,14 @@ function DeliveryCard({ item, onSelect }: { item: DeliveryReceivable; onSelect: 
   );
 }
 
-function PointCard({ point, showCustomer, onSelect }: { point: ServicePoint; showCustomer: boolean; onSelect: (point: ServicePoint) => void }) {
+function PointCard({ point, showCustomer, onSelect, payment = null }: { point: ServicePoint; showCustomer: boolean; onSelect: (point: ServicePoint) => void; payment?: PaymentChipView | null }) {
   const status = statusOf(point);
   const session = point.open_session;
   const label = [
     point.display_name,
     STATUS_LABEL[status],
     session && showCustomer ? `cliente ${session.customer_name ?? "sem nome"}` : "",
+    session && payment ? `pagamento: ${payment.aria}` : "",
   ]
     .filter(Boolean)
     .join(", ");
@@ -123,6 +126,14 @@ function PointCard({ point, showCustomer, onSelect }: { point: ServicePoint; sho
           <>
             {showCustomer && <span className="op-card-line">Cliente: {session.customer_name ?? "sem nome"}</span>}
             <span className="op-card-line op-card-muted">{formatOpenedShort(session.opened_at)}</span>
+            {payment && (
+              <>
+                <span className="op-card-line">
+                  <span className={paymentChipClass(payment)} data-testid="pay-chip">{payment.label}</span>
+                </span>
+                {payment.detail && <span className="op-card-line op-card-muted" data-testid="pay-detail">{payment.detail}</span>}
+              </>
+            )}
           </>
         )}
       </button>
@@ -237,6 +248,9 @@ export function ServicePointsPanel({
 
   const points = useMemo(() => data?.points ?? [], [data]);
   const mode = data?.service_mode ?? "command";
+  // E9.3: status de pagamento por conta aberta. Só com o módulo partial_payments habilitado para a empresa (padrão: desligado = sem
+  // chamada ao banco e sem chip). Atendente: só status; owner/admin/cashier: status e valores. Somente leitura.
+  const pay = usePaymentOverview(companyId, activeMembership?.role ?? null, data);
 
   // Preferência "ao abrir o painel": só no modo Comandas e mesas, uma vez, sem remover nenhuma opção (o filtro continua trocável).
   useEffect(() => {
@@ -361,7 +375,7 @@ export function ServicePointsPanel({
     return (
       <ul className={prefs.compactCards ? "op-grid" : "op-grid op-grid-comfy"} role="list">
         {shown.map((point) => (
-          <PointCard key={point.id} point={point} showCustomer={prefs.showCustomerOnCard} onSelect={openPoint} />
+          <PointCard key={point.id} point={point} showCustomer={prefs.showCustomerOnCard} onSelect={openPoint} payment={pay.chipFor(point.open_session?.id)} />
         ))}
       </ul>
     );

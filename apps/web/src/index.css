@@ -5748,3 +5748,6 @@ button {
   .mc-actions button, .mc-actions-row button { width: 100%; }
   .mc-error button { width: 100%; }
 }
+
+/* E9.3: status de pagamento no cabeçalho da conta (somente exibição) */
+.order-header-pay { margin-top: 4px; font-size: 14px; }

@@ -5,6 +5,7 @@ import { OPERATIONAL_PATH } from "../../app/accessRules";
 import { useAuth } from "../../app/useAuth";
 import { supabaseCashSource, type CashSource } from "../cash/cashApi";
 import { CheckoutDialog, OpenCashDialog } from "../cash/CashDialogs";
+import { paymentChipClass, useSessionPaymentChip } from "../cash/usePaymentStatus";
 import { Modal } from "../employees/Modal";
 import { supabaseDocumentsSource, type DocumentsSource } from "../printing/documentsApi";
 import { PrintDocumentButton } from "../printing/PrintDocumentButton";
@@ -186,6 +187,9 @@ export function SessionOrderScreen({
 
   const canOrder = header?.status === "open";
   const isDelivery = header?.kind === "delivery";
+  // E9.3: status de pagamento da conta (comanda/mesa aberta). Só com o módulo partial_payments habilitado; atendente vê só o status,
+  // owner/admin/cashier também os valores. Somente leitura; recarrega quando o histórico de pedidos muda.
+  const paymentChip = useSessionPaymentChip(sessionId, activeMembership?.role ?? null, header?.status === "open" && header.kind !== "delivery", orders);
   const leave = isDelivery ? { path: OPERATIONAL_PATH.delivery, label: "Delivery" } : { path: backPath, label: "Comandas / Mesas" };
   // Rótulo do atendimento: comanda/mesa, ou Delivery/Retirada (sem ponto).
   const sessionLabel = header ? (header.point ? `${header.point.displayName} (${header.point.code})` : orderTitle(header.fulfillment === "pickup" ? "pickup" : "delivery", header.delivery?.orderNumber ?? null)) : "";
@@ -377,6 +381,12 @@ export function SessionOrderScreen({
               ) : (
                 sessionLabel
               )}
+            </div>
+          )}
+          {paymentChip && (
+            <div className="order-header-pay" role="status" aria-label={`Pagamento: ${paymentChip.aria}`} data-testid="order-pay">
+              <span className={paymentChipClass(paymentChip)} data-testid="pay-chip">{paymentChip.label}</span>
+              {paymentChip.detail && <span className="muted" data-testid="pay-detail"> · {paymentChip.detail}</span>}
             </div>
           )}
         </div>
