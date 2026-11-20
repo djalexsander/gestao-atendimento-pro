@@ -5757,3 +5757,1106 @@ button {
 .fin-parts { list-style: none; margin: 8px 0; padding: 0; display: grid; gap: 4px; }
 .fin-part { display: flex; justify-content: space-between; gap: 8px; font-size: 14px; flex-wrap: wrap; }
 .fin-alloc { margin: 8px 0; }
+
+/* ---------------------------------------------------------------------------
+   PDV do Caixa (v1.0.20): três colunas em /operacional/caixa — contas | conta | receber. Abaixo de 1100px vira abas.
+   --------------------------------------------------------------------------- */
+.app-body-fluid {
+  max-width: none;
+}
+
+.pdv {
+  display: grid;
+  grid-template-columns: minmax(250px, 0.9fr) minmax(360px, 1.35fr) minmax(330px, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.pdv-tabs {
+  display: none;
+}
+
+.pdv-col {
+  min-width: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  max-height: calc(100vh - 170px);
+  min-height: 320px;
+  overflow: auto;
+}
+
+.pdv-col-title {
+  margin: 0 0 8px;
+  font-size: 0.95rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+
+.pdv-col-title span {
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--text-h);
+}
+
+.pdv-empty {
+  display: grid;
+  place-items: center;
+  min-height: 180px;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 16px;
+}
+
+/* esquerda: lista compacta de contas (reaproveita o painel; só muda o desenho) */
+.pdv-left .op-panel {
+  gap: 10px;
+}
+
+.pdv-left .op-grid,
+.pdv-left .op-grid-comfy {
+  grid-template-columns: 1fr;
+  gap: 8px;
+}
+
+.pdv-left .op-card {
+  min-height: 0;
+  height: auto;
+  padding: 9px 12px;
+}
+
+.pdv-left .op-search-input {
+  font-size: 1rem;
+  padding: 10px 12px;
+}
+
+.op-card-selected {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/* centro: a conta */
+.pdv-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.pdv-title {
+  margin: 0;
+  font-size: 1.2rem;
+  color: var(--text-h);
+}
+
+.pdv-head-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.pdv-items {
+  margin: 12px 0;
+  overflow: auto;
+}
+
+.pdv-items table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.pdv-items th,
+.pdv-items td {
+  padding: 6px 6px;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.pdv-items .num {
+  text-align: right;
+  white-space: nowrap;
+}
+
+.pdv-items th {
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.pdv-cancelled td {
+  text-decoration: line-through;
+  color: var(--text-muted);
+}
+
+.pdv-tag {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 0.75rem;
+  text-decoration: none;
+}
+
+.pdv-totals {
+  display: grid;
+  gap: 4px;
+  padding-top: 8px;
+  border-top: 2px solid var(--border);
+}
+
+.pdv-totals > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.pdv-total {
+  font-size: 1.25rem;
+  color: var(--text-h);
+}
+
+.pdv-center-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+  flex-wrap: wrap;
+}
+
+/* direita: recebimento inline (o mesmo formulário dos diálogos, sem moldura) */
+.pdv-inline {
+  display: block;
+}
+
+.pdv-inline .modal-actions {
+  justify-content: stretch;
+}
+
+.pdv-inline .modal-actions .btn-primary {
+  width: 100%;
+}
+
+.pdv-done {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--success);
+  border-radius: 10px;
+  background: var(--success-bg);
+  color: var(--success);
+}
+
+
+.pdv-only-narrow {
+  display: none;
+}
+
+@media (max-width: 1099px) {
+  .pdv {
+    grid-template-columns: 1fr;
+  }
+  .pdv-tabs {
+    display: flex;
+    gap: 6px;
+  }
+  .pdv-tab {
+    flex: 1;
+    padding: 10px 8px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+  }
+  .pdv-tab-on {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
+  .pdv-col {
+    display: none;
+    max-height: none;
+  }
+  .pdv[data-tab="list"] .pdv-left,
+  .pdv[data-tab="account"] .pdv-center,
+  .pdv[data-tab="pay"] .pdv-right {
+    display: block;
+  }
+  .pdv-only-narrow {
+    display: inline-flex;
+  }
+}
+
+/* ---- PDV v1.0.20 (ajustes finais): faixa do caixa, abas do centro, botões de forma de pagamento, compactação ---- */
+.cash-control-strip {
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  gap: 14px;
+}
+.cash-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border: 1px solid var(--success);
+  border-radius: 999px;
+  color: var(--success);
+}
+.cash-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+}
+.cash-fig strong {
+  margin-left: 4px;
+  color: var(--text-h);
+}
+.cash-spacer {
+  flex: 1;
+}
+.pay-method-key,
+.pdv .print-key-hint {
+  display: inline-block;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  line-height: 1.5;
+  color: var(--text-muted);
+  background: var(--surface-2, transparent);
+}
+.pdv .print-key-hint {
+  font-size: 0.7rem;
+}
+.pdv-subtabs {
+  display: flex;
+  gap: 6px;
+  margin: 10px 0 0;
+  border-bottom: 1px solid var(--border);
+}
+.pdv-subtab {
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  border-bottom: 0;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pdv-subtab-on {
+  background: var(--surface);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.pdv-split-host {
+  margin-top: 8px;
+}
+.pdv-split-host[hidden],
+.pdv-conf[hidden] {
+  display: none;
+}
+.pay-methods-title {
+  margin: 8px 0 6px;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+}
+.pay-methods {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 6px;
+}
+.pay-method {
+  display: grid;
+  gap: 4px;
+  justify-items: center;
+  padding: 8px 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.pay-method:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.pay-method-on {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.pay-method-on .pay-method-key {
+  color: #fff;
+  border-color: rgba(255, 255, 255, 0.6);
+}
+.pay-methods-hint {
+  margin: 8px 0;
+}
+.pdv-inline .checkout-summary {
+  gap: 6px;
+  margin: 6px 0;
+}
+.pdv-inline .field {
+  margin-bottom: 8px;
+}
+.pdv-subtab-locked {
+  opacity: 0.65;
+}
+.pdv-split-locked {
+  margin-top: 10px;
+}
+
+/* botões de envio do PDV: texto à esquerda, indicador Enter à direita, legível habilitado ou desabilitado */
+.pdv-inline .modal-actions .btn-primary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.pdv-inline .modal-actions .btn-primary:disabled {
+  opacity: 0.8;
+}
+.pay-submit-key {
+  flex: none;
+  padding: 2px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.85);
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.3);
+  color: #fff;
+  font-size: 0.85rem;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+/* ---- PDV: coluna ESQUERDA compacta (referência aprovada: pdv.html) ---- */
+.pdv-left {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.pdv-left .op-panel {
+  gap: 0;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+.pdv-left .op-toolbar {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  margin: 0;
+  gap: 8px;
+}
+.pdv-left .op-search-input {
+  font-size: 1.15rem;
+  padding: 11px 12px;
+  border: 2px solid var(--accent);
+  border-radius: 10px;
+}
+.pdv-left .op-refresh {
+  padding: 8px 10px;
+  min-height: 0;
+}
+.pdv-left .op-refresh-label {
+  display: none;
+}
+.pdv-left .op-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 8px 12px;
+  margin: 0;
+}
+.pdv-left .op-chip {
+  padding: 3px 11px;
+  font-size: 0.8rem;
+  min-height: 0;
+}
+.pdv-left .op-panel > .form-error,
+.pdv-left .op-panel > .form-notice,
+.pdv-left .op-panel > .op-state {
+  margin: 8px 12px;
+}
+.pdv-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+}
+.pdv-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 54px;
+  padding: 9px 14px;
+  border: 0;
+  border-top: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.pdv-row:hover {
+  background: var(--surface-2, rgba(255, 255, 255, 0.04));
+}
+.pdv-row-selected {
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface));
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.pdv-row-main {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+.pdv-row-title {
+  font-weight: 700;
+  color: var(--text-h);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.pdv-row-tag {
+  font-size: 0.7rem;
+  font-weight: 600;
+  padding: 0 6px;
+  border: 1px solid var(--warn, #d97706);
+  border-radius: 5px;
+  color: var(--warn, #d97706);
+}
+.pdv-row-sub {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.pdv-row-value {
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  white-space: nowrap;
+  color: var(--text-h);
+}
+.pdv-row-value small {
+  display: block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: var(--warn, #d97706);
+}
+
+/* ---- PDV: coluna CENTRAL (referência aprovada: pdv.html) ---- */
+.pdv-center {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.pdv-center > .pdv-empty,
+.pdv-center > .op-state,
+.pdv-center > .form-error {
+  margin: auto;
+}
+.pdv-center .pdv-head {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+.pdv-center .pdv-title {
+  font-size: 1.35rem;
+}
+.pdv-center .pdv-head-actions {
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.pdv-center .pdv-subtabs {
+  margin: 0;
+  padding: 8px 14px 0;
+}
+.pdv-conf {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  flex: 1;
+}
+.pdv-conf[hidden] {
+  display: none;
+}
+.pdv-center .pdv-items {
+  margin: 0;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+.pdv-center .pdv-items th {
+  padding: 8px 14px;
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  letter-spacing: 0.05em;
+}
+.pdv-center .pdv-items td {
+  padding: 8px 14px;
+  font-size: 0.95rem;
+}
+.pdv-qty {
+  display: inline-block;
+  min-width: 28px;
+  text-align: center;
+  font-weight: 800;
+  color: var(--accent);
+}
+.pdv-center .pdv-totals {
+  border-top: 2px solid var(--border);
+  padding: 10px 16px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.03));
+  gap: 3px;
+}
+.pdv-itemcount {
+  color: var(--text-muted);
+}
+.pdv-center .pdv-total {
+  align-items: baseline;
+}
+.pdv-center .pdv-total strong {
+  font-size: 1.9rem;
+}
+.pdv-center .pdv-center-actions {
+  margin: 0;
+  padding: 8px 16px 12px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.03));
+}
+.pdv-center .pdv-split-host {
+  margin: 0;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  padding: 12px 16px;
+}
+
+/* ---- PDV: editor de divisão (aba "Dividir conta") ---- */
+.pdv-split {
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+.pdv-split-title {
+  font-size: 0.8rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-weight: 700;
+}
+.pdv-split-parts {
+  display: grid;
+  gap: 6px;
+}
+.pdv-split-part {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 4px 10px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font-size: 0.9rem;
+}
+.pdv-split-status {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+}
+.pdv-split-status-paid {
+  color: var(--success);
+  border-color: var(--success);
+}
+.pdv-split-status-partial {
+  color: var(--warn, #d97706);
+  border-color: var(--warn, #d97706);
+}
+.pdv-modes {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.pdv-mode {
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.pdv-mode-on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.pdv-split-block {
+  display: grid;
+  gap: 8px;
+}
+.pdv-split-sec {
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+.pdv-split-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.pdv-stepper {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.pdv-stepper button {
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--surface-2, transparent);
+  color: var(--text);
+  font-weight: 800;
+  cursor: pointer;
+}
+.pdv-stepper button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.pdv-stepper b {
+  min-width: 22px;
+  text-align: center;
+}
+.pdv-split-rows {
+  display: grid;
+  gap: 6px;
+}
+.pdv-split-line {
+  display: grid;
+  grid-template-columns: 1fr 130px auto;
+  gap: 8px;
+  align-items: center;
+}
+.pdv-split-line:has(> b:last-child) {
+  grid-template-columns: 1fr auto;
+}
+.pdv-split-line input,
+.pdv-matrix input {
+  width: 100%;
+  padding: 7px 8px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: var(--bg, transparent);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.95rem;
+}
+.pdv-split-line b {
+  font-variant-numeric: tabular-nums;
+}
+.pdv-split-sum {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 8px 12px;
+  display: grid;
+  gap: 4px;
+  background: var(--surface-2, transparent);
+}
+.pdv-split-sum > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pdv-ok {
+  color: var(--success);
+}
+.pdv-bad {
+  color: var(--danger, #dc2626);
+  font-weight: 700;
+}
+.pdv-matrix-wrap {
+  overflow: auto;
+}
+.pdv-matrix {
+  width: 100%;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+.pdv-matrix th,
+.pdv-matrix td {
+  padding: 6px 8px;
+  font-size: 0.88rem;
+  border-top: 1px solid var(--border);
+  text-align: left;
+  vertical-align: middle;
+}
+.pdv-matrix th {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  border-top: 0;
+}
+.pdv-matrix th input {
+  min-width: 64px;
+  text-transform: none;
+}
+.pdv-matrix .n {
+  text-align: right;
+  white-space: nowrap;
+}
+.pdv-matrix small {
+  display: block;
+}
+.pdv-matrix tfoot td {
+  border-top: 2px solid var(--border);
+}
+.pdv-split-impact ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.pdv-split-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.pdv-matrix th input {
+  max-width: 96px;
+  margin-left: auto;
+  display: block;
+}
+
+/* ---- PDV: coluna DIREITA "Receber" (referência aprovada: pdv.html) ---- */
+.pdv-right {
+  padding: 0;
+}
+.pdv-right > .pdv-col-title {
+  padding: 11px 14px;
+  margin: 0;
+  border-bottom: 1px solid var(--border);
+}
+.pdv-right > .pdv-receive,
+.pdv-right > .pdv-inline {
+  padding: 12px 14px;
+}
+.pdv-receive {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pdv-sum {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  padding: 10px 12px;
+  display: grid;
+  gap: 5px;
+  background: var(--surface-2, rgba(255, 255, 255, 0.03));
+}
+.pdv-sum > div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.pdv-sum-mini {
+  padding: 8px 12px;
+}
+.pdv-pend {
+  font-size: 1.6rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.pdv-pend-pos {
+  color: var(--warn, #d97706);
+}
+.pdv-pend-zero {
+  color: var(--success);
+}
+.pdv-ok {
+  color: var(--success);
+}
+.pdv-chip {
+  display: inline-block;
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 1px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+}
+.pdv-chip-ok {
+  color: var(--success);
+  border-color: var(--success);
+}
+.pdv-chip-warn {
+  color: var(--warn, #d97706);
+  border-color: var(--warn, #d97706);
+}
+.pdv-sec {
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  margin: 2px 0 -2px;
+}
+.pdv-shares {
+  display: grid;
+  gap: 6px;
+}
+.pdv-share {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 8px;
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--surface-2, transparent);
+}
+.pdv-share-on {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.pdv-share-name {
+  font-weight: 700;
+}
+.pdv-share-sub {
+  grid-column: 1 / -1;
+  font-size: 0.78rem;
+  color: var(--text-muted);
+}
+.pdv-hint {
+  margin: 0;
+}
+.pdv-lines {
+  display: grid;
+  gap: 8px;
+}
+.pdv-line {
+  border: 2px solid var(--accent);
+  border-radius: 10px;
+  padding: 9px 10px;
+  background: var(--bg, transparent);
+  display: grid;
+  gap: 7px;
+}
+.pdv-line-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.pdv-x {
+  margin-left: auto;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text);
+  font-size: 1.1rem;
+  cursor: pointer;
+}
+.pdv-line-fields {
+  display: grid;
+  gap: 8px;
+}
+.pdv-line-fields-2 {
+  grid-template-columns: 1fr 1fr;
+}
+.pdv-line-fields label {
+  display: grid;
+  gap: 3px;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+.pdv-line-fields input,
+.pdv-line-fields select {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  font-size: 1.1rem;
+  font-variant-numeric: tabular-nums;
+}
+.pdv-line-change {
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+.pdv-line-change b {
+  color: var(--success);
+}
+.pdv-change {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 8px 12px;
+  text-transform: uppercase;
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+}
+.pdv-change b {
+  font-size: 1.2rem;
+  font-variant-numeric: tabular-nums;
+}
+.pdv-change-big {
+  border-color: var(--success);
+  color: var(--success);
+}
+.pdv-change-big b {
+  font-size: 1.7rem;
+  font-weight: 800;
+}
+.pdv-line-sum {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr auto;
+  gap: 4px 8px;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+  align-items: baseline;
+}
+.pdv-line-sum b {
+  color: var(--text-h);
+}
+.pdv-line-actions {
+  display: flex;
+  gap: 8px;
+}
+.pdv-submit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex: 1;
+  min-height: 46px;
+}
+.pdv-submit:disabled {
+  opacity: 0.8;
+}
+.pdv-paid {
+  display: grid;
+  gap: 5px;
+}
+.pdv-paid-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  align-items: baseline;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 0.9rem;
+}
+.pdv-refund summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+.pdv-refund .pdv-line-fields {
+  margin-top: 8px;
+}
+.pdv-foot {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  display: grid;
+  gap: 6px;
+}
+.pdv-foot-hint {
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+/* ---- PDV: coluna direita com RODAPÉ FIXO (só o conteúdo acima rola) ---- */
+.pdv-right {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.pdv-right > .pdv-receive {
+  flex: 1;
+  min-height: 0;
+  padding: 0;
+  gap: 0;
+}
+.pdv-receive-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.pdv-receive > .pdv-foot {
+  flex: none;
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+.pdv-right > .pdv-inline {
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
+}
+@media (max-width: 1099px) {
+  .pdv-right {
+    overflow: visible;
+  }
+  .pdv-receive-scroll {
+    overflow: visible;
+  }
+  .pdv-receive > .pdv-foot {
+    position: sticky;
+    bottom: 0;
+  }
+}
+
+/* PDV: altura das colunas cabe na janela (rodapé da direita sempre visível) e, em janela estreita, só a aba ativa aparece */
+@media (min-width: 1100px) {
+  .pdv-col {
+    max-height: calc(100vh - 290px);
+    min-height: 420px;
+  }
+}
+@media (max-width: 1099px) {
+  .pdv .pdv-col {
+    display: none;
+    max-height: none;
+  }
+  .pdv[data-tab="list"] .pdv-left,
+  .pdv[data-tab="account"] .pdv-center,
+  .pdv[data-tab="pay"] .pdv-right {
+    display: flex;
+  }
+}

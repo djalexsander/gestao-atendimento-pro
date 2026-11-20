@@ -13,8 +13,11 @@ export const MAX_PART_LABEL = 40;
 
 // ---------------------------------------------------------------------------------------------- recurso por empresa e papéis
 // Desligado por padrão: sem entitlement carregado, ou sem o módulo, é falso.
-export function isPartialPaymentsEnabled(entitlements: { modules?: readonly string[] | null } | null | undefined): boolean {
-  return !!entitlements && Array.isArray(entitlements.modules) && entitlements.modules.includes(PARTIAL_PAYMENTS_MODULE);
+// Pagamentos parciais / divisão de conta fazem parte do PLANO BASE (sem módulo nem override). Liberado quando o estado comercial da empresa já foi
+// lido (`entitlements` não nulo) e a empresa NÃO está em somente leitura (pending_payment, restricted, suspended, trial expirado/cancelado,
+// canceled) — a mesma regra do banco (partial_payments_enabled = not company_write_blocked). O servidor continua sendo a autoridade.
+export function isPartialPaymentsEnabled(entitlements: { modules?: readonly string[] | null } | null | undefined, readOnly = false): boolean {
+  return !!entitlements && !readOnly;
 }
 
 export type CompanyRole = "owner" | "admin" | "cashier" | "attendant" | "production" | "courier";

@@ -19,8 +19,8 @@ const TONE: Record<PaymentStatus, ChipTone> = { closed: "muted", no_charge: "mut
 
 // Quem pode ver o indicador: com o recurso ligado e papel operacional de conta (os demais papéis nem chamam o banco).
 export const PAYMENT_CHIP_ROLES: readonly CompanyRole[] = ["owner", "admin", "cashier", "attendant"];
-export function paymentChipsEnabled(entitlements: { modules?: readonly string[] | null } | null | undefined, role: CompanyRole | null | undefined): boolean {
-  return isPartialPaymentsEnabled(entitlements) && !!role && PAYMENT_CHIP_ROLES.includes(role);
+export function paymentChipsEnabled(entitlements: { modules?: readonly string[] | null } | null | undefined, role: CompanyRole | null | undefined, readOnly = false): boolean {
+  return isPartialPaymentsEnabled(entitlements, readOnly) && !!role && PAYMENT_CHIP_ROLES.includes(role);
 }
 
 interface Money {

@@ -277,7 +277,7 @@ function App() {
 
         <Route path="operacional/comandas-abertas" element={<Navigate to="/operacional/atendimentos-abertos" replace />} />
         <Route path="operacional/pedidos" element={<Navigate to="/operacional/pedidos" replace />} />
-        <Route path="operacional/caixa" element={<ModulePlaceholderPage title="Caixa / Balcão" />} />
+        <Route path="operacional/caixa" element={<ModulePlaceholderPage title="Caixa" />} />
 
         <Route path="configuracoes/impressoras" element={<Navigate to="/app/configuracoes/impressao" replace />} />
         <Route path="configuracoes/impressao" element={<ModuleGate module="impressao"><PrintingSettingsPage /></ModuleGate>} />

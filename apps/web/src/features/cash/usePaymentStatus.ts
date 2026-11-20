@@ -12,8 +12,8 @@ const REFRESH_MS = 30_000;
 
 // Painel de comandas/mesas: uma consulta em lote (list_session_payment_overview). `refreshKey` muda quando o painel recarrega.
 export function usePaymentOverview(companyId: string | null, role: CompanyRole | null | undefined, refreshKey: unknown, api: PartialPaymentsApi = partialPaymentsApi) {
-  const { entitlements } = useCommercial();
-  const enabled = !!companyId && paymentChipsEnabled(entitlements, role);
+  const { entitlements, readOnly } = useCommercial();
+  const enabled = !!companyId && paymentChipsEnabled(entitlements, role, readOnly);
   const [rows, setRows] = useState<Map<string, OverviewRow>>(new Map());
   const seq = useRef(0);
   const load = useCallback(async () => {
@@ -34,13 +34,14 @@ export function usePaymentOverview(companyId: string | null, role: CompanyRole |
     return () => { window.clearInterval(id); document.removeEventListener("visibilitychange", tick); };
   }, [enabled, load]);
   const chipFor = useCallback((sessionId: string | null | undefined): PaymentChipView | null => (enabled && sessionId ? chipFromOverview(rows.get(sessionId), role) : null), [enabled, rows, role]);
-  return useMemo(() => ({ enabled, chipFor, reload: load }), [enabled, chipFor, load]);
+  const rowFor = useCallback((sessionId: string | null | undefined): OverviewRow | null => (enabled && sessionId ? rows.get(sessionId) ?? null : null), [enabled, rows]);
+  return useMemo(() => ({ enabled, chipFor, rowFor, reload: load }), [enabled, chipFor, rowFor, load]);
 }
 
 // Tela do pedido: o estado de UMA conta. owner/admin/cashier leem o estado completo (valores); o atendente lê só o status.
 export function useSessionFinance(sessionId: string, role: CompanyRole | null | undefined, applicable: boolean, refreshKey: unknown, api: PartialPaymentsApi = partialPaymentsApi) {
-  const { entitlements } = useCommercial();
-  const enabled = applicable && paymentChipsEnabled(entitlements, role);
+  const { entitlements, readOnly } = useCommercial();
+  const enabled = applicable && paymentChipsEnabled(entitlements, role, readOnly);
   const [chip, setChip] = useState<PaymentChipView | null>(null);
   const [state, setState] = useState<FinancialState | null>(null);
   const seq = useRef(0);

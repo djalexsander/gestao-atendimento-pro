@@ -11,7 +11,7 @@ import { bodyClass } from "./widePages";
 const ROLE_LABEL: Record<string, string> = {
   owner: "Dono(a)",
   admin: "Administrador",
-  cashier: "Caixa / Balcão",
+  cashier: "Caixa",
   attendant: "Atendente",
   production: "Produção",
   courier: "Entregador",

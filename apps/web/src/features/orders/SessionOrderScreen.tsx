@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { orderTitle } from "../../lib/orderNumber";
 import { useNavigate } from "react-router-dom";
-import { OPERATIONAL_PATH, VARIANT_AREA, type ServiceVariant } from "../../app/accessRules";
+import { financeRoleFor, OPERATIONAL_PATH, VARIANT_AREA, variantHasFinance, type ServiceVariant } from "../../app/accessRules";
 import { useAuth } from "../../app/useAuth";
 import { supabaseCashSource, type CashSource } from "../cash/cashApi";
 import { CheckoutDialog, OpenCashDialog } from "../cash/CashDialogs";
@@ -61,14 +61,14 @@ export function SessionOrderScreen({
   // Fechar conta (só Caixa: owner/admin/cashier). O backend valida papel, caixa e total.
   const { user, activeMembership } = useAuth();
   const canCheckout =
-    variant === "cashier" &&
+    variantHasFinance(variant) &&
     (activeMembership?.role === "owner" || activeMembership?.role === "admin" || activeMembership?.role === "cashier");
   const [checkoutStage, setCheckoutStage] = useState<"none" | "checkout" | "open-cash" | "done">("none");
   const [checkoutChecking, setCheckoutChecking] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<SubmittedOrderItem | null>(null);
 
   async function startCheckout() {
-    if (!activeMembership || !user) return;
+    if (!canCheckout || !activeMembership || !user) return; // defesa: fora do Caixa nenhuma ação financeira, mesmo chamada direto
     setCheckoutChecking(true);
     const cash = await cashSource.getMyOpenCash(activeMembership.companyId, user.id);
     setCheckoutChecking(false);
@@ -189,9 +189,9 @@ export function SessionOrderScreen({
 
   const canOrder = header?.status === "open";
   const isDelivery = header?.kind === "delivery";
-  // E9.3: status de pagamento da conta (comanda/mesa aberta). Só com o módulo partial_payments habilitado; atendente vê só o status,
+  // E9.3: status de pagamento da conta (comanda/mesa aberta). Plano base: só com a empresa fora do modo somente leitura; atendente vê só o status,
   // owner/admin/cashier também os valores. Somente leitura; recarrega quando o histórico de pedidos muda.
-  const finance = useSessionFinance(sessionId, activeMembership?.role ?? null, header?.status === "open" && header.kind !== "delivery", orders);
+  const finance = useSessionFinance(sessionId, financeRoleFor(variant, activeMembership?.role ?? null), header?.status === "open" && header.kind !== "delivery", orders);
   const paymentChip = finance.chip;
   // E9.4: diálogo financeiro da conta (Caixa, com o módulo ligado).
   const [financeOpen, setFinanceOpen] = useState(false);
@@ -439,7 +439,7 @@ export function SessionOrderScreen({
         )}
       </div>
 
-      {financeOpen && header && activeMembership && (
+      {canCheckout && financeOpen && header && activeMembership && (
         <AccountFinanceDialog
           sessionId={sessionId}
           pointLabel={sessionLabel}
@@ -459,7 +459,7 @@ export function SessionOrderScreen({
         />
       )}
 
-      {checkoutStage === "open-cash" && activeMembership && (
+      {canCheckout && checkoutStage === "open-cash" && activeMembership && (
         <OpenCashDialog
           source={cashSource}
           companyId={activeMembership.companyId}
@@ -468,7 +468,7 @@ export function SessionOrderScreen({
           onClose={() => setCheckoutStage("none")}
         />
       )}
-      {checkoutStage === "checkout" && header && (
+      {canCheckout && checkoutStage === "checkout" && header && (
         <CheckoutDialog
           source={cashSource}
           sessionId={sessionId}
@@ -483,7 +483,7 @@ export function SessionOrderScreen({
           }}
         />
       )}
-      {checkoutStage === "done" && (
+      {canCheckout && checkoutStage === "done" && (
         <Modal title="Conta fechada" onClose={() => navigate(leave.path)}>
           <p className="modal-text">{isDelivery ? "Pagamento registrado e conta fechada com sucesso." : "Pagamento registrado e conta fechada com sucesso. A comanda/mesa está livre."}</p>
           <PrintDocumentButton

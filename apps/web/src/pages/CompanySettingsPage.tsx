@@ -6,7 +6,7 @@ import type { CompanyRole, CompanyRow } from "../lib/types";
 const ROLE_LABEL: Record<CompanyRole, string> = {
   owner: "Dono(a)",
   admin: "Administrador",
-  cashier: "Caixa / Balcão",
+  cashier: "Caixa",
   attendant: "Atendente",
   production: "Produção",
   courier: "Entregador",

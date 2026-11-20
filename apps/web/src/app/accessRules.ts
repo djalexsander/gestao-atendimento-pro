@@ -30,6 +30,14 @@ export const OPERATIONAL_PATH: Record<OperationalArea, string> = {
 // SUA área: é isso que mantém Atendimento, Caixa e Balcão cada um na própria rota (sem redirecionar para outra área).
 // Só "cashier" tem as ênfases e os recursos financeiros do Caixa; "counter" (Balcão) e "attendant" não têm nenhum.
 export type ServiceVariant = "attendant" | "cashier" | "counter";
+// SEPARAÇÃO Caixa × Balcão (v1.0.20): só a variante "cashier" (Caixa) tem recursos financeiros (receber, fechar conta, pagamentos parciais,
+// estorno, caixa). Atendimento e Balcão lançam e consultam pedidos; a UI e os handlers consultam esta regra, não só escondem botões.
+export const variantHasFinance = (variant: ServiceVariant): boolean => variant === "cashier";
+// Papel efetivo para o indicador de pagamento: fora do Caixa vê-se SÓ o status (nunca valores), mesmo para owner/admin/cashier.
+export function financeRoleFor<R extends string | null | undefined>(variant: ServiceVariant, role: R): R | "attendant" {
+  if (variantHasFinance(variant) || !role) return role;
+  return role === "owner" || role === "admin" || role === "cashier" ? "attendant" : role;
+}
 export const VARIANT_AREA: Record<ServiceVariant, OperationalArea> = {
   attendant: "atendimento",
   cashier: "caixa",
@@ -42,7 +50,7 @@ export const ADMIN_HOME_PATH = "/app";
 export const ONBOARDING_PATH = "/onboarding";
 
 // Área operacional de cada papel nesta etapa (landing): attendant → Atendimento, cashier → Caixa /
-// Balcão. owner e admin pousam no app administrativo; de lá entram no Caixa / Balcão pelo menu
+// Balcão. owner e admin pousam no app administrativo; de lá entram no Caixa e no Balcão (itens separados) pelo menu
 // (ver AREA_ROLES abaixo). Ampliar o acesso (ex.: caixa também em Atendimento) é decisão de produto.
 const ROLE_AREA: Partial<Record<CompanyRole, OperationalArea>> = {
   attendant: "atendimento",
@@ -56,8 +64,8 @@ export function operationalAreaOf(role: CompanyRole): OperationalArea | null {
   return ROLE_AREA[role] ?? null;
 }
 
-// Quem PODE abrir cada rota operacional. O Caixa / Balcão também é aberto por owner e admin
-// (menu Operacional → Caixa / Balcão do Administrativo): é a MESMA tela do cashier. Atendimento
+// Quem PODE abrir cada rota operacional. O Caixa também é aberto por owner e admin
+// (menu Operacional → Caixa do Administrativo): é a MESMA tela do cashier. Atendimento
 // segue só do attendant. A landing de cada papel (operationalAreaOf) não muda.
 const AREA_ROLES: Record<OperationalArea, readonly CompanyRole[]> = {
   atendimento: ["attendant"],

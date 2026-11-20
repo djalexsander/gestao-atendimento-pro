@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { OPERATIONAL_PATH, VARIANT_AREA, type ServiceVariant } from "../../app/accessRules";
+import { financeRoleFor, OPERATIONAL_PATH, VARIANT_AREA, variantHasFinance, type ServiceVariant } from "../../app/accessRules";
 import { useAuth } from "../../app/useAuth";
 import { supabaseServicePanelSource, type ServicePanelSource } from "./api";
 import { createCoalescedRunner } from "../orders/coalesce";
@@ -26,12 +26,13 @@ import {
   type CashierView,
   type DeliveryReceivable,
 } from "./deliveryReceivables";
-import { formatReais } from "../../lib/money";
+import { formatCents, formatReais } from "../../lib/money";
 import { paymentChipClass, usePaymentOverview } from "../cash/usePaymentStatus";
 import type { PaymentChipView } from "../cash/paymentStatusView";
 import {
   countByStatus,
   filterPoints,
+  formatElapsedShort,
   formatOpenedShort,
   resolveScan,
   sortPoints,
@@ -65,7 +66,7 @@ const EMPTY_TEXT = {
 type OpenDialog = { kind: "open"; point: ServicePoint };
 
 // Card de delivery/retirada no Caixa: tipo + código curto, cliente, situação operacional e FINANCEIRA, total e forma pretendida.
-function DeliveryCard({ item, onSelect }: { item: DeliveryReceivable; onSelect: (item: DeliveryReceivable) => void }) {
+function DeliveryCard({ item, onSelect, selected = false }: { item: DeliveryReceivable; onSelect: (item: DeliveryReceivable) => void; selected?: boolean }) {
   const method = expectedMethodLabel(item);
   const overdue = isOverdueToCollect(item);
   const label = [receivableTitle(item), item.customerName, operationalLabel(item), financialLabel(item), formatReais(item.total)].join(", ");
@@ -73,7 +74,8 @@ function DeliveryCard({ item, onSelect }: { item: DeliveryReceivable; onSelect: 
     <li>
       <button
         type="button"
-        className={`op-card op-card-delivery op-card-fin-${item.financialStatus}${overdue ? " op-card-overdue" : ""}`}
+        className={`op-card op-card-delivery op-card-fin-${item.financialStatus}${overdue ? " op-card-overdue" : ""}${selected ? " op-card-selected" : ""}`}
+        aria-current={selected ? "true" : undefined}
         aria-label={label}
         data-testid="delivery-card"
         onClick={() => onSelect(item)}
@@ -96,7 +98,22 @@ function DeliveryCard({ item, onSelect }: { item: DeliveryReceivable; onSelect: 
   );
 }
 
-function PointCard({ point, showCustomer, onSelect, payment = null }: { point: ServicePoint; showCustomer: boolean; onSelect: (point: ServicePoint) => void; payment?: PaymentChipView | null }) {
+// PDV do Caixa (v1.0.20): linha COMPACTA de conta (referência aprovada): título, cliente · tempo · atendente e valor (com o pendente quando já há pagamento).
+function PdvRow({ title, tag, sub, value, pending, selected, onClick, label }: { title: string; tag?: string; sub: string; value: string | null; pending: string | null; selected: boolean; onClick: () => void; label: string }) {
+  return (
+    <li>
+      <button type="button" className={`pdv-row${selected ? " pdv-row-selected" : ""}`} aria-label={label} aria-current={selected ? "true" : undefined} onClick={onClick} data-testid="pdv-row">
+        <span className="pdv-row-main">
+          <span className="pdv-row-title">{title}{tag && <span className="pdv-row-tag">{tag}</span>}</span>
+          <span className="pdv-row-sub">{sub}</span>
+        </span>
+        {value && <span className="pdv-row-value">{value}{pending && <small>{pending}</small>}</span>}
+      </button>
+    </li>
+  );
+}
+
+function PointCard({ point, showCustomer, onSelect, payment = null, selected = false }: { point: ServicePoint; showCustomer: boolean; onSelect: (point: ServicePoint) => void; selected?: boolean; payment?: PaymentChipView | null }) {
   const status = statusOf(point);
   const session = point.open_session;
   const label = [
@@ -112,8 +129,9 @@ function PointCard({ point, showCustomer, onSelect, payment = null }: { point: S
     <li>
       <button
         type="button"
-        className={`op-card op-card-${status}`}
+        className={`op-card op-card-${status}${selected ? " op-card-selected" : ""}`}
         aria-label={label}
+        aria-current={selected ? "true" : undefined}
         aria-disabled={status === "inactive"}
         onClick={() => onSelect(point)}
       >
@@ -142,15 +160,22 @@ function PointCard({ point, showCustomer, onSelect, payment = null }: { point: S
 }
 
 // Painel de Comandas / Mesas: o MESMO componente serve às duas áreas operacionais (Atendimento
-// e Caixa / Balcão). `variant` só muda a ênfase da busca; as ações são as mesmas por enquanto.
+// Caixa e Balcão). `variant` muda a ênfase da busca e, no Caixa, liga os recursos financeiros (variantHasFinance).
 export function ServicePointsPanel({
   variant,
   source = supabaseServicePanelSource,
   cashSource = supabaseCashSource,
+  onSelectSession,
+  selectedSessionId = null,
+  reloadKey,
 }: {
   variant: ServiceVariant;
   source?: ServicePanelSource;
   cashSource?: CashSource;
+  // PDV do Caixa (v1.0.20): em vez de navegar para a tela do pedido, SELECIONA a conta (centro e direita do PDV). Sem isto: comportamento de sempre.
+  onSelectSession?: (sessionId: string) => void;
+  selectedSessionId?: string | null;
+  reloadKey?: unknown;   // muda depois de uma operação no PDV: recarrega a lista
 }) {
   const navigate = useNavigate();
   const { activeMembership, profile } = useAuth();
@@ -185,7 +210,7 @@ export function ServicePointsPanel({
   // Caixa num computador (mouse): a busca abre com o foco e o recupera depois de cada ação,
   // pronta para o leitor de código de barras. No celular não abre o teclado sozinha.
   const [keepSearchFocused] = useState(
-    () => variant === "cashier" && window.matchMedia("(pointer: fine)").matches,
+    () => variantHasFinance(variant) && window.matchMedia("(pointer: fine)").matches,
   );
   const searchRef = useRef<HTMLInputElement>(null);
   const requestId = useRef(0);
@@ -195,7 +220,7 @@ export function ServicePointsPanel({
     if (!companyId) return null;
     const current = ++requestId.current;
     setRefreshing(true);
-    const wantsDelivery = variant === "cashier" && !!source.loadReceivables;
+    const wantsDelivery = variantHasFinance(variant) && !!source.loadReceivables;
     const [result, rec, set, pend] = await Promise.all([
       source.load(companyId),
       wantsDelivery ? source.loadReceivables!(companyId) : Promise.resolve(null),
@@ -228,6 +253,13 @@ export function ServicePointsPanel({
     void reload();
   }, [reload]);
 
+  const firstReloadKey = useRef(true);
+  useEffect(() => {
+    if (firstReloadKey.current) { firstReloadKey.current = false; return; }
+    void reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [reloadKey]);
+
   // Ao voltar para a aba/aparelho, mostra o que os colegas abriram nesse meio tempo.
   useEffect(() => {
     function refreshWhenVisible() {
@@ -248,9 +280,9 @@ export function ServicePointsPanel({
 
   const points = useMemo(() => data?.points ?? [], [data]);
   const mode = data?.service_mode ?? "command";
-  // E9.3: status de pagamento por conta aberta. Só com o módulo partial_payments habilitado para a empresa (padrão: desligado = sem
+  // E9.3: status de pagamento por conta aberta. Plano base: só com a empresa fora do modo somente leitura (somente leitura = sem
   // chamada ao banco e sem chip). Atendente: só status; owner/admin/cashier: status e valores. Somente leitura.
-  const pay = usePaymentOverview(companyId, activeMembership?.role ?? null, data);
+  const pay = usePaymentOverview(companyId, financeRoleFor(variant, activeMembership?.role ?? null), data);
 
   // Preferência "ao abrir o painel": só no modo Comandas e mesas, uma vez, sem remover nenhuma opção (o filtro continua trocável).
   useEffect(() => {
@@ -264,7 +296,7 @@ export function ServicePointsPanel({
     [points, query, status, type],
   );
   const counts = useMemo(() => countByStatus(points, { query, type }), [points, query, type]);
-  const showDeliverySection = variant === "cashier" && !receivablesHidden && receivables !== null;
+  const showDeliverySection = variantHasFinance(variant) && !receivablesHidden && receivables !== null;
   const effectiveView: CashierView = showDeliverySection ? (view === "settlement" && !(!settlementsHidden && settlements !== null) ? "all" : view) : "all";
   const canVoid = activeMembership?.role === "owner" || activeMembership?.role === "admin";
   const showPoints = effectiveView === "all" || effectiveView === "points";
@@ -297,7 +329,8 @@ export function ServicePointsPanel({
       return;
     }
     if (point.open_session) {
-      navigate(`${OPERATIONAL_PATH[area]}/${point.open_session.id}`);
+      if (onSelectSession) onSelectSession(point.open_session.id);
+      else navigate(`${OPERATIONAL_PATH[area]}/${point.open_session.id}`);
       return;
     }
     setDialog({ kind: "open", point });
@@ -307,7 +340,8 @@ export function ServicePointsPanel({
   function openDelivery(item: DeliveryReceivable) {
     setNotice(null);
     setScanMessage(null);
-    navigate(`${OPERATIONAL_PATH[area]}/${item.sessionId}`);
+    if (onSelectSession) onSelectSession(item.sessionId);
+    else navigate(`${OPERATIONAL_PATH[area]}/${item.sessionId}`);
   }
 
   // Enter na busca (o leitor USB digita o código e manda Enter): acha o ponto na hora, sem
@@ -361,21 +395,45 @@ export function ServicePointsPanel({
         },
       );
       setDialog(null);
-      navigate(`${OPERATIONAL_PATH[area]}/${session.id}`);
+      if (onSelectSession) onSelectSession(session.id);
+      else navigate(`${OPERATIONAL_PATH[area]}/${session.id}`);
       return null;
     } finally {
       opening.current = false;
     }
   }
 
+  const pdvMode = !!onSelectSession;
+  // PDV: a lista é de CONTAS abertas; comandas/mesas livres só aparecem no filtro "Livres" ou quando a busca as encontra (abrir pelo código continua igual).
+  const pdvPointRows = (() => {
+    return status === "all" && !query.trim() ? shown.filter((p) => !!p.open_session) : shown;
+  })();
   const pointsContent = (() => {
     if (!data) return null;
+    if (pdvMode) {
+      if (pdvPointRows.length === 0) return <p className="op-state">{points.length === 0 ? EMPTY_TEXT[mode] : "Nenhuma conta aberta com esses filtros."}</p>;
+      return (
+        <ul className="pdv-rows" role="list">
+          {pdvPointRows.map((point) => {
+            const s = point.open_session;
+            const row = pay.rowFor(s?.id);
+            const fin = row?.financial ?? null;
+            const sub = s
+              ? [s.customer_name ?? "sem cliente", formatElapsedShort(s.opened_at), s.opened_by_name ?? "—"].join(" · ")
+              : STATUS_LABEL[statusOf(point)];
+            const pendingText = fin && fin.settledPaidCents > 0 && fin.balanceDueCents > 0 ? `pendente ${formatCents(fin.balanceDueCents)}` : null;
+            return <PdvRow key={point.id} title={point.display_name} sub={sub} value={fin ? formatCents(fin.totalCents) : null} pending={pendingText}
+              selected={!!selectedSessionId && s?.id === selectedSessionId} onClick={() => openPoint(point)} label={`${point.display_name}, ${sub}`} />;
+          })}
+        </ul>
+      );
+    }
     if (points.length === 0) return <p className="op-state">{EMPTY_TEXT[mode]}</p>;
     if (shown.length === 0) return <p className="op-state">Nada encontrado com esses filtros.</p>;
     return (
       <ul className={prefs.compactCards ? "op-grid" : "op-grid op-grid-comfy"} role="list">
         {shown.map((point) => (
-          <PointCard key={point.id} point={point} showCustomer={prefs.showCustomerOnCard} onSelect={openPoint} payment={pay.chipFor(point.open_session?.id)} />
+          <PointCard key={point.id} point={point} showCustomer={prefs.showCustomerOnCard} onSelect={openPoint} payment={pay.chipFor(point.open_session?.id)} selected={!!selectedSessionId && point.open_session?.id === selectedSessionId} />
         ))}
       </ul>
     );
@@ -389,11 +447,21 @@ export function ServicePointsPanel({
           {effectiveView === "receivable" ? "Nenhuma conta de delivery ou retirada a receber." : "Nenhum delivery ou retirada encontrado."}
         </p>
       ) : (
+        pdvMode ? (
+          <ul className="pdv-rows" role="list" aria-label="Delivery e retirada">
+            {deliveryShown.map((item) => (
+              <PdvRow key={item.deliveryOrderId} title={receivableTitle(item)} tag="entrega" sub={[item.customerName, formatElapsedShort(item.createdAt), operationalLabel(item)].join(" · ")}
+                value={formatReais(item.total)} pending={item.paidAmount > 0 && item.paidAmount < item.total ? `pendente ${formatReais(item.total - item.paidAmount)}` : null}
+                selected={!!selectedSessionId && item.sessionId === selectedSessionId} onClick={() => openDelivery(item)} label={`${receivableTitle(item)}, ${item.customerName}`} />
+            ))}
+          </ul>
+        ) : (
         <ul className="op-grid op-grid-comfy" role="list" aria-label="Delivery e retirada">
           {deliveryShown.map((item) => (
-            <DeliveryCard key={item.deliveryOrderId} item={item} onSelect={openDelivery} />
+            <DeliveryCard key={item.deliveryOrderId} item={item} onSelect={openDelivery} selected={!!selectedSessionId && item.sessionId === selectedSessionId} />
           ))}
         </ul>
+        )
       );
     content = (
       <>
@@ -431,7 +499,7 @@ export function ServicePointsPanel({
   }
 
   return (
-    <section className={`op-panel op-panel-${variant}`}>
+    <section className={`op-panel op-panel-${variant}${onSelectSession ? " op-panel-pdv" : ""}`}>
       <form className="op-toolbar" role="search" onSubmit={(event) => void handleSearchSubmit(event)}>
         <div className="op-search">
           <input

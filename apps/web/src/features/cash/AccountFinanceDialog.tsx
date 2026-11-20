@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { createPortal } from "react-dom";
 import { formatCents } from "../../lib/money";
 import { Modal } from "../employees/Modal";
 import { OpenCashDialog } from "./CashDialogs";
@@ -6,12 +7,14 @@ import type { CashSource } from "./cashApi";
 import { PAYMENT_METHODS, PAYMENT_METHOD_LABEL, parseDraftCents, type PaymentMethod } from "./cashLogic";
 import { createAccountFinanceController, type FinanceView, type PaymentForm } from "./accountFinanceController";
 import { SplitEditor } from "./SplitEditor";
+import { PdvSplitEditor } from "./PdvSplitEditor";
+import { PaymentMethodButtons } from "./PaymentMethodButtons";
 import type { OrderItemSource } from "./splitEditorLogic";
 import { partialPaymentsApi, type PartialPaymentsApi } from "./partialPaymentsApi";
 import { canRefundOpenPayment, paymentStatusLabel, validateClose, changeCents, type CompanyRole, type FinancialState } from "./partialPaymentsLogic";
 
 // E9.4 — Diálogo financeiro da conta (Caixa): saldo, pagamentos parciais por várias formas, estorno de conta aberta (owner/admin) e
-// encerramento da conta quitada. Só existe com o módulo partial_payments habilitado (quem monta este diálogo confere). O saldo, as
+// encerramento da conta quitada. Faz parte do plano base (quem monta este diálogo confere o estado da empresa: não somente leitura). O saldo, as
 // partes e a quitação vêm SEMPRE do servidor; aqui só se desenha o estado do controlador (accountFinanceController.ts).
 
 const newId = () =>
@@ -31,6 +34,9 @@ export function AccountFinanceDialog({
   orderItems = [],
   onClose,
   onClosed,
+  inline = false,
+  onChanged,
+  splitHost = null,
 }: {
   sessionId: string;
   pointLabel: string;
@@ -41,12 +47,17 @@ export function AccountFinanceDialog({
   orderItems?: OrderItemSource[];   // itens cobráveis da conta (para dividir por produto)
   onClose: () => void;     // fechar o diálogo (a tela recarrega o estado)
   onClosed: () => void;    // conta encerrada
+  inline?: boolean;        // PDV de três colunas: sem moldura de diálogo, com atalhos
+  onChanged?: () => void;  // pagamento/estorno/divisão aplicados: o PDV recarrega as outras colunas
+  splitHost?: HTMLElement | null;   // PDV: o editor de divisão (E9.5, o MESMO componente) é desenhado na aba "Dividir conta" do painel central
 }) {
   const canRefund = canRefundOpenPayment(role);
   const ctrl = useMemo(() => createAccountFinanceController({ api, sessionId, canRefund, newId }), [api, sessionId, canRefund]);
   const [view, setView] = useState<FinanceView>(ctrl.getView());
   const [form, setForm] = useState<PaymentForm>(emptyForm());
   const [refund, setRefund] = useState({ paymentId: "", amountText: "", reason: "" });
+  // PDV: nenhuma forma vem marcada; F1–F5 / clique escolhem e sugerem o saldo pendente. Sem forma escolhida não há recebimento.
+  const [chosen, setChosen] = useState(!inline);
   const [splitPending, setSplitPending] = useState(false);   // E9.5: o editor de divisão está ocupado ou com resultado desconhecido
   const onSplitApplied = useCallback((s: FinancialState | null) => ctrl.refresh(s), [ctrl]);
 
@@ -69,10 +80,21 @@ export function AccountFinanceDialog({
       const partId = split ? (f.partId && partsOpen.some((p) => p.partId === f.partId) ? f.partId : partsOpen[0]?.partId ?? null) : null;
       return { ...f, partId, amountText: ctrl.suggestedAmountText(partId), receivedText: "", allocations: null, confirmAllocation: false };
     });
+    if (inline) setChosen(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [st?.balanceDueCents, st?.split?.version, st?.paymentsCount, ctrl]);
 
   useEffect(() => { if (view.closed) onClosed(); }, [view.closed, onClosed]);
+
+  // PDV: avisa as outras colunas quando o estado financeiro muda por uma operação (não na primeira leitura).
+  const changeKey = st ? `${st.paymentsCount}:${st.refundsCount}:${st.split?.version ?? 0}:${st.balanceDueCents}` : null;
+  const lastChange = useRef<string | null>(null);
+  useEffect(() => {
+    if (changeKey === null) return;
+    if (lastChange.current !== null && lastChange.current !== changeKey) onChanged?.();
+    lastChange.current = changeKey;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [changeKey]);
 
   const applied = parseDraftCents(form.amountText);
   const received = form.method === "cash" ? (form.receivedText.trim() === "" ? applied : parseDraftCents(form.receivedText)) : null;
@@ -81,17 +103,47 @@ export function AccountFinanceDialog({
   const payAvailable = open && (st?.balanceDueCents ?? 0) > 0;
   const refundables = view.payments.filter((p) => p.availableCents > 0);
 
+  function chooseMethod(method: PaymentMethod) {
+    setChosen(true);
+    // sugere o saldo pendente (da parte escolhida) quando não há valor válido digitado; um valor já editado é preservado
+    setForm((f) => {
+      const cents = parseDraftCents(f.amountText);
+      return { ...f, method, receivedText: "", amountText: cents === null || cents <= 0 ? ctrl.suggestedAmountText(f.allocations ? null : f.partId) : f.amountText };
+    });
+  }
   function pickPart(partId: string) {
     setForm((f) => ({ ...f, partId, amountText: ctrl.suggestedAmountText(partId), allocations: null, confirmAllocation: false }));
   }
   function toggleAllocations(on: boolean) {
     setForm((f) => ({ ...f, allocations: on ? partsOpen.map((p) => ({ partId: p.partId, text: "" })) : null, confirmAllocation: false }));
   }
-  function submitPayment(e: FormEvent) { e.preventDefault(); void ctrl.registerPayment(form); }
+  const paymentReady = chosen && applied !== null && applied > 0 && (form.method !== "cash" || form.receivedText.trim() === "" || (received !== null && received >= applied));
+  function submitPayment(e: FormEvent) { e.preventDefault(); if (inline && !paymentReady) return; void ctrl.registerPayment(form); }
+
+  // Atalhos do PDV (F1–F5 escolhem a forma; Ctrl+Enter registra o pagamento sugerido ou encerra a conta quitada).
+  const chooseMethodRef = useRef(chooseMethod);
+  chooseMethodRef.current = chooseMethod;
+  const shortcutRef = useRef({ form, locked, payAvailable, closeProblem, paymentReady });
+  shortcutRef.current = { form, locked, payAvailable, closeProblem, paymentReady };
+  useEffect(() => {
+    if (!inline) return;
+    function onShortcut(e: Event) {
+      const d = (e as CustomEvent<{ kind: string; method?: PaymentMethod }>).detail;
+      const cur = shortcutRef.current;
+      if (d.kind === "method" && d.method) { if (!cur.locked && cur.payAvailable) chooseMethodRef.current(d.method); return; }
+      if (d.kind === "finalize" && !cur.locked) {
+        // Enter só finaliza com pagamento VÁLIDO (forma escolhida, valor > 0, entregue ≥ aplicado) ou com a conta quitada (encerra).
+        if (cur.payAvailable) { if (cur.paymentReady) void ctrl.registerPayment(cur.form); }
+        else if (cur.closeProblem === null) void ctrl.close();
+      }
+    }
+    window.addEventListener("pdv-shortcut", onShortcut);
+    return () => window.removeEventListener("pdv-shortcut", onShortcut);
+  }, [inline, ctrl]);
   function submitRefund(e: FormEvent) { e.preventDefault(); void ctrl.refund({ paymentId: refund.paymentId || refundables[0]?.paymentId || "", amountText: refund.amountText, reason: refund.reason }); }
 
-  return (
-    <Modal title={`Pagamentos da conta — ${pointLabel}`} onClose={view.busy ? () => undefined : onClose}>
+  const body = (
+    <>
       {view.loading && !st && <p className="modal-text" role="status">Carregando a situação da conta…</p>}
       {view.loadError && !st && (
         <div className="form-error" role="alert">
@@ -110,9 +162,11 @@ export function AccountFinanceDialog({
           </dl>
           {st.overpaidCents > 0 && <div className="form-error">A conta recebeu {formatCents(st.overpaidCents)} a mais que o total. Estorne o excedente antes de encerrar.</div>}
 
-          {open && (
-            <SplitEditor api={api} sessionId={sessionId} state={st} orderItems={orderItems} disabled={view.busy || view.unknown !== null} onApplied={onSplitApplied} onPendingChange={setSplitPending} />
-          )}
+          {open && (() => {
+            // PDV (aba "Dividir conta"): a MESMA lógica/controlador num desenho próprio; fora do PDV o editor do diálogo segue igual.
+            if (inline && splitHost) return createPortal(<PdvSplitEditor api={api} sessionId={sessionId} state={st} orderItems={orderItems} disabled={view.busy || view.unknown !== null} onApplied={onSplitApplied} onPendingChange={setSplitPending} />, splitHost);
+            return <SplitEditor api={api} sessionId={sessionId} state={st} orderItems={orderItems} disabled={view.busy || view.unknown !== null} onApplied={onSplitApplied} onPendingChange={setSplitPending} />;
+          })()}
           {split && ((st.overDistributedCents ?? 0) > 0 || (st.undistributedCents ?? 0) > 0) && <div className="form-error">A divisão está desatualizada em relação ao consumo. Refaça a divisão antes de receber ou encerrar.</div>}
 
           {view.notice && <div className={view.notice.kind === "error" ? "form-error" : "form-notice"} role={view.notice.kind === "error" ? "alert" : "status"} data-testid="fin-notice">{view.notice.text}</div>}
@@ -145,12 +199,21 @@ export function AccountFinanceDialog({
                   </select>
                 </div>
               )}
-              <div className="field">
-                <label htmlFor="fin-method">Forma</label>
-                <select id="fin-method" value={form.method} disabled={locked} onChange={(e) => setForm((f) => ({ ...f, method: e.target.value as PaymentMethod, receivedText: "" }))}>
-                  {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{PAYMENT_METHOD_LABEL[m]}</option>)}
-                </select>
-              </div>
+              {inline ? (
+                <>
+                  <div className="pay-methods-title">Forma de pagamento (escolha uma)</div>
+                  <PaymentMethodButtons value={chosen ? form.method : null} onSelect={chooseMethod} disabled={locked} />
+                  {!chosen && <p className="field-hint pay-methods-hint" data-testid="fin-no-method">Nenhuma forma selecionada. Ao escolher F1–F5, o valor pendente é <strong>sugerido</strong> e pode ser editado. Só vale depois de registrado.</p>}
+                </>
+              ) : (
+                <div className="field">
+                  <label htmlFor="fin-method">Forma</label>
+                  <select id="fin-method" value={form.method} disabled={locked} onChange={(e) => setForm((f) => ({ ...f, method: e.target.value as PaymentMethod, receivedText: "" }))}>
+                    {PAYMENT_METHODS.map((m) => <option key={m} value={m}>{PAYMENT_METHOD_LABEL[m]}</option>)}
+                  </select>
+                </div>
+              )}
+              {chosen && (<>
               <div className="field">
                 <label htmlFor="fin-amount">Valor aplicado à conta</label>
                 <input id="fin-amount" inputMode="decimal" placeholder="R$ 0,00" value={form.amountText} disabled={locked} onChange={(e) => setForm((f) => ({ ...f, amountText: e.target.value }))} />
@@ -168,7 +231,8 @@ export function AccountFinanceDialog({
                   </p>
                 </>
               )}
-              {split && partsOpen.length > 1 && (
+              </>)}
+              {chosen && split && partsOpen.length > 1 && (
                 <>
                   <label className="field-checkbox"><input type="checkbox" checked={!!form.allocations} disabled={locked} onChange={(e) => toggleAllocations(e.target.checked)} /> Distribuir o valor entre várias partes</label>
                   {form.allocations && (
@@ -186,7 +250,7 @@ export function AccountFinanceDialog({
                 </>
               )}
               <div className="modal-actions">
-                <button type="submit" className="btn-primary btn-auto" disabled={locked} data-testid="fin-pay-submit">{view.busy ? "Registrando…" : "Registrar pagamento"}</button>
+                <button type="submit" className="btn-primary btn-auto" disabled={locked || (inline && !paymentReady)} data-testid="fin-pay-submit"><span>{view.busy ? "Registrando…" : "Registrar pagamento"}</span>{inline && <kbd className="pay-submit-key">Enter</kbd>}</button>
               </div>
             </form>
           )}
@@ -225,13 +289,21 @@ export function AccountFinanceDialog({
         </>
       )}
 
-      <div className="modal-actions">
-        <button type="button" className="btn-secondary" disabled={view.busy} onClick={onClose}>Fechar</button>
-      </div>
+      {!inline && (
+        <div className="modal-actions">
+          <button type="button" className="btn-secondary" disabled={view.busy} onClick={onClose}>Fechar</button>
+        </div>
+      )}
 
       {view.needsCash && (
         <OpenCashDialog source={cashSource} companyId={companyId} notice="Abra o caixa antes de registrar o pagamento." onOpened={() => ctrl.cashOpened()} onClose={() => ctrl.dismissNeedsCash()} />
       )}
+    </>
+  );
+  if (inline) return <div className="pdv-inline" data-testid="pdv-finance">{body}</div>;
+  return (
+    <Modal title={`Pagamentos da conta — ${pointLabel}`} onClose={view.busy ? () => undefined : onClose}>
+      {body}
     </Modal>
   );
 }

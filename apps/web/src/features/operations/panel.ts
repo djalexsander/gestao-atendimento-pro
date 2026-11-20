@@ -1,6 +1,6 @@
 // Lógica PURA do painel de Comandas / Mesas: tipos, status, busca, filtros, ordenação e
 // formatação de horário. Sem React e sem Supabase, de propósito: é testada à parte e serve
-// às duas áreas operacionais (Atendimento e Caixa / Balcão).
+// às duas áreas operacionais (Atendimento, Caixa e Balcão).
 
 export type ServicePointType = "command" | "table";
 export type ServiceMode = "command" | "table" | "both";
@@ -143,6 +143,15 @@ export function formatOpenedShort(iso: string, now: Date = new Date()): string {
   return dayKeyFormat.format(opened) === dayKeyFormat.format(now)
     ? `Aberta às ${time}`
     : `Aberta em ${dayMonthFormat.format(opened)} às ${time}`;
+}
+
+// Tempo curto da linha compacta do PDV: "42 min", "1h25", "2d 3h".
+export function formatElapsedShort(iso: string, now: Date = new Date()): string {
+  const minutes = Math.max(0, Math.floor((now.getTime() - new Date(iso).getTime()) / 60000));
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h${String(minutes % 60).padStart(2, "0")}`;
+  return `${Math.floor(hours / 24)}d ${hours % 24}h`;
 }
 
 // Detalhe: "26/09/2026 às 19:42".

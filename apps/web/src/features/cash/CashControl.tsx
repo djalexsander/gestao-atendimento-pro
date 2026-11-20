@@ -1,16 +1,17 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { Modal } from "../employees/Modal";
 import { useAuth } from "../../app/useAuth";
 import { formatReais } from "../../lib/money";
 import { supabaseCashSource, type CashSource } from "./cashApi";
 import { CashMovementDialog, CloseCashDialog, OpenCashDialog } from "./CashDialogs";
-import type { CashMovementRow } from "./cashLogic";
+import { reconcile, summarizeMovements, type CashMovementRow } from "./cashLogic";
 import { supabaseDocumentsSource, type DocumentsSource } from "../printing/documentsApi";
 import { PrintDocumentButton } from "../printing/PrintDocumentButton";
 import { notifyCashChanged, useMyOpenCash } from "./useMyOpenCash";
 
-const dateTime = new Intl.DateTimeFormat("pt-BR", { dateStyle: "short", timeStyle: "short" });
 const dateOnly = new Intl.DateTimeFormat("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" });
 const timeOnly = new Intl.DateTimeFormat("pt-BR", { hour: "2-digit", minute: "2-digit" });
+const brl = (cents: number) => formatReais(cents / 100);
 
 // Caixa aberto num dia anterior ao de hoje (fuso local): merece alerta destacado.
 export function isFromPreviousDay(openedAtIso: string, now: Date = new Date()): boolean {
@@ -36,7 +37,8 @@ export function CashControl({
 
   const { cash, loaded } = useMyOpenCash(allowed, source);
   const [movements, setMovements] = useState<CashMovementRow[]>([]);
-  const [dialog, setDialog] = useState<"open" | "close" | "supply" | "withdrawal" | null>(null);
+  const [dialog, setDialog] = useState<"open" | "close" | "supply" | "withdrawal" | "choose" | null>(null);
+  const [stripMovements, setStripMovements] = useState<CashMovementRow[]>([]);
   const [notice, setNotice] = useState<string | null>(null);
   // Caixa que ESTE operador acabou de fechar: oferece imprimir o fechamento (manual; F8).
   const [closedCashId, setClosedCashId] = useState<string | null>(null);
@@ -50,39 +52,67 @@ export function CashControl({
     setDialog(kind);
   }
 
+  // Faixa do PDV: vendas e dinheiro esperado vêm dos movimentos do próprio caixa (mesma leitura do fechamento); recarrega quando o caixa muda.
+  const cashId = cash?.id ?? null;
+  useEffect(() => {
+    if (!cashId) { setStripMovements([]); return; }
+    let alive = true;
+    const load = async () => { const r = await source.listMovements(cashId); if (alive && r.data) setStripMovements(r.data); };
+    void load();
+    const t = window.setInterval(() => { if (document.visibilityState === "visible") void load(); }, 20000);
+    return () => { alive = false; window.clearInterval(t); };
+  }, [cashId, source, dialog]);
+
+  // Atalhos do caixa: F9 suprimento/sangria, F10 fechar caixa (não agem com diálogo aberto nem sem caixa aberto).
+  const keyRef = useRef<(k: "F9" | "F10") => void>(() => undefined);
+  keyRef.current = (k) => {
+    if (!cash || dialog !== null || document.querySelector(".modal")) return;
+    if (k === "F9") setDialog("choose");
+    else void startDialog("close");
+  };
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.key === "F9" || e.key === "F10") && !e.ctrlKey && !e.altKey && !e.metaKey) { e.preventDefault(); if (!e.repeat) keyRef.current(e.key); }
+    }
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
+
   if (!allowed || !companyId || !loaded) return null;
 
   const operatorName = cash?.openedByName ?? profile?.full_name ?? null;
 
   return (
-    <div className="cash-control">
+    <div className="cash-control cash-control-strip">
       {cash && isFromPreviousDay(cash.openedAt) && (
         <div className="form-error cash-control-alert" role="alert">
           Existe um caixa aberto desde {dateOnly.format(new Date(cash.openedAt))} às{" "}
           {timeOnly.format(new Date(cash.openedAt))}. Feche esse caixa antes de iniciar um novo turno.
         </div>
       )}
-      <span>
-        {cash
-          ? `Caixa aberto${operatorName ? ` por ${operatorName}` : ""} desde ${dateTime.format(new Date(cash.openedAt))} · saldo inicial ${formatReais(cash.openingAmount)}`
-          : "Nenhum caixa aberto."}
-      </span>
       {cash ? (
         <>
-          <button className="btn-secondary btn-small" type="button" onClick={() => void startDialog("supply")}>
-            Suprimento
+          <span className="cash-pill" title={operatorName ? `Caixa de ${operatorName}` : undefined}>
+            <span className="cash-dot" aria-hidden="true" /> Caixa aberto desde {timeOnly.format(new Date(cash.openedAt))}
+          </span>
+          <span className="cash-fig">Troco inicial <strong>{formatReais(cash.openingAmount)}</strong></span>
+          <span className="cash-fig">Vendas <strong>{brl(Math.round(summarizeMovements(stripMovements).total * 100))}</strong></span>
+          <span className="cash-fig">Dinheiro esperado <strong>{brl(reconcile(cash.openingAmount, summarizeMovements(stripMovements).netCash, "").expectedCents)}</strong></span>
+          <span className="cash-spacer" />
+          <button className="btn-secondary btn-small" type="button" onClick={() => setDialog("choose")} data-testid="cash-f9">
+            Suprimento / Sangria <kbd className="pay-method-key">F9</kbd>
           </button>
-          <button className="btn-secondary btn-small" type="button" onClick={() => void startDialog("withdrawal")}>
-            Sangria
-          </button>
-          <button className="btn-secondary btn-small" type="button" onClick={() => void startDialog("close")}>
-            Fechar caixa
+          <button className="btn-secondary btn-small" type="button" onClick={() => void startDialog("close")} data-testid="cash-f10">
+            Fechar caixa <kbd className="pay-method-key">F10</kbd>
           </button>
         </>
       ) : (
-        <button className="btn-primary btn-auto btn-small" type="button" onClick={() => setDialog("open")}>
-          Abrir caixa
-        </button>
+        <>
+          <span>Nenhum caixa aberto.</span>
+          <button className="btn-primary btn-auto btn-small" type="button" onClick={() => setDialog("open")}>
+            Abrir caixa
+          </button>
+        </>
       )}
       {notice && (
         <span role="status" className="form-notice">
@@ -98,6 +128,16 @@ export function CashControl({
         />
       )}
 
+      {dialog === "choose" && cash && (
+        <Modal title="Suprimento / Sangria" onClose={() => setDialog(null)}>
+          <p className="modal-text">O que você quer registrar neste caixa?</p>
+          <div className="modal-actions">
+            <button className="btn-secondary" type="button" onClick={() => setDialog(null)}>Cancelar</button>
+            <button className="btn-primary btn-auto" type="button" autoFocus onClick={() => void startDialog("supply")}>Suprimento (entrada)</button>
+            <button className="btn-primary btn-auto" type="button" onClick={() => void startDialog("withdrawal")}>Sangria (retirada)</button>
+          </div>
+        </Modal>
+      )}
       {dialog === "open" && (
         <OpenCashDialog
           source={source}

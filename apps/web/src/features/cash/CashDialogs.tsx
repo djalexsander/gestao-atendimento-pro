@@ -1,6 +1,7 @@
-import { useRef, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import { formatReais } from "../../lib/money";
 import { Modal } from "../employees/Modal";
+import { PaymentMethodButtons } from "./PaymentMethodButtons";
 import type { CashSession, CashSource } from "./cashApi";
 import { expectedMethodLabel, receiptPrefill } from "../operations/deliveryReceivables";
 import type { ExpectedMethod } from "../delivery/deliveryLogic";
@@ -369,6 +370,7 @@ export function CheckoutDialog({
   onNeedCash,
   onDone,
   onClose,
+  inline = false,
 }: {
   source: CashSource;
   sessionId: string;
@@ -379,6 +381,8 @@ export function CheckoutDialog({
   onNeedCash: () => void; // caixa fechado/inexistente: a tela oferece "Abrir caixa"
   onDone: () => void;
   onClose: () => void;
+  // PDV de três colunas (v1.0.20): o MESMO formulário, sem moldura de diálogo e com atalhos (F1–F5 forma, Ctrl+Enter finaliza).
+  inline?: boolean;
 }) {
   const totalCents = Math.round(totalReais * 100);
   const [drafts, setDrafts] = useState<PaymentDraft[]>(() => {
@@ -395,10 +399,44 @@ export function CheckoutDialog({
   );
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const formRef = useRef<HTMLFormElement>(null);
+  // PDV (inline): a forma só conta depois de ESCOLHIDA (botão/F1–F5). Delivery/retirada já vem com a forma pretendida pré-marcada (editável).
+  const [chosenKeys, setChosenKeys] = useState<Set<string>>(() => new Set(delivery ? drafts.map((d) => d.key) : []));
+  const allChosen = !inline || drafts.every((d) => chosenKeys.has(d.key));
+  const submittingRef = useRef(false);
 
   const informed = totalInformedCents(drafts);
   const remaining = remainingCents(totalCents, drafts);
-  const finalizable = canFinalize(totalCents, drafts);
+  const finalizable = canFinalize(totalCents, drafts) && allChosen;
+
+  const draftsRef = useRef(drafts);
+  draftsRef.current = drafts;
+  const finalizableRef = useRef(finalizable);
+  finalizableRef.current = finalizable;
+  const chooseMethodRef = useRef<(key: string, method: PaymentMethod) => void>(() => undefined);
+  function chooseMethod(key: string, method: PaymentMethod) { chooseMethodRef.current(key, method); }
+  useEffect(() => {
+    if (!inline) return;
+    function onShortcut(e: Event) {
+      const d = (e as CustomEvent<{ kind: string; method?: PaymentMethod }>).detail;
+      if (d.kind === "method" && d.method) { const last = draftsRef.current[draftsRef.current.length - 1]; if (last) chooseMethod(last.key, d.method); }
+      if (d.kind === "finalize" && finalizableRef.current && !submittingRef.current) formRef.current?.requestSubmit();
+    }
+    window.addEventListener("pdv-shortcut", onShortcut);
+    return () => window.removeEventListener("pdv-shortcut", onShortcut);
+  }, [inline]);
+
+  // Escolher a forma (botão ou F1–F5): marca a linha e SUGERE o saldo restante se o valor estiver vazio/inválido (valor já editado é mantido).
+  chooseMethodRef.current = (key, method) => {
+    setError(null);
+    setChosenKeys((cur) => new Set(cur).add(key));
+    setDrafts((cur) => cur.map((d) => {
+      if (d.key !== key) return d;
+      const c = parseDraftCents(d.amount);
+      const others = cur.filter((x) => x.key !== key);
+      return { ...d, method, received: "", amount: c === null || c <= 0 ? suggestedAmountText(remainingCents(totalCents, others)) : d.amount };
+    }));
+  };
 
   function update(key: string, patch: Partial<PaymentDraft>) {
     setError(null);
@@ -417,11 +455,13 @@ export function CheckoutDialog({
 
   async function handleSubmit(event: FormEvent) {
     event.preventDefault();
-    if (!finalizable || submitting) return;
+    if (!finalizable || submitting || submittingRef.current) return;   // proteção contra duplo acionamento (Enter repetido/clique duplo)
+    submittingRef.current = true;
     setError(null);
     setSubmitting(true);
     const payload = toPaymentPayload(drafts);
     const result = delivery ? await source.receiveDelivery(delivery.deliveryOrderId, payload, requestId.current) : await source.closeAccount(sessionId, payload);
+    submittingRef.current = false;
     setSubmitting(false);
     if (result.error === null) {
       onDone();
@@ -434,9 +474,8 @@ export function CheckoutDialog({
     setError(result.error);
   }
 
-  return (
-    <Modal title={delivery ? "Receber / Fechar conta" : "Fechar conta"} onClose={submitting ? () => undefined : onClose}>
-      <form onSubmit={handleSubmit}>
+  const checkoutForm = (
+      <form ref={formRef} onSubmit={handleSubmit}>
         <p className="modal-text">
           <strong>{pointLabel}</strong>
         </p>
@@ -471,6 +510,9 @@ export function CheckoutDialog({
             return (
               <li key={draft.key} className="checkout-payment">
                 <h4 className="checkout-payment-title">Forma de pagamento {index + 1}</h4>
+                {inline ? (
+                  <PaymentMethodButtons value={chosenKeys.has(draft.key) ? draft.method : null} disabled={submitting} onSelect={(m) => chooseMethod(draft.key, m)} />
+                ) : (
                 <div className="field">
                   <label htmlFor={`method-${draft.key}`}>Forma</label>
                   <select
@@ -485,6 +527,8 @@ export function CheckoutDialog({
                     ))}
                   </select>
                 </div>
+                )}
+                {inline && !chosenKeys.has(draft.key) && <p className="field-hint pay-methods-hint">Nenhuma forma selecionada. Ao escolher F1–F5, o valor pendente é sugerido e pode ser editado.</p>}
                 <div className="field">
                   <label htmlFor={`amount-${draft.key}`}>{draft.method === "cash" ? "Valor pago em dinheiro" : "Valor do pagamento"}</label>
                   <input
@@ -532,14 +576,21 @@ export function CheckoutDialog({
         {totalCents === 0 && <p className="modal-text">Esta conta não tem valor a receber.</p>}
 
         <div className="modal-actions">
-          <button className="btn-secondary" type="button" disabled={submitting} onClick={onClose}>
-            Cancelar
-          </button>
+          {!inline && (
+            <button className="btn-secondary" type="button" disabled={submitting} onClick={onClose}>
+              Cancelar
+            </button>
+          )}
           <button className="btn-primary btn-auto" type="submit" disabled={!finalizable || submitting}>
-            {submitting ? "Finalizando…" : "Finalizar e fechar conta"}
+            <span>{submitting ? "Finalizando…" : "Finalizar e fechar conta"}</span>{inline && <kbd className="pay-submit-key">Enter</kbd>}
           </button>
         </div>
       </form>
+  );
+  if (inline) return <div className="pdv-inline" data-testid="pdv-checkout">{checkoutForm}</div>;
+  return (
+    <Modal title={delivery ? "Receber / Fechar conta" : "Fechar conta"} onClose={submitting ? () => undefined : onClose}>
+      {checkoutForm}
     </Modal>
   );
 }

@@ -6,6 +6,7 @@ import { canOpenOperationalArea, homePathForRole, OPERATIONAL_PATH } from "../ap
 import { useAuth } from "../app/useAuth";
 import { supabaseCashSource } from "../features/cash/cashApi";
 import { CashControl } from "../features/cash/CashControl";
+import { CashierPdv } from "../features/cash/CashierPdv";
 import { useMyOpenCash } from "../features/cash/useMyOpenCash";
 import { Modal } from "../features/employees/Modal";
 import { ROLE_LABEL } from "../features/employees/roles";
@@ -33,7 +34,7 @@ import type { OrdersSource } from "../features/orders/ordersApi";
 const CASH_CHECK_TIMEOUT_MS = 8000;
 
 // exportada só para a página de Contatos do WhatsApp reutilizar a MESMA casca (nada muda no cabeçalho)
-export function OperationalShell({ title, children }: { title: string; children: ReactNode }) {
+export function OperationalShell({ title, children, fluid = false }: { title: string; children: ReactNode; fluid?: boolean }) {
   const { activeMembership, user, signOut } = useAuth();
   const navigate = useNavigate();
   const isCashier = activeMembership?.role === "cashier";
@@ -152,7 +153,7 @@ export function OperationalShell({ title, children }: { title: string; children:
         <NotificationsButton />
       </nav>
       <CommercialBanner />
-      <main className="app-body app-body-wide">
+      <main className={fluid ? "app-body app-body-wide app-body-fluid" : "app-body app-body-wide"}>
         <h2>{title}</h2>
         {children}
       </main>
@@ -225,11 +226,11 @@ export function OperationalProductionPage({ source }: { source?: ProductionSourc
   );
 }
 
-export function OperationalCashierPage({ source }: { source?: ServicePanelSource }) {
+export function OperationalCashierPage({ source, ordersSource }: { source?: ServicePanelSource; ordersSource?: OrdersSource }) {
   return (
-    <OperationalShell title="Caixa / Balcão">
+    <OperationalShell title="Caixa" fluid>
       <CashControl />
-      <ServicePointsPanel variant="cashier" source={source} />
+      <CashierPdv panelSource={source} ordersSource={ordersSource} />
     </OperationalShell>
   );
 }
@@ -249,7 +250,7 @@ export function OperationalServiceOrderPage({ source }: { source?: OrdersSource 
 export function OperationalCashierOrderPage({ source }: { source?: OrdersSource }) {
   const { sessionId } = useParams<{ sessionId: string }>();
   return (
-    <OperationalShell title="Caixa / Balcão">
+    <OperationalShell title="Caixa">
       {sessionId && <SessionOrderScreen sessionId={sessionId} variant="cashier" source={source} />}
     </OperationalShell>
   );
